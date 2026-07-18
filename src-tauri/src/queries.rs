@@ -8,6 +8,8 @@ use rusqlite::Connection;
 #[serde(rename_all = "camelCase")]
 pub struct StoryRow {
     pub id: i64,
+    /// Aliased from `stories.source_story_id` (SPEC.md §8) — still named
+    /// `ffn_story_id` here since FFN is the only source with rows today.
     pub ffn_story_id: i64,
     pub title: String,
     pub author: String,
@@ -78,7 +80,7 @@ fn row_to_story(row: &rusqlite::Row) -> rusqlite::Result<StoryRow> {
 
 pub fn list_stories(conn: &Connection, filters: &StoryFilters) -> rusqlite::Result<Vec<StoryRow>> {
     let mut sql = String::from(
-        "SELECT s.id, s.ffn_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
+        "SELECT s.id, s.source_story_id AS ffn_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
                 s.status, s.word_count, s.favorite_count, s.chapter_count, s.summary,
                 COALESCE(rs.is_read, 0), COALESCE(rs.dismissed, 0), COALESCE(rs.bookmarked, 0),
                 rs.last_chapter_num, s.ffn_updated_at
@@ -163,7 +165,7 @@ fn fold(s: &str) -> String {
 /// state) but doesn't want to run a filtered list query for it.
 pub fn get_story(conn: &Connection, story_id: i64) -> rusqlite::Result<Option<StoryRow>> {
     conn.query_row(
-        "SELECT s.id, s.ffn_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
+        "SELECT s.id, s.source_story_id AS ffn_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
                 s.status, s.word_count, s.favorite_count, s.chapter_count, s.summary,
                 COALESCE(rs.is_read, 0), COALESCE(rs.dismissed, 0), COALESCE(rs.bookmarked, 0),
                 rs.last_chapter_num, s.ffn_updated_at
@@ -239,7 +241,7 @@ pub fn set_resume_chapter(conn: &Connection, story_id: i64, chapter_num: i64) ->
 /// having bookmarked it).
 pub fn get_continue_reading(conn: &Connection, limit: i64) -> rusqlite::Result<Vec<StoryRow>> {
     let mut stmt = conn.prepare(
-        "SELECT s.id, s.ffn_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
+        "SELECT s.id, s.source_story_id AS ffn_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
                 s.status, s.word_count, s.favorite_count, s.chapter_count, s.summary,
                 COALESCE(rs.is_read, 0), COALESCE(rs.dismissed, 0), COALESCE(rs.bookmarked, 0),
                 rs.last_chapter_num, s.ffn_updated_at

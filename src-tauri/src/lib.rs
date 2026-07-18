@@ -1,3 +1,4 @@
+mod ao3;
 mod db;
 mod ffn;
 mod queries;

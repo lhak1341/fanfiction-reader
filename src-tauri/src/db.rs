@@ -6,9 +6,16 @@ use tauri::Manager;
 /// every launch rather than needing a separate migration-tracking system —
 /// fine for v1's single-schema-version scope.
 const SCHEMA: &str = r#"
+-- `source` + `source_story_id` (composite-unique) replace the old
+-- FFN-only `ffn_story_id UNIQUE` so a second source (AO3, SPEC.md §8) can
+-- coexist without id collisions. `category`/`warnings` are AO3-only,
+-- nullable, unused by FFN rows (option (a) from §8: bolt-on columns over a
+-- separate per-source tag table, cheap and matches how `ffn_updated_at`
+-- was added).
 CREATE TABLE IF NOT EXISTS stories (
     id              INTEGER PRIMARY KEY,
-    ffn_story_id    INTEGER NOT NULL UNIQUE,
+    source          TEXT NOT NULL DEFAULT 'ffn' CHECK (source IN ('ffn', 'ao3')),
+    source_story_id INTEGER NOT NULL,
     title           TEXT NOT NULL,
     author          TEXT NOT NULL,
     fandom          TEXT NOT NULL,
@@ -16,13 +23,16 @@ CREATE TABLE IF NOT EXISTS stories (
     genre           TEXT,
     language        TEXT,
     tags            TEXT,
+    category        TEXT,
+    warnings        TEXT,
     status          TEXT NOT NULL CHECK (status IN ('complete', 'in_progress')),
     word_count      INTEGER NOT NULL,
     favorite_count  INTEGER NOT NULL,
     chapter_count   INTEGER NOT NULL,
     summary         TEXT,
     ffn_updated_at  TEXT,
-    last_fetched_at TEXT NOT NULL
+    last_fetched_at TEXT NOT NULL,
+    UNIQUE (source, source_story_id)
 );
 
 CREATE TABLE IF NOT EXISTS chapters (
@@ -86,17 +96,21 @@ CREATE TABLE IF NOT EXISTS fandom_index (
 
 pub struct Db(pub Mutex<Connection>);
 
-/// Upserts a story by its FFN id (the natural key). Re-fetching an existing
-/// story updates its cached metadata without touching `read_state` — that's
-/// the user's own manual flags, not fetched data, and must survive refetches.
-/// Returns the internal `stories.id` (the FK target used everywhere else).
+/// Upserts a story by its (source, source_story_id) natural key — FFN is the
+/// only source that feeds this today, hardcoded below; an AO3 parser will
+/// need its own insert path since its metadata shape differs (category,
+/// warnings, split relationship/character tags — SPEC.md §8). Re-fetching an
+/// existing story updates its cached metadata without touching `read_state`
+/// — that's the user's own manual flags, not fetched data, and must survive
+/// refetches. Returns the internal `stories.id` (the FK target used
+/// everywhere else).
 pub fn upsert_story(conn: &Connection, meta: &crate::ffn::StoryMetadata) -> rusqlite::Result<i64> {
     conn.query_row(
         "INSERT INTO stories
-            (ffn_story_id, title, author, fandom, rating, genre, language, tags, status,
+            (source, source_story_id, title, author, fandom, rating, genre, language, tags, status,
              word_count, favorite_count, chapter_count, summary, ffn_updated_at, last_fetched_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, datetime('now'))
-         ON CONFLICT(ffn_story_id) DO UPDATE SET
+         VALUES ('ffn', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, datetime('now'))
+         ON CONFLICT(source, source_story_id) DO UPDATE SET
             title = excluded.title,
             author = excluded.author,
             fandom = excluded.fandom,
@@ -340,11 +354,74 @@ fn fix_percent_encoded_fandoms(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Rebuilds `stories` to replace the old FFN-only `ffn_story_id UNIQUE` with
+/// `source` + `source_story_id UNIQUE(source, source_story_id)` (SPEC.md §8).
+/// A straight `ALTER TABLE` can rename/add columns but can't change a UNIQUE
+/// constraint, so this does the standard SQLite rebuild: rename the old
+/// table aside, create the new shape, copy rows across (all pre-existing
+/// rows are 'ffn' by construction — AO3 didn't exist yet), drop the old
+/// table. `id` is copied explicitly so `chapters`/`read_state` foreign keys
+/// (which point at `stories.id`, not `ffn_story_id`) stay valid untouched.
+/// Guarded by a `source` column check so it's a no-op once migrated
+/// (including on brand-new databases, where `SCHEMA` already creates the new
+/// shape directly). Foreign key enforcement is dropped for the duration —
+/// renaming `stories` out from under `chapters`/`read_state` mid-rebuild
+/// would otherwise trip FK checks against a momentarily-missing table.
+fn migrate_stories_source_column(conn: &Connection) -> rusqlite::Result<()> {
+    let already_migrated: bool = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('stories') WHERE name = 'source'",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? > 0;
+    if already_migrated {
+        return Ok(());
+    }
+    println!("[db] migrating: stories.ffn_story_id -> source + source_story_id");
+    conn.pragma_update(None, "foreign_keys", false)?;
+    conn.execute_batch(
+        "BEGIN;
+         ALTER TABLE stories RENAME TO stories_old;
+         CREATE TABLE stories (
+             id              INTEGER PRIMARY KEY,
+             source          TEXT NOT NULL DEFAULT 'ffn' CHECK (source IN ('ffn', 'ao3')),
+             source_story_id INTEGER NOT NULL,
+             title           TEXT NOT NULL,
+             author          TEXT NOT NULL,
+             fandom          TEXT NOT NULL,
+             rating          TEXT NOT NULL,
+             genre           TEXT,
+             language        TEXT,
+             tags            TEXT,
+             category        TEXT,
+             warnings        TEXT,
+             status          TEXT NOT NULL CHECK (status IN ('complete', 'in_progress')),
+             word_count      INTEGER NOT NULL,
+             favorite_count  INTEGER NOT NULL,
+             chapter_count   INTEGER NOT NULL,
+             summary         TEXT,
+             ffn_updated_at  TEXT,
+             last_fetched_at TEXT NOT NULL,
+             UNIQUE (source, source_story_id)
+         );
+         INSERT INTO stories
+             (id, source, source_story_id, title, author, fandom, rating, genre, language, tags,
+              status, word_count, favorite_count, chapter_count, summary, ffn_updated_at, last_fetched_at)
+         SELECT id, 'ffn', ffn_story_id, title, author, fandom, rating, genre, language, tags,
+                status, word_count, favorite_count, chapter_count, summary, ffn_updated_at, last_fetched_at
+         FROM stories_old;
+         DROP TABLE stories_old;
+         COMMIT;",
+    )?;
+    conn.pragma_update(None, "foreign_keys", true)?;
+    Ok(())
+}
+
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     add_column_if_missing(conn, "read_state", "last_opened_at", "TEXT")?;
     add_column_if_missing(conn, "stories", "tags", "TEXT")?;
     add_column_if_missing(conn, "stories", "ffn_updated_at", "TEXT")?;
     fix_percent_encoded_fandoms(conn)?;
+    migrate_stories_source_column(conn)?;
     Ok(())
 }
 

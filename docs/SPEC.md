@@ -87,9 +87,18 @@ Confirmed against a real filtered FFN URL during development (`?srt=4&r=10&len=1
 Six tables. `db::init` runs `CREATE TABLE IF NOT EXISTS` for all of them on every launch, plus a small `migrate()` step that `ALTER TABLE ADD COLUMN`s anything introduced after a table's original shape (guarded by a `pragma_table_info` check) — needed because `IF NOT EXISTS` only shapes brand-new databases, not ones already on disk from an earlier version.
 
 ```sql
+-- `source` + `source_story_id` (composite-unique) replace the old FFN-only
+-- `ffn_story_id UNIQUE` so a second source can coexist without id collisions
+-- (§8, locked 2026-07-19). `category`/`warnings` are AO3-only, nullable,
+-- unused by FFN rows — option (a) from §8's data-model gap: bolt-on columns
+-- over a separate per-source tag table, cheap and matches how
+-- `ffn_updated_at` was added. Existing (all-FFN) rows migrate via a table
+-- rebuild in `db::migrate` (`ALTER TABLE` can't change a UNIQUE constraint);
+-- `id` is preserved so `chapters`/`read_state` foreign keys stay valid.
 CREATE TABLE stories (
     id              INTEGER PRIMARY KEY,
-    ffn_story_id    INTEGER NOT NULL UNIQUE,   -- FFN's own story id, from the URL
+    source          TEXT NOT NULL DEFAULT 'ffn' CHECK (source IN ('ffn', 'ao3')),
+    source_story_id INTEGER NOT NULL,          -- FFN's/AO3's own story id, from the URL
     title           TEXT NOT NULL,
     author          TEXT NOT NULL,
     fandom          TEXT NOT NULL,
@@ -97,13 +106,16 @@ CREATE TABLE stories (
     genre           TEXT,
     language        TEXT,
     tags            TEXT,                      -- character/pairing text, verbatim from FFN
+    category        TEXT,                      -- AO3 only: M/M, F/F, Gen, etc. — NULL for FFN
+    warnings        TEXT,                      -- AO3 only: comma-joined warning tags, verbatim — NULL for FFN
     status          TEXT NOT NULL CHECK (status IN ('complete', 'in_progress')),
     word_count      INTEGER NOT NULL,
-    favorite_count  INTEGER NOT NULL,
+    favorite_count  INTEGER NOT NULL,          -- FFN Favs or AO3 Bookmarks — not a merged ranking (§8, locked)
     chapter_count   INTEGER NOT NULL,
     summary         TEXT,
     ffn_updated_at  TEXT,                      -- raw "Updated:" text from FFN's metadata line, verbatim (not reparsed)
-    last_fetched_at TEXT NOT NULL              -- ISO8601; drives "check for updates"
+    last_fetched_at TEXT NOT NULL,             -- ISO8601; drives "check for updates"
+    UNIQUE (source, source_story_id)
 );
 
 CREATE TABLE chapters (
@@ -164,7 +176,7 @@ CREATE TABLE fandom_index (
 ```
 
 Notes:
-- `stories.ffn_story_id` is the natural key tying cached data back to the source; internal `id` is the FK target everywhere else.
+- `(stories.source, stories.source_story_id)` is the natural key tying cached data back to its source; internal `id` is the FK target everywhere else. The Rust/frontend layer still exposes this column as `ffn_story_id`/`ffnStoryId` (aliased in `queries.rs`) since FFN is the only source with rows today — due for a real rename once an AO3 parser exists to actually populate `source = 'ao3'` rows.
 - `read_state` holds all per-story manual flags/timestamps, independent of `stories` (which only changes on refetch) — so re-importing a story never resets your read/dismiss/bookmark state.
 - `chapters` rows are created as empty stubs (`content = ''`) for the *entire* TOC every time any page of a story is fetched (any story page lists every chapter), then filled in individually as each chapter is actually opened. `content <> ''` is the "is this chapter cached" check used throughout.
 
@@ -215,18 +227,37 @@ Persisted to `localStorage` (`readerPrefs.ts`), applied live via inline styles o
 
 Full detail, research sources, and the review rounds behind each locked decision live in the closed tickets under `wayfinder/tickets/` (map: `wayfinder/map.md`). That trail covers the map's original scope; everything past §6's Search FFN modal onward (theme toggle, reader typography, discovery/fandom-index) was designed and built directly in conversation after the map closed, without its own tickets.
 
-## 8. Multi-source planning: Archive of Our Own (not yet built)
+## 8. Multi-source planning: Archive of Our Own (in progress)
 
-Everything above is FFN-specific by construction — the schema (`ffn_story_id`, `fandom` as a single URL-derived string), the fixed 9-category browse taxonomy, and the whole Cloudflare/webview fetch strategy (§3) all assume one source. Adding AO3 (archiveofourown.org) as a second source is a real architectural change, not a second scraper bolted on. This section is a plan, not a build — nothing below is implemented yet.
+Everything in §1–§7 is FFN-specific by construction — the original schema (`ffn_story_id`, `fandom` as a single URL-derived string), the fixed 9-category browse taxonomy, and the whole Cloudflare/webview fetch strategy (§3) all assumed one source. Adding AO3 (archiveofourown.org) as a second source is a real architectural change, not a second scraper bolted on. Schema (§5) and the parser are now built (see "Progress & next steps" at the end of this section); fetch/upsert wiring and UI are not yet.
 
-**Fetch strategy is genuinely different, confirmed by live test (2026-07-18):** a bare HTTP request (`urllib`, default headers, no cookies, no JS) against AO3's homepage, a tag-scoped work listing, and a full Mature-rated work page all returned real HTML with no Cloudflare challenge, no captcha, no block page. This is the opposite of FFN's situation (§3) — AO3 doesn't appear to run the same bot-fingerprinting defense. Practically: AO3 support could use the `reqwest` dependency that's been sitting unused since v1 (§2), skipping the webview/window-management machinery entirely for this source. **Not yet verified**: whether Explicit-rated works hit a login/age-confirmation gate when fetched without an authenticated session — only a Mature-rated work was tested live; this needs its own check before assuming full-catalog parity.
+**Fetch strategy is genuinely different, confirmed by live test (2026-07-18):** a bare HTTP request (`urllib`, default headers, no cookies, no JS) against AO3's homepage, a tag-scoped work listing, and a full Mature-rated work page all returned real HTML with no Cloudflare challenge, no captcha, no block page. This is the opposite of FFN's situation (§3) — AO3 doesn't appear to run the same bot-fingerprinting defense. Practically: AO3 support could use the `reqwest` dependency that's been sitting unused since v1 (§2), skipping the webview/window-management machinery entirely for this source.
+
+**Explicit-rated works confirmed no gate (live test, 2026-07-18)**: fetched `/works/85954646` ("Perks of Being Kidnapped", rating tag confirmed `Explicit`, found via tag-scoped browse of `/tags/Naruto.../works`) with the same bare `urllib`, zero cookies, zero auth. Full chapter text returned directly in `div.userstuff` — no login/age-confirmation interstitial. The sidebar login form present on every AO3 page is just the site nav widget, not a content gate. Full-catalog parity (Mature + Explicit) confirmed reachable without an authenticated session.
+
+**AO3 origin reliability is worse than FFN's, independent of bot-blocking (live test, 2026-07-18)**: across a handful of bare requests, hit two plain `TimeoutError`s and one `HTTP 525` (Cloudflare origin SSL error) before a retry succeeded — no challenge page or captcha involved, just origin flakiness. Any AO3 fetch path needs retry-with-backoff on timeout/5xx; FFN's webview strategy never needed this since it only needs inter-request pacing (§3), not retries.
 
 **robots.txt scope** (fetched live): disallows the *global* `/works?` search, `/autocomplete/`, `/downloads/`, `/external_works/`, and any `*/search?` endpoint for all crawlers, and blocks AI-training bots (GPTBot/CCBot/ChatGPT-User) wholesale. It does **not** disallow tag-scoped browsing (`/tags/{fandom}/works?...` — the shape this app would actually use, same as FFN's fandom-scoped browse pages) or individual work pages (`/works/{id}`). Any AO3 support should stay inside that boundary — same personal-use ToS posture already scoped for FFN (§1).
 
-**Data model gap**: AO3's tagging is richer than what the current schema holds. Confirmed live markup shows, per work: rating, one or more **warnings** (multi-select, e.g. "Major Character Death, Graphic Depictions Of Violence" — FFN has none of this), a **category** (M/M, F/F, Gen, etc. — FFN has none of this), separate **relationship** and **character** tag groups (FFN's `tags` column mushes character/pairing into one free-text string), and arbitrary **freeform** tags on top of all that. `stories.rating`/`stories.tags` as they exist can't hold this without lossy squashing. Options to weigh later: (a) a `source` column plus AO3-specific nullable columns bolted onto `stories` (cheap, keeps one table, mirrors how `ffn_updated_at` was added), or (b) a proper per-source tag table (more correct, more migration work for zero current benefit since there's exactly one source today). Leaning (a) until there's an actual second source to prove the shape is needed — no sense generalizing against a hypothetical.
+**Data model gap — locked (a), implemented 2026-07-19**: AO3's tagging is richer than what the schema held. Confirmed live markup shows, per work: rating, one or more **warnings** (multi-select, e.g. "Major Character Death, Graphic Depictions Of Violence" — FFN has none of this), a **category** (M/M, F/F, Gen, etc. — FFN has none of this), separate **relationship** and **character** tag groups (FFN's `tags` column mushes character/pairing into one free-text string), and arbitrary **freeform** tags on top of all that. Weighed (a) a `source` column plus AO3-specific nullable columns bolted onto `stories` against (b) a proper per-source tag table; went with (a) — cheap, keeps one table, mirrors how `ffn_updated_at` was added, and (b)'s payoff is speculative until a third source shows up. Schema now has `source`/`category`/`warnings` (§5); `relationship`/`character`/`freeform` tag splitting is deferred to whenever the AO3 parser is actually written — `tags` (mushed, FFN-style) is good enough until then. `ffn_story_id UNIQUE` became `(source, source_story_id) UNIQUE`, migrated via a table rebuild in `db::migrate` (verified against a copy of the real 266-row local DB: all ids/rows/FKs preserved, `PRAGMA integrity_check` clean).
 
-**Markup skeleton** (confirmed, for whenever a parser gets written): listing rows are `<li class="work blurb group">` — title+author in `h4.heading` (`a[href^="/works/"]` then `a[rel="author"]`), fandom in `h5.fandoms.heading a.tag`, rating/warning/category/complete-status as **class names** on `ul.required-tags li span` (e.g. `rating-mature`, `warning-yes`, `category-slash`, `complete-yes`) rather than label:value text the way FFN's metadata line works, relationship/character/freeform tags in `ul.tags.commas li.{relationships,characters,freeforms}`, and stats (words/chapters/kudos/comments/bookmarks/hits) in `dl.stats dd.{words,chapters,kudos,...}`. Work pages wrap everything in `#workskin` (`h2.title.heading`, `h3.byline.heading`).
+**Markup skeleton, confirmed — parser written 2026-07-19** (`src-tauri/src/ao3.rs`): listing rows are `<li class="work ...">` — title+id `h4.heading a[href^="/works/"]`, author(s) `h4.heading a[rel="author"]`, fandom(s) `h5.fandoms.heading a.tag`. Rating/category/complete-status read off the `title` attribute of `ul.required-tags li span.{rating,category,iswip}` (the human-readable string, e.g. `title="Teen And Up Audiences"`) rather than reverse-mapped from the `rating-*`/`category-*` class slug. Full-detail warnings/relationships/characters/freeforms come from `ul.tags.commas li.{warnings,relationships,characters,freeforms} a.tag`. Stats: `dl.stats dd.{words,chapters,kudos,comments,bookmarks,hits}`, `dd.chapters` holds `"N/M"` (posted/planned, `M` = `"?"` if undetermined). Work pages: `h2.title.heading`, `h3.byline.heading a[rel="author"]`, full tag detail in `dl.work.meta.group dd.{rating,warning,category,fandom,relationship,character,freeform}.tags a.tag`, chapter TOC in `select#selected_id option` (`value` = AO3's opaque per-chapter id, used to build `/works/{id}/chapters/{chapter_id}` fetch URLs — chapters aren't sequentially numbered in the URL like FFN's `/s/{id}/{n}/`), chapter body in `div.userstuff.module[role="article"]` (distinguishes it from the *other* `.userstuff` divs on the same page — author's notes before/after the chapter). **Gotcha found while writing the parser**: `dl.work.meta.group` is not actually nested inside `#workskin` in html5ever's strict parse tree (some unbalanced tag upstream closes `#workskin` earlier than a browser's lenient rendering would suggest) — those selectors query the whole document instead of scoping under `#workskin`, safe since a work page only ever has one work.
 
 **Locked**: sources are *not* merged into one popularity ranking. FFN's "Favs" and AO3's engagement metrics aren't the same signal at all — AO3's kudos is a one-click, near-frictionless "like" (315,868 kudos vs. only 56,015 bookmarks on the same test work), nothing like FFN's deliberate Favorite action. AO3's **bookmarks** is the closer analog to FFN's Favorites (both a deliberate "save/track this" action), not kudos — but even that likely isn't a fair apples-to-apples scale given the platforms' different audience sizes. Each source gets its own filter/badge and sorts within itself; "sort by favorites" across a mixed list isn't a feature that should exist.
+
+### Progress & next steps (as of 2026-07-19)
+
+**Done:**
+- Fetch strategy, Explicit-content gate, origin reliability, robots.txt scope — all confirmed live (above).
+- Schema: `stories.source`/`source_story_id`/`category`/`warnings` implemented and migrated (§5), verified against a copy of the real local DB.
+- Parser written and verified against live-captured markup: `src-tauri/src/ao3.rs` — `parse_work_page`, `parse_listing_page`, `parse_chapter_content`, `work_id_from_url`, `chapter_id_from_url`, `build_tag_browse_url`.
+
+**Not done — pick up here:**
+1. **`chapters` table has no column for AO3's per-chapter id.** `Ao3ChapterRef.chapter_id` (parsed, correct) currently has nowhere to persist — fetching chapter *N* of an AO3 story needs its `chapter_id`, not just its number. Add a nullable `chapters.source_chapter_id` column (plain `ALTER TABLE ADD COLUMN`, no rebuild needed — no UNIQUE constraint involved this time).
+2. **No AO3 upsert path.** `db::upsert_story` is FFN-shaped (takes `ffn::StoryMetadata`, hardcodes `source = 'ffn'`). Needs an `upsert_ao3_story` (or a shared function taking `source` explicitly) wired to `Ao3StoryMetadata`.
+3. **No fetch path.** §8 confirmed `reqwest` (unused since v1, §2) is sufficient — no webview needed for AO3, unlike FFN (§3). Needs its own retry-with-backoff on timeout/5xx (confirmed necessary above), distinct from FFN's pacing-only fetch loop.
+4. **`build_tag_browse_url`'s word-count/status filter params are unconfirmed.** Only `work_search[sort_column]` and `page` are verified working — AO3's filter sidebar (`#work-filters`) didn't render for a logged-out request, so there was no live form markup to read real field names off, unlike FFN's `r=10` (§4) which was caught by diffing real filtered URLs. Guessing risks the same silent-wrong-results failure `r=10`'s absence caused for FFN.
+5. **No UI wiring.** Search/Bookmarks/Reader/Search-FFN-modal (§6) are all FFN-specific by construction. Whether AO3 gets its own modal/entry point or shares FFN's (generalized) is still open.
+6. **Still-open design questions** (§8, unresolved): whether `fandom` becomes a proper set instead of a comma-joined string (AO3 crossovers are natively multi-fandom — the parser currently just joins, e.g. `"Original Work, Naruto (Anime & Manga)"`); whether FFN's fixed-category browse UX even makes sense for AO3's freeform tag space; AO3 has no generic "Updated:" tracking column yet (`ffn_updated_at` is FFN-only), so an AO3 story's "check for updates" story is undefined.
 
 **Open questions before any of this gets built**: whether "fandom" stays a single string or needs to become a proper set (AO3 crossovers list multiple fandoms natively, unlike FFN's one-fandom-per-story model); and whether the existing fandom-picker/category-browse UX (built entirely around FFN's fixed category tree) even makes sense for AO3's freeform tag space.
