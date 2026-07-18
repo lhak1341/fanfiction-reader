@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-report-fetch-result"
+description = "Allows the fetch-spike window to report back the HTML it captured from a remote fanfiction.net page."
+commands.allow = ["report_fetch_result"]

@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "fetch-page",
+  "description": "Lets the fetch-page webview (loaded from fanfiction.net) call back into Rust with the page HTML it captured.",
+  "windows": ["fetch-page"],
+  "remote": {
+    "urls": ["https://www.fanfiction.net/*", "https://m.fanfiction.net/*"]
+  },
+  "permissions": ["core:default", "allow-report-fetch-result"]
+}

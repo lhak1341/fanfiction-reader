@@ -1,0 +1,682 @@
+<script lang="ts">
+  import * as api from "$lib/api";
+  import { ChevronDown, LayoutGrid, List, RefreshCw } from "lucide-svelte";
+  import FandomPicker from "$lib/components/FandomPicker.svelte";
+  import Reader from "$lib/components/Reader.svelte";
+  import SearchFfnModal from "$lib/components/SearchFfnModal.svelte";
+  import StoryList from "$lib/components/StoryList.svelte";
+  import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+  import { getPinnedFandoms, savePinnedFandoms } from "$lib/pinnedFandoms";
+  import type { SortBy, StoryRow, StoryStatus } from "$lib/types";
+
+  let screen = $state<"search" | "bookmarks" | "reader">("search");
+  let lastListScreen = $state<"search" | "bookmarks">("search");
+  let readerStoryId = $state<number | undefined>(undefined);
+  let readerChapterNum = $state<number | undefined>(undefined);
+
+  function openStory(story: StoryRow) {
+    lastListScreen = screen === "reader" ? lastListScreen : screen;
+    readerStoryId = story.id;
+    readerChapterNum = story.lastChapterNum ?? 1;
+    screen = "reader";
+  }
+
+  // ---- Search state ----
+  let searchFandom = $state<string | undefined>(undefined); // undefined = "All fandoms"
+  let searchText = $state("");
+  let minWordCount = $state<number | undefined>(undefined);
+  let status = $state<StoryStatus | undefined>(undefined);
+  let searchSortBy = $state<SortBy>("favorites");
+  let hideReadAndDismissed = $state(true);
+  let searchViewMode = $state<"list" | "card">("list");
+  let pinnedFandoms = $state<Set<string>>(getPinnedFandoms());
+  $effect(() => savePinnedFandoms(pinnedFandoms));
+
+  let fandoms = $state<string[]>([]);
+  let searchStories = $state<StoryRow[]>([]);
+  let searchModalOpen = $state(false);
+  let loadingMore = $state(false);
+  let loadMoreError = $state("");
+
+  // ---- Bookmarks state ----
+  let bookmarkFandom = $state<string | undefined>(undefined);
+  let bookmarkSortBy = $state<SortBy>("favorites");
+  let bookmarkViewMode = $state<"list" | "card">("list");
+
+  let bookmarkedFandoms = $state<string[]>([]);
+  let bookmarkStories = $state<StoryRow[]>([]);
+  let continueReading = $state<StoryRow[]>([]);
+
+  let errorMessage = $state("");
+
+  async function loadFandoms() {
+    try {
+      fandoms = await api.listFandoms();
+    } catch (e) {
+      errorMessage = `Could not load fandoms: ${e}`;
+    }
+  }
+
+  async function loadBookmarkedFandoms() {
+    try {
+      bookmarkedFandoms = await api.listBookmarkedFandoms();
+    } catch (e) {
+      errorMessage = `Could not load bookmarked fandoms: ${e}`;
+    }
+  }
+
+  async function loadSearchStories() {
+    try {
+      searchStories = await api.listStories({
+        fandom: searchFandom,
+        search: searchText.trim() || undefined,
+        minWordCount,
+        status,
+        sortBy: searchSortBy,
+        hideReadAndDismissed
+      });
+      errorMessage = "";
+    } catch (e) {
+      errorMessage = `Could not load stories: ${e}`;
+    }
+  }
+
+  async function loadBookmarkStories() {
+    try {
+      bookmarkStories = await api.listBookmarks({
+        fandom: bookmarkFandom,
+        sortBy: bookmarkSortBy
+      });
+      errorMessage = "";
+    } catch (e) {
+      errorMessage = `Could not load bookmarks: ${e}`;
+    }
+  }
+
+  async function loadContinueReading() {
+    try {
+      continueReading = await api.getContinueReading(5);
+    } catch (e) {
+      errorMessage = `Could not load continue reading: ${e}`;
+    }
+  }
+
+  $effect(() => {
+    void searchFandom;
+    void searchText;
+    void minWordCount;
+    void status;
+    void searchSortBy;
+    void hideReadAndDismissed;
+    loadSearchStories();
+  });
+
+  $effect(() => {
+    void bookmarkFandom;
+    void bookmarkSortBy;
+    loadBookmarkStories();
+  });
+
+  loadFandoms();
+  loadBookmarkedFandoms();
+  loadContinueReading();
+
+  // Any toggle can affect both lists (a story visible in Search may be the
+  // one just bookmarked/unbookmarked) plus the bookmarked-fandoms scope and
+  // the Continue Reading surface — dataset is tiny, so just refresh everything.
+  async function refreshAll() {
+    await Promise.all([loadSearchStories(), loadBookmarkStories(), loadBookmarkedFandoms(), loadContinueReading()]);
+  }
+
+  function sleep(ms: number) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  // Re-fetches each in-progress bookmarked story's own page (chapter 1) —
+  // that's enough to refresh its metadata (favorites, word/chapter count,
+  // the FFN "Updated:" text, and status if it's actually finished now) and
+  // pick up any new chapters, same as any other story-page fetch. Skips
+  // stories already marked complete locally (SPEC.md §6) — those don't
+  // change. Paced the same way as bulk chapter prefetch/discovery: a burst
+  // of requests with no gaps reads as bot traffic to Cloudflare.
+  let refreshingBookmarks = $state(false);
+  let refreshProgress = $state("");
+
+  async function refreshBookmarks() {
+    if (refreshingBookmarks) return;
+    refreshingBookmarks = true;
+    refreshProgress = "";
+    try {
+      const targets = await api.listBookmarks({ status: "in_progress" });
+      for (let i = 0; i < targets.length; i++) {
+        const story = targets[i];
+        refreshProgress = `Refreshing ${i + 1} of ${targets.length}…`;
+        try {
+          await api.fetchChapterAndWait(`https://www.fanfiction.net/s/${story.ffnStoryId}/1/`, story.id, 1);
+        } catch {
+          // Best-effort — one story failing (e.g. taken down) shouldn't stop the rest.
+        }
+        await refreshAll();
+        if (i < targets.length - 1) await sleep(1500 + Math.random() * 1500);
+      }
+    } finally {
+      refreshingBookmarks = false;
+      refreshProgress = "";
+    }
+  }
+
+  async function handleFfnImported(importedFandom: string) {
+    searchModalOpen = false;
+    await loadFandoms();
+    searchFandom = importedFandom;
+    await loadSearchStories();
+  }
+
+  async function loadMoreFromFfn() {
+    if (!searchFandom) return;
+    loadingMore = true;
+    loadMoreError = "";
+    try {
+      await api.searchFfnAndWait(searchFandom, minWordCount ?? 0, status ?? "any");
+      await loadSearchStories();
+    } catch (e) {
+      loadMoreError = e instanceof Error ? e.message : String(e);
+    } finally {
+      loadingMore = false;
+    }
+  }
+
+  async function handleToggleRead(story: StoryRow) {
+    try {
+      await api.toggleRead(story.id, !story.isRead);
+      await refreshAll();
+    } catch (e) {
+      errorMessage = `Could not update read state: ${e}`;
+    }
+  }
+
+  async function handleToggleDismissed(story: StoryRow) {
+    try {
+      await api.toggleDismissed(story.id, !story.dismissed);
+      await refreshAll();
+    } catch (e) {
+      errorMessage = `Could not update dismissed state: ${e}`;
+    }
+  }
+
+  async function handleToggleBookmarked(story: StoryRow) {
+    try {
+      await api.toggleBookmarked(story.id, !story.bookmarked);
+      await refreshAll();
+    } catch (e) {
+      errorMessage = `Could not update bookmark: ${e}`;
+    }
+  }
+
+  function fmtChapter(story: StoryRow) {
+    return story.lastChapterNum ? `Ch. ${story.lastChapterNum} of ${story.chapterCount}` : "Not started";
+  }
+</script>
+
+{#if screen === "reader" && readerStoryId !== undefined && readerChapterNum !== undefined}
+  <Reader
+    storyId={readerStoryId}
+    initialChapterNum={readerChapterNum}
+    onBack={() => (screen = lastListScreen)}
+    onChanged={refreshAll}
+  />
+{:else}
+<div class="app">
+  <div class="top-shell">
+    <div class="wordmark">FanFiction<em>Reader</em></div>
+    <div class="screen-tabs" role="tablist">
+      <button role="tab" aria-selected={screen === "search"} onclick={() => (screen = "search")}>Search</button>
+      <button role="tab" aria-selected={screen === "bookmarks"} onclick={() => (screen = "bookmarks")}>Bookmarks</button>
+    </div>
+    <div class="top-shell-right">
+      <button
+        class="refresh-btn"
+        class:spinning={refreshingBookmarks}
+        onclick={refreshBookmarks}
+        disabled={refreshingBookmarks}
+        title={refreshingBookmarks ? refreshProgress : "Refresh bookmarked stories (in-progress only)"}
+      >
+        <RefreshCw size={15} />
+      </button>
+      <ThemeToggle />
+      <a class="debug-link" href="/debug">Debug tools</a>
+    </div>
+  </div>
+
+  {#if errorMessage}
+    <p class="error">{errorMessage}</p>
+  {/if}
+
+  {#if screen === "search"}
+    <div class="filterbar">
+      <FandomPicker
+        fandoms={fandoms}
+        selected={searchFandom}
+        pinnable
+        bind:pinnedFandoms
+        onSelect={(f) => (searchFandom = f)}
+      />
+      <button class="search-ffn-btn" onclick={() => (searchModalOpen = true)}>Search FFN</button>
+
+      <input class="search-input" placeholder="Search title, author, or summary…" bind:value={searchText} />
+
+      <div class="field-group" role="group" aria-label="Minimum word count">
+        <button class:active={minWordCount === undefined} onclick={() => (minWordCount = undefined)}>Any length</button>
+        <button class:active={minWordCount === 40000} onclick={() => (minWordCount = 40000)}>40K+</button>
+        <button class:active={minWordCount === 100000} onclick={() => (minWordCount = 100000)}>100K+</button>
+      </div>
+
+      <div class="field-group" role="group" aria-label="Status">
+        <button class:active={status === undefined} onclick={() => (status = undefined)}>Any status</button>
+        <button class:active={status === "complete"} onclick={() => (status = "complete")}>Done</button>
+        <button class:active={status === "in_progress"} onclick={() => (status = "in_progress")}>Ongoing</button>
+      </div>
+
+      <div class="sort-select-wrap">
+        <select class="sort-select" bind:value={searchSortBy}>
+          <option value="favorites">Sort: Favorites</option>
+          <option value="updated">Sort: Updated</option>
+          <option value="words">Sort: Word count</option>
+        </select>
+        <ChevronDown size={13} class="sort-caret" />
+      </div>
+
+      <label class="hide-toggle">
+        <input type="checkbox" bind:checked={hideReadAndDismissed} /> Hide read &amp; dismissed
+      </label>
+
+      <div class="view-toggle" role="group" aria-label="View">
+        <button class:active={searchViewMode === "list"} onclick={() => (searchViewMode = "list")} title="List view"><List size={15} /></button>
+        <button class:active={searchViewMode === "card"} onclick={() => (searchViewMode = "card")} title="Card view"><LayoutGrid size={15} /></button>
+      </div>
+    </div>
+
+    {#if searchStories.length === 0}
+      {#if searchFandom}
+        <p class="empty-note">
+          {#if fandoms.includes(searchFandom)}
+            You've gone through everything imported for "{searchFandom}" with these filters.
+          {:else}
+            No stories for "{searchFandom}" yet.
+          {/if}
+          <br />
+          <button class="load-more-btn" onclick={loadMoreFromFfn} disabled={loadingMore}>
+            {loadingMore ? "Loading…" : "Load more from FFN"}
+          </button>
+          {#if loadMoreError}<span class="error">{loadMoreError}</span>{/if}
+        </p>
+      {:else}
+        <p class="empty-note">
+          No stories yet. Click <button class="link-btn" onclick={() => (searchModalOpen = true)}>Search FFN</button> to pull some in.
+        </p>
+      {/if}
+    {:else}
+      <StoryList
+        stories={searchStories}
+        viewMode={searchViewMode}
+        onOpenStory={openStory}
+        onToggleRead={handleToggleRead}
+        onToggleDismissed={handleToggleDismissed}
+        onToggleBookmarked={handleToggleBookmarked}
+      />
+      {#if searchFandom}
+        <div class="load-more-row">
+          <button class="load-more-btn" onclick={loadMoreFromFfn} disabled={loadingMore}>
+            {loadingMore ? "Loading…" : "Load more from FFN"}
+          </button>
+          {#if loadMoreError}<span class="error">{loadMoreError}</span>{/if}
+        </div>
+      {/if}
+    {/if}
+  {:else}
+    {#if continueReading.length > 0}
+      <div class="continue-reading">
+        <h3>Continue Reading</h3>
+        <div class="continue-row">
+          {#each continueReading as story (story.id)}
+            <button class="continue-card" onclick={() => openStory(story)}>
+              <div class="t">{story.title}</div>
+              <div class="meta">{story.fandom} · {fmtChapter(story)}</div>
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
+    <div class="filterbar">
+      <FandomPicker fandoms={bookmarkedFandoms} selected={bookmarkFandom} onSelect={(f) => (bookmarkFandom = f)} />
+
+      <div class="sort-select-wrap">
+        <select class="sort-select" bind:value={bookmarkSortBy}>
+          <option value="favorites">Sort: Favorites</option>
+          <option value="updated">Sort: Updated</option>
+          <option value="words">Sort: Word count</option>
+        </select>
+        <ChevronDown size={13} class="sort-caret" />
+      </div>
+
+      <div class="view-toggle" role="group" aria-label="View">
+        <button class:active={bookmarkViewMode === "list"} onclick={() => (bookmarkViewMode = "list")} title="List view"><List size={15} /></button>
+        <button class:active={bookmarkViewMode === "card"} onclick={() => (bookmarkViewMode = "card")} title="Card view"><LayoutGrid size={15} /></button>
+      </div>
+    </div>
+
+    {#if bookmarkStories.length === 0}
+      <p class="empty-note">No bookmarks yet. Bookmark a story from Search to see it here.</p>
+    {:else}
+      <StoryList
+        stories={bookmarkStories}
+        viewMode={bookmarkViewMode}
+        showFandom
+        includeDismiss={false}
+        onOpenStory={openStory}
+        onToggleRead={handleToggleRead}
+        onToggleDismissed={handleToggleDismissed}
+        onToggleBookmarked={handleToggleBookmarked}
+      />
+    {/if}
+  {/if}
+</div>
+{#if searchModalOpen}
+  <SearchFfnModal onClose={() => (searchModalOpen = false)} onImported={handleFfnImported} />
+{/if}
+{/if}
+
+<style>
+  .app {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .top-shell {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.85rem 1.5rem;
+    border-bottom: 1px solid var(--line);
+    background: var(--paper-raised);
+  }
+  .wordmark {
+    font-family: var(--serif);
+    font-size: 1.15rem;
+  }
+  .wordmark em {
+    font-style: italic;
+    color: var(--accent);
+  }
+  .top-shell-right {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+  }
+  .debug-link {
+    font-size: 0.72rem;
+    color: var(--ink-soft);
+    text-decoration: none;
+  }
+  .debug-link:hover {
+    color: var(--accent);
+    text-decoration: underline;
+  }
+  .refresh-btn {
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--paper);
+    color: var(--ink-soft);
+  }
+  .refresh-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .refresh-btn:disabled {
+    opacity: 0.6;
+  }
+  .refresh-btn.spinning :global(svg) {
+    animation: refresh-spin 0.9s linear infinite;
+  }
+  @keyframes refresh-spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .screen-tabs {
+    display: inline-flex;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .screen-tabs button {
+    border: none;
+    background: transparent;
+    color: var(--ink-soft);
+    font-size: 0.82rem;
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    font-weight: 600;
+  }
+  .screen-tabs button[aria-selected="true"] {
+    background: var(--accent);
+    color: var(--paper-raised);
+  }
+
+  .filterbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.9rem 1.5rem;
+    border-bottom: 1px solid var(--line);
+    background: var(--paper-raised);
+  }
+
+  .search-input,
+  .sort-select {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0.45rem 0.7rem;
+    background: var(--paper);
+    color: var(--ink);
+    font-size: 0.85rem;
+  }
+  .search-input {
+    flex: 1;
+    min-width: 160px;
+  }
+
+  .sort-select-wrap {
+    position: relative;
+    display: inline-flex;
+  }
+  .sort-select {
+    appearance: none;
+    -webkit-appearance: none;
+    font: inherit;
+    font-size: 0.78rem;
+    padding-right: 1.7rem;
+    cursor: pointer;
+  }
+  :global(.sort-caret) {
+    position: absolute;
+    right: 0.6rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--ink-soft);
+    pointer-events: none;
+  }
+
+  .field-group {
+    display: inline-flex;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .field-group button {
+    background: var(--paper);
+    border: none;
+    color: var(--ink-soft);
+    padding: 0.4rem 0.7rem;
+    font-size: 0.78rem;
+    border-right: 1px solid var(--line);
+  }
+  .field-group button:last-child {
+    border-right: none;
+  }
+  .field-group button.active {
+    background: var(--accent-wash);
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .hide-toggle {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+  }
+
+  .view-toggle {
+    display: inline-flex;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-left: auto;
+  }
+  .view-toggle button {
+    display: grid;
+    place-items: center;
+    background: var(--paper);
+    border: none;
+    width: 32px;
+    height: 32px;
+    color: var(--ink-soft);
+    border-right: 1px solid var(--line);
+  }
+  .view-toggle button:last-child {
+    border-right: none;
+  }
+  .view-toggle button.active {
+    background: var(--accent-wash);
+    color: var(--accent);
+  }
+
+  .error {
+    color: var(--rust);
+    padding: 0.8rem 1.5rem 0;
+  }
+  .empty-note {
+    padding: 2.5rem 1.5rem;
+    text-align: center;
+    color: var(--ink-soft);
+  }
+
+  .search-ffn-btn {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--paper);
+    color: var(--ink);
+    padding: 0.45rem 0.8rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+  .search-ffn-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  .link-btn {
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    text-decoration: underline;
+    padding: 0;
+  }
+
+  .load-more-row {
+    display: flex;
+    justify-content: center;
+    padding: 1rem;
+    border-top: 1px solid var(--line);
+  }
+  .load-more-btn {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--paper-raised);
+    color: var(--ink);
+    padding: 0.5rem 1rem;
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+  .load-more-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .load-more-btn:disabled {
+    opacity: 0.5;
+  }
+
+  .continue-reading {
+    padding: 1rem 1.5rem 0.4rem;
+    border-bottom: 1px solid var(--line);
+    background: var(--paper-raised);
+  }
+  .continue-reading h3 {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-soft);
+    font-family: var(--sans);
+    margin-bottom: 0.6rem;
+  }
+  .continue-row {
+    display: flex;
+    gap: 0.7rem;
+    overflow-x: auto;
+    padding-bottom: 1rem;
+  }
+  .continue-card {
+    flex-shrink: 0;
+    width: 220px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--paper);
+    padding: 0.7rem 0.9rem;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+  }
+  .continue-card:hover {
+    border-color: var(--accent);
+  }
+  .continue-card .t {
+    font-family: var(--serif);
+    font-size: 0.92rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .continue-card .meta {
+    font-size: 0.74rem;
+    color: var(--ink-soft);
+    margin-top: 0.2rem;
+  }
+</style>

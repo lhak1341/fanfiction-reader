@@ -1,0 +1,23 @@
+[[permission]]
+identifier = "allow-main-commands"
+description = "App commands invokable from the main window."
+commands.allow = [
+    "greet",
+    "fetch_page",
+    "db_health_check",
+    "list_stories",
+    "list_bookmarks",
+    "get_story",
+    "list_fandoms",
+    "list_bookmarked_fandoms",
+    "toggle_read",
+    "toggle_dismissed",
+    "toggle_bookmarked",
+    "set_resume_chapter",
+    "list_chapters",
+    "get_chapter",
+    "get_continue_reading",
+    "search_ffn",
+    "index_ffn_category",
+    "list_fandom_index",
+]
