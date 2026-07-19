@@ -1,7 +1,8 @@
 <script lang="ts">
   import * as api from "$lib/api";
   import { ChevronDown, LayoutGrid, List, RefreshCw } from "lucide-svelte";
-  import { getAo3Tag } from "$lib/ao3TagMap";
+  import { ficSourceAdapter } from "$lib/ficSource";
+  import { applyFandomRename } from "$lib/fandom";
   import FandomPicker from "$lib/components/FandomPicker.svelte";
   import Reader from "$lib/components/Reader.svelte";
   import SearchModal from "$lib/components/SearchModal.svelte";
@@ -164,7 +165,7 @@
         const story = targets[i];
         refreshProgress = `Refreshing ${i + 1} of ${targets.length}…`;
         try {
-          const url = api.chapterFetchUrl(story, 1, null);
+          const url = ficSourceAdapter(story.source).chapterUrl(story, 1, null);
           await api.fetchChapterAndWait(story.source, url, story.id, 1);
         } catch {
           // Best-effort — one story failing (e.g. taken down) shouldn't stop the rest.
@@ -195,13 +196,7 @@
   async function handleRenameFandom(oldFandom: string, newFandom: string) {
     try {
       await api.renameFandom(oldFandom, newFandom);
-      if (pinnedFandoms.has(oldFandom)) {
-        const next = new Set(pinnedFandoms);
-        next.delete(oldFandom);
-        next.add(newFandom);
-        pinnedFandoms = next;
-      }
-      if (searchFandom === oldFandom) searchFandom = newFandom;
+      ({ pinnedFandoms, searchFandom } = applyFandomRename(oldFandom, newFandom, pinnedFandoms, searchFandom));
       await loadFandoms();
       await loadSearchStories();
     } catch (e) {
@@ -218,13 +213,7 @@
     loadMoreError = "";
     try {
       const source = sourceFilter ?? lastSearchSource;
-      if (source === "ao3") {
-        const tag = getAo3Tag(searchFandom);
-        if (!tag) throw new Error(`No AO3 tag saved for "${searchFandom}" yet — search it once via the modal first.`);
-        await api.searchAo3AndWait(tag, searchFandom, minWordCount ?? 0, status ?? "any");
-      } else {
-        await api.searchFfnAndWait(searchFandom, minWordCount ?? 0, status ?? "any");
-      }
+      await ficSourceAdapter(source).loadMore(searchFandom, minWordCount ?? 0, status ?? "any");
       await loadSearchStories();
     } catch (e) {
       loadMoreError = e instanceof Error ? e.message : String(e);

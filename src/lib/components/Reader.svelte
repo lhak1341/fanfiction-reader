@@ -8,6 +8,7 @@
   import { tick } from "svelte";
   import { ChevronLeft, ChevronRight, Check, Menu, Star, Type, X } from "lucide-svelte";
   import * as api from "$lib/api";
+  import { ficSourceAdapter } from "$lib/ficSource";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import { getReaderPrefs, saveReaderPrefs, type ReaderPrefs } from "$lib/readerPrefs";
   import type { ChapterContent, ChapterListItem, StoryRow } from "$lib/types";
@@ -94,7 +95,7 @@
       if (gen !== prefetchGen) return;
       try {
         const sourceChapterId = chapters.find((c) => c.chapterNum === n)?.sourceChapterId;
-        const url = api.chapterFetchUrl(story, n, sourceChapterId);
+        const url = ficSourceAdapter(story.source).chapterUrl(story, n, sourceChapterId);
         await api.fetchChapterAndWait(story.source, url, storyId, n);
         chapters = await api.listChapters(storyId);
       } catch {
@@ -116,7 +117,7 @@
       if (!chapter || !chapter.isCached) {
         if (!story) throw new Error("story metadata not loaded yet");
         const sourceChapterId = chapters.find((c) => c.chapterNum === num)?.sourceChapterId;
-        const url = api.chapterFetchUrl(story, num, sourceChapterId);
+        const url = ficSourceAdapter(story.source).chapterUrl(story, num, sourceChapterId);
         await api.fetchChapterAndWait(story.source, url, storyId, num);
         chapters = await api.listChapters(storyId);
         chapter = await api.getChapter(storyId, num);

@@ -5,7 +5,7 @@
 //!
 //! This module is the parsing layer only — the upsert path
 //! (`db::upsert_ao3_story`) and fetch path (`fetch_ao3_html`/
-//! `try_persist_ao3_fetch` in `lib.rs`, plain `reqwest`, no webview needed)
+//! `try_persist_fetch::<source::Ao3>` in `lib.rs`, plain `reqwest`, no webview needed)
 //! live elsewhere, same split `ffn.rs`'s own parsing/fetch layers have.
 
 use scraper::{ElementRef, Html, Selector};
@@ -465,5 +465,55 @@ mod tests {
     fn work_id_from_url_does_not_false_positive_on_a_listing_url() {
         let listing_url = build_tag_browse_url("Naruto", "kudos_count", 0, "any", 1);
         assert!(work_id_from_url(&listing_url).is_err());
+    }
+
+    // Real markup captured live (2026-07-19), see architecture review
+    // candidate 5 — an 80-chapter, in-progress, Explicit-rated multi-fandom
+    // crossover work, and a 20-work Harry Potter tag listing page.
+    const WORK_PAGE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ao3_work_page.html"));
+    const LISTING_PAGE: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ao3_listing_page.html"));
+
+    #[test]
+    fn parse_work_page_extracts_real_markup() {
+        let (meta, chapters) = parse_work_page(WORK_PAGE, 85_954_646).unwrap();
+
+        assert_eq!(meta.source_story_id, 85_954_646);
+        assert_eq!(meta.title, "Perks of Being Kidnapped");
+        assert_eq!(meta.author, "MackoBole");
+        // Crossover work — natively multi-fandom on AO3, unlike FFN.
+        assert_eq!(meta.fandom, "Original Work, Naruto (Anime & Manga)");
+        assert_eq!(meta.rating, "Explicit");
+        assert_eq!(meta.category.as_deref(), Some("F/F, F/M, Multi"));
+        assert_eq!(meta.warnings.as_deref(), Some("Graphic Depictions Of Violence, Major Character Death"));
+        assert_eq!(meta.language.as_deref(), Some("English"));
+        assert_eq!(meta.status, "in_progress");
+        assert_eq!(meta.word_count, 145_717);
+        assert_eq!(meta.favorite_count, 29);
+        assert_eq!(meta.chapter_count, 80);
+
+        assert_eq!(chapters.len(), 80);
+        assert_eq!(chapters[0].chapter_num, 1);
+        assert_eq!(chapters[0].chapter_id, Some(227_238_471));
+        assert_eq!(chapters[79].chapter_num, 80);
+        assert_eq!(chapters[79].chapter_id, Some(235_622_396));
+    }
+
+    #[test]
+    fn parse_chapter_content_extracts_userstuff_article() {
+        let content = parse_chapter_content(WORK_PAGE).unwrap();
+        assert!(content.len() > 500, "expected real chapter prose, got {} bytes", content.len());
+    }
+
+    #[test]
+    fn parse_listing_page_extracts_real_markup() {
+        let works = parse_listing_page(LISTING_PAGE).unwrap();
+
+        assert_eq!(works.len(), 20);
+        assert_eq!(works[0].source_story_id, 10_057_010);
+        assert_eq!(works[0].title, "All the Young Dudes");
+        assert_eq!(works[0].author, "MsKingBean89");
+        assert_eq!(works[0].fandom, "Harry Potter - J. K. Rowling");
+        assert_eq!(works[0].rating, "Mature");
     }
 }

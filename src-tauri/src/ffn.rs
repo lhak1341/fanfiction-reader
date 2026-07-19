@@ -236,10 +236,18 @@ pub fn build_browse_url(category: &str, fandom: &str, min_word_count: i64, statu
 /// Pulls whatever trails the "Published: <date>" segment on a browse-page
 /// metadata line — that's where character/pairing tags sit there, unlike
 /// the story page where they sit right after genre. `None` if a story has
-/// no tags listed (some don't).
+/// no tags listed (some don't). A completed story appends a trailing
+/// "- Complete" marker after the tags on this same line (in-progress rows
+/// have no such marker) — stripped here so it doesn't leak into `tags`
+/// (caught by `parse_browse_page_extracts_real_markup`, architecture
+/// review candidate 5, 2026-07-19).
 fn extract_trailing_tags(meta_text: &str) -> Option<String> {
     let after_published = meta_text.split("Published:").nth(1)?;
-    let tags = after_published.splitn(2, " - ").nth(1)?.trim();
+    let mut tags = after_published.splitn(2, " - ").nth(1)?.trim();
+    tags = tags.strip_suffix(" - Complete").unwrap_or(tags).trim();
+    if tags == "Complete" {
+        tags = "";
+    }
     if tags.is_empty() {
         None
     } else {
@@ -425,4 +433,89 @@ pub fn parse_chapter_content(html: &str) -> Result<String, String> {
         .next()
         .map(|el| el.inner_html())
         .ok_or_else(|| "could not find #storytext".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Real markup captured live (2026-07-19) — a 144-chapter, in-progress
+    // story page (viewing chapter 34) — see architecture review candidate 5.
+    const STORY_PAGE: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ffn_story_page.html"));
+
+    #[test]
+    fn parse_story_page_extracts_real_markup() {
+        let (meta, chapters) = parse_story_page(STORY_PAGE, 13_493_099).unwrap();
+
+        assert_eq!(meta.ffn_story_id, 13_493_099);
+        assert_eq!(meta.title, "Welcome to the (insane) world of Pokémon");
+        assert_eq!(meta.author, "CaptainMoonshine");
+        assert_eq!(meta.fandom, "Pokémon");
+        assert_eq!(meta.rating, "M");
+        assert_eq!(meta.genre.as_deref(), Some("Adventure/Mystery"));
+        assert_eq!(meta.language.as_deref(), Some("English"));
+        assert_eq!(meta.tags.as_deref(), Some("Riolu, Kirlia, OC"));
+        assert_eq!(meta.status, "in_progress");
+        assert_eq!(meta.word_count, 510_859);
+        assert_eq!(meta.favorite_count, 7_486);
+        assert_eq!(meta.chapter_count, 144);
+        assert!(meta.updated_at.is_some());
+
+        // The dropdown is rendered twice on a real page (top + bottom nav) —
+        // this is the sort_by_key/dedup_by_key pair's actual job, not just
+        // defensive code.
+        assert_eq!(chapters.len(), 144);
+        assert_eq!(chapters[0].chapter_num, 1);
+        assert_eq!(chapters[0].title, "Summoned");
+        assert_eq!(chapters[143].chapter_num, 144);
+        assert_eq!(chapters[143].title, "Perfectly Flawless");
+    }
+
+    #[test]
+    fn parse_chapter_content_extracts_storytext() {
+        let content = parse_chapter_content(STORY_PAGE).unwrap();
+        assert!(content.len() > 500, "expected real chapter prose, got {} bytes", content.len());
+    }
+
+    // Real markup captured live (2026-07-19) via the app's own webview —
+    // Fullmetal Alchemist browse listing, and the Books category index.
+    const BROWSE_LISTING: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ffn_browse_listing.html"));
+    const CATEGORY_INDEX: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ffn_category_index.html"));
+
+    #[test]
+    fn parse_browse_page_extracts_real_markup() {
+        let stories = parse_browse_page(BROWSE_LISTING, "Fullmetal Alchemist").unwrap();
+        assert_eq!(stories.len(), 25);
+
+        let first = &stories[0];
+        assert_eq!(first.ffn_story_id, 2_783_898);
+        assert_eq!(first.title, "Full Circle");
+        assert_eq!(first.author, "Nike Femme");
+        assert_eq!(first.fandom, "Fullmetal Alchemist");
+        assert_eq!(first.rating, "T");
+        assert_eq!(first.genre.as_deref(), Some("Adventure/Drama"));
+        assert_eq!(first.language.as_deref(), Some("English"));
+        assert_eq!(first.status, "complete");
+        assert_eq!(first.word_count, 144_252);
+        assert_eq!(first.favorite_count, 3_019);
+        assert_eq!(first.chapter_count, 36);
+        // Regression case for the trailing "- Complete" marker bug found
+        // while writing this test — see extract_trailing_tags.
+        assert_eq!(first.tags.as_deref(), Some("Edward E., Roy M."));
+    }
+
+    #[test]
+    fn parse_fandom_index_extracts_and_filters_real_markup() {
+        let entries = parse_fandom_index(CATEGORY_INDEX, 1000);
+        // Sorted descending by count; page has 2,616 fandoms total but only
+        // those with >= 1,000 fics are surfaced (locked scope, see the
+        // parse_fandom_index doc comment).
+        assert_eq!(entries.len(), 71);
+        assert_eq!(entries[0], ("Harry Potter".to_string(), 852_000));
+        assert_eq!(entries[1], ("Twilight".to_string(), 223_000));
+        assert_eq!(entries.last().unwrap(), &("Keeper of the Lost Cities".to_string(), 1_000));
+    }
 }

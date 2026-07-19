@@ -26,7 +26,7 @@ A solo, local-only desktop app for reading fanfiction.net, built to fix the two 
   - `reqwest` — sat unused through v1 (the webview strategy, §3, was sufficient for FFN); now the actual AO3 fetch path (§8) — a bare client works there, no webview needed.
 - **lucide-svelte** — icon set used throughout instead of unicode glyphs.
 
-**Maintenance note — adding a new Tauri command**: registering it in `invoke_handler!` (`lib.rs`) is not enough on its own; Tauri v2's permission system also requires it added to `commands.allow` in `permissions/main-commands.toml`, or the frontend gets a runtime "not allowed" error with no compile-time warning. Confirmed the hard way (2026-07-19): `search_ao3`/`fetch_ao3_page` compiled and ran fine but were rejected at `invoke()` time until added there. Relatedly, editing `permissions/*.toml` (or `capabilities/*.json`) does **not** reliably trigger a rebuild — Cargo's build-script fingerprinting is content-based, not mtime-based, so even `touch build.rs` doesn't force `tauri_build::build()` to rerun; only an actual content change to `build.rs` (or a full `cargo clean -p app`) does.
+**Maintenance note — adding a new Tauri command**: registering it in `invoke_handler!` (`lib.rs`) is not enough on its own; Tauri v2's permission system also requires it added to `commands.allow` in some `permissions/*.toml` file (referenced by the right capability for the window it needs), or the frontend gets a runtime "not allowed" error with no compile-time warning. Confirmed the hard way (2026-07-19): `search_ao3`/`fetch_ao3_page` compiled and ran fine but were rejected at `invoke()` time until added there. Relatedly, editing `permissions/*.toml` (or `capabilities/*.json`) does **not** reliably trigger a rebuild — Cargo's build-script fingerprinting is content-based, not mtime-based, so even `touch build.rs` doesn't force `tauri_build::build()` to rerun; only an actual content change to `build.rs` (or a full `cargo clean -p app`) does. **Guarded by a test since the architecture review (2026-07-19)**: `src-tauri/tests/command_registration.rs` asserts `invoke_handler!`'s command set equals the union of `commands.allow` across every `permissions/*.toml` file — a forgotten entry now fails `cargo test`, not just the running app.
 
 ## 3. Fetching & Cloudflare strategy
 
@@ -40,7 +40,7 @@ fanfiction.net sits behind Cloudflare bot protection.
 
 ## 4. Scraping
 
-Three page types are parsed, all in `src-tauri/src/ffn.rs`, dispatched on URL shape in `try_persist_fetch` (`lib.rs`):
+Three page types are parsed, all in `src-tauri/src/ffn.rs`. Two of them (chapter fetch, browse listing) dispatch through the `FicSource` trait (`src-tauri/src/source.rs`) shared with AO3 — one generic `try_persist_fetch::<S: FicSource>` (`lib.rs`) replaces what used to be two near-identical ~100-line functions (architecture review, 2026-07-19). The third (category index) has no AO3 equivalent and stays FFN-specific, dispatched directly in `lib.rs` outside the trait. The frontend has a matching seam, `src/lib/ficSource.ts` (`ffnAdapter`/`ao3Adapter`), covering chapter-URL-building and search-continuation — see `CONTEXT.md`'s `FicSource` entry for the full scope/non-scope of both.
 
 | URL shape | Example | Parser |
 |---|---|---|
@@ -49,6 +49,8 @@ Three page types are parsed, all in `src-tauri/src/ffn.rs`, dispatched on URL sh
 | `/{category}/` | `/anime/` | `parse_fandom_index` |
 
 Selectors below are real, verified against live-fetched markup (not guessed from FanFicFare's Python source, though the field mapping was ported from its `adapter_fanfictionnet.py`).
+
+**Fixture tests (2026-07-19)**: all six parse functions across both sources (`parse_story_page`/`parse_chapter_content`/`parse_browse_page`/`parse_fandom_index` here, `parse_work_page`/`parse_listing_page`/`parse_chapter_content` in `ao3.rs`) now have unit tests against real captured markup in `src-tauri/tests/fixtures/*.html`, asserting concrete field values rather than just "doesn't error" — this is what caught the `extract_trailing_tags` bug above. FFN fixtures can only be captured via the app's own webview (bare fetches are Cloudflare-blocked, confirmed live during this session even with a real desktop UA — see §3); AO3 fixtures can be fetched directly (`python3 urllib` + a real UA header).
 
 ### Story page (`parse_story_page`)
 
@@ -66,6 +68,8 @@ Selectors below are real, verified against live-fetched markup (not guessed from
 One `div.z-list` per story. Title+id: `a.stitle[href]` (href's 2nd path segment is `ffn_story_id`). Author: `a[href^="/u/"]`. Summary: direct text nodes of the row's `div.z-indent`, excluding its nested metadata div. Metadata line (`div.z-padtop2`) has the **same fields as the story page but different tag placement** — character/pairing tags sit *after* "Published:", not after genre — and "Rated:" has no `<a>` wrapper or "Fiction" prefix here. Fandom isn't repeated per row; it's derived once from the URL path (`fandom_from_browse_url`/`parse_browse_url`) and applied to every parsed entry, since the page has no element naming it anywhere.
 
 `chapter_count` comes straight from the listing's own "Chapters: N" field — no per-chapter titles are known yet for a newly-discovered story; those populate lazily the first time each chapter is actually opened, same as any story.
+
+**Bug found and fixed (architecture review candidate 5, 2026-07-19)**: `extract_trailing_tags` didn't strip the trailing `"- Complete"` status marker FFN appends after the character/pairing tags on a *completed* story's row — it leaked straight into `tags` (e.g. `"Edward E., Roy M. - Complete"` instead of `"Edward E., Roy M."`). In-progress rows were never affected (no such marker to leak). Caught by a fixture test against real captured markup (`ffn_browse_listing.html`), fixed, regression-tested. 141 rows in the already-imported DB carry the stale value — not auto-repaired.
 
 ### Category fandom index (`parse_fandom_index`)
 

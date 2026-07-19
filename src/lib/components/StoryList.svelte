@@ -26,6 +26,15 @@
     onToggleDismissed: (s: StoryRow) => void;
     onToggleBookmarked: (s: StoryRow) => void;
   } = $props();
+
+  // AO3 rows can carry a dozen+ freeform tags — capping the chip count
+  // (not just each chip's own width) is what actually keeps a card's
+  // height in check, since flex-wrap alone just keeps adding rows.
+  const MAX_TAG_CHIPS = 4;
+  function visibleTags(tags: string): { shown: string[]; extra: number } {
+    const all = tags.split(", ");
+    return { shown: all.slice(0, MAX_TAG_CHIPS), extra: Math.max(0, all.length - MAX_TAG_CHIPS) };
+  }
 </script>
 
 {#if viewMode === "list"}
@@ -72,16 +81,20 @@
     {#each stories as story (story.id)}
       <div class="card" class:dim={story.isRead || story.dismissed}>
         <div class="fandom-row">
-          <div class="fandom">{story.fandom}</div>
+          <div class="fandom" title={story.fandom}>{story.fandom}</div>
           <span class="source-badge" class:ao3={story.source === "ao3"}>{story.source === "ao3" ? "AO3" : "FFN"}</span>
         </div>
         <h4><button class="link" onclick={() => onOpenStory(story)}>{story.title}</button></h4>
-        <p class="summary">{story.summary ?? ""}</p>
+        <p class="summary" title={story.summary ?? undefined}>{story.summary ?? ""}</p>
         {#if story.tags}
+          {@const { shown, extra } = visibleTags(story.tags)}
           <div class="tag-chips">
-            {#each story.tags.split(", ") as t (t)}
-              <span class="tag-chip">{t}</span>
+            {#each shown as t (t)}
+              <span class="tag-chip" title={t}>{t}</span>
             {/each}
+            {#if extra > 0}
+              <span class="tag-chip tag-chip-more" title={story.tags}>+{extra} more</span>
+            {/if}
           </div>
         {/if}
         <div class="tags">
@@ -318,6 +331,10 @@
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .card p.summary {
     font-size: 0.82rem;
@@ -325,6 +342,12 @@
     line-height: 1.4;
     margin: 0;
     flex: 1;
+    display: -webkit-box;
+    -webkit-line-clamp: 7;
+    line-clamp: 7;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: break-word;
   }
   .tags {
     display: flex;
@@ -338,6 +361,10 @@
     border-radius: 5px;
     padding: 0.12rem 0.4rem;
     color: var(--ink-soft);
+    max-width: 100px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .tag-chips {
     display: flex;
@@ -350,6 +377,15 @@
     border-radius: 999px;
     padding: 0.12rem 0.55rem;
     color: var(--accent);
+    max-width: 90px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .tag-chip-more {
+    color: var(--ink-soft);
+    background: var(--paper);
+    border: 1px dashed var(--line);
   }
   .cardfoot {
     display: flex;

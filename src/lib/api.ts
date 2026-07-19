@@ -130,19 +130,6 @@ export function fetchChapterAndWait(source: StorySource, url: string, storyId: n
   });
 }
 
-/// Builds the fetch URL for a given chapter, source-aware. AO3 chapters
-/// beyond the first need their own opaque `sourceChapterId`
-/// (`/works/{id}/chapters/{id}`, SPEC.md §8) — a one-shot with no chapter id
-/// known yet falls back to the bare `/works/{id}` page.
-export function chapterFetchUrl(story: StoryRow, chapterNum: number, sourceChapterId: number | null | undefined): string {
-  if (story.source === "ao3") {
-    return sourceChapterId
-      ? `https://archiveofourown.org/works/${story.ffnStoryId}/chapters/${sourceChapterId}`
-      : `https://archiveofourown.org/works/${story.ffnStoryId}`;
-  }
-  return `https://www.fanfiction.net/s/${story.ffnStoryId}/${chapterNum}/`;
-}
-
 // ---- FFN discovery (SPEC.md §6) ----
 // Same fetch_page/report_fetch_result mechanism as chapters — a fetched
 // browse page is parsed and imported, then a browse-fetched/-error event

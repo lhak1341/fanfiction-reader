@@ -10,7 +10,7 @@
   import { X } from "lucide-svelte";
   import * as api from "$lib/api";
   import { fold } from "$lib/normalize";
-  import { getAo3Tag, saveAo3Tag } from "$lib/ao3TagMap";
+  import { getAo3Tag, saveAo3Tag } from "$lib/fandom";
   import { FFN_CATEGORIES } from "$lib/types";
   import type { FandomIndexEntry, StorySource, StoryStatus } from "$lib/types";
 
@@ -39,7 +39,7 @@
   // ---- AO3 fields ----
   // No cached tag index exists (unlike FFN's fandom_index) — the fandom
   // name is typed free text, and its AO3 tag is looked up from a small
-  // user-maintained map (ao3TagMap.ts), auto-filled once saved. A typo here
+  // user-maintained map (fandom.ts), auto-filled once saved. A typo here
   // fails the same way typing it into AO3's own search would (empty/wrong
   // results), not a silent 404.
   let ao3FandomName = $state("");

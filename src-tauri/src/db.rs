@@ -112,6 +112,18 @@ CREATE TABLE IF NOT EXISTS ao3_browse_state (
 
 pub struct Db(pub Mutex<Connection>);
 
+impl Db {
+    /// Locks the connection and stringifies any rusqlite error into the
+    /// `Result<T, String>` shape every Tauri command needs to return — the
+    /// one place that ceremony lives, instead of repeated per-command
+    /// `let conn = db.0.lock().map_err(...)?; ...map_err(...)` boilerplate
+    /// (architecture review candidate 3, 2026-07-19).
+    pub fn run<T>(&self, f: impl FnOnce(&Connection) -> rusqlite::Result<T>) -> Result<T, String> {
+        let conn = self.0.lock().map_err(|e| e.to_string())?;
+        f(&conn).map_err(|e| e.to_string())
+    }
+}
+
 /// Upserts a story by its (source, source_story_id) natural key — FFN is the
 /// only source that feeds this today, hardcoded below; an AO3 parser will
 /// need its own insert path since its metadata shape differs (category,

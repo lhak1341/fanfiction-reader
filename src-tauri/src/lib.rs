@@ -2,7 +2,9 @@ mod ao3;
 mod db;
 mod ffn;
 mod queries;
+mod source;
 
+use source::{ChapterInfo, FicSource};
 use tauri::{Emitter, Manager};
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -15,25 +17,18 @@ fn greet(name: &str) -> String {
 /// exists and reports each one's row count.
 #[tauri::command]
 fn db_health_check(db: tauri::State<db::Db>) -> Result<Vec<String>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
-        .map_err(|e| e.to_string())?;
-    let table_names: Vec<String> = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .map_err(|e| e.to_string())?
-        .collect::<Result<_, _>>()
-        .map_err(|e| e.to_string())?;
+    db.run(|conn| {
+        let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")?;
+        let table_names: Vec<String> = stmt.query_map([], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
 
-    table_names
-        .into_iter()
-        .map(|name| {
-            let count: i64 = conn
-                .query_row(&format!("SELECT COUNT(*) FROM {name}"), [], |row| row.get(0))
-                .map_err(|e| e.to_string())?;
-            Ok(format!("{name}: {count} row(s)"))
-        })
-        .collect()
+        table_names
+            .into_iter()
+            .map(|name| {
+                let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {name}"), [], |row| row.get(0))?;
+                Ok(format!("{name}: {count} row(s)"))
+            })
+            .collect()
+    })
 }
 
 /// Serializes access to the single reused `fetch-page` window (see below) —
@@ -155,17 +150,82 @@ enum FetchOutcome {
     FandomIndex(FandomIndexFetched),
 }
 
-/// Does the actual parse+persist work; `report_fetch_result` below turns its
-/// `Result` into `chapter-fetched`/`browse-fetched`/`*-error` events, since
-/// the command that opened the window (`fetch_page`) already returned by the
-/// time this fires — callers can't just `await` a return value here.
-///
-/// Branches on the URL shape: `/s/{id}/{num}/...` is a chapter page: fetch
-/// its content, persist it, register the story's TOC. Anything else is
-/// treated as a browse/category listing page (SPEC.md §6 discovery loop):
-/// parse every story summary on it and upsert each as a stub (metadata
-/// only — chapters get fetched lazily like any other story once opened).
-fn try_persist_fetch(
+/// Generic parse+persist dispatch shared by every `FicSource` (`source.rs`):
+/// tries the chapter shape first, then the listing shape, else errors.
+/// `report_fetch_result`/`fetch_ao3_page` below turn the `Result` into
+/// `chapter-fetched`/`browse-fetched`/`*-error` events, since the command
+/// that kicked off the fetch already returned by the time this runs.
+fn try_persist_fetch<S: FicSource>(
+    db: &tauri::State<db::Db>,
+    html: &str,
+    page_url: &str,
+    fandom_override: Option<&str>,
+) -> Result<FetchOutcome, String> {
+    let conn = db.0.lock().map_err(|e| e.to_string())?;
+
+    if let Some(locator) = S::chapter_locator_from_url(page_url)? {
+        let (meta, chapters) = S::parse_work(html, &locator)?;
+        let content = S::parse_chapter_content(html)?;
+        let chapter_num = S::resolve_chapter_num(&chapters, &locator)?;
+        let matched = chapters.iter().find(|c| c.chapter_num() == chapter_num);
+        let chapter_title = matched.map(|c| c.title()).unwrap_or_else(|| S::metadata_title(&meta));
+        let source_chapter_id = matched.and_then(|c| c.source_chapter_id());
+
+        println!(
+            "[fetch] {} — chapter {chapter_num} ({} bytes), {} chapters in TOC",
+            S::metadata_title(&meta),
+            content.len(),
+            chapters.len()
+        );
+
+        let story_id = S::persist_story(&conn, &meta).map_err(|e| e.to_string())?;
+        db::ensure_read_state(&conn, story_id).map_err(|e| e.to_string())?;
+        // Register the *full* TOC every time — any story page lists every
+        // chapter, so this keeps titles browsable even before their own
+        // pages have been fetched. Only the chapter we actually
+        // navigated to gets content.
+        for c in &chapters {
+            db::upsert_chapter_stub(&conn, story_id, c.chapter_num(), c.title(), c.source_chapter_id())
+                .map_err(|e| e.to_string())?;
+        }
+        db::upsert_chapter_content(&conn, story_id, chapter_num, chapter_title, &content, source_chapter_id)
+            .map_err(|e| e.to_string())?;
+
+        return Ok(FetchOutcome::Chapter(ChapterFetched { story_id, chapter_num }));
+    }
+
+    if let Some(locator) = S::listing_locator_from_url(page_url) {
+        let mut summaries = S::parse_listing(html, &locator)?;
+        if summaries.is_empty() {
+            return Err("no stories found on this page — not a listing, or the layout changed".to_string());
+        }
+        if let Some(label) = fandom_override {
+            for meta in &mut summaries {
+                S::apply_fandom_override(meta, label);
+            }
+        }
+        for meta in &summaries {
+            let story_id = S::persist_story(&conn, meta).map_err(|e| e.to_string())?;
+            db::ensure_read_state(&conn, story_id).map_err(|e| e.to_string())?;
+        }
+        // Round-tripped from the same URL params the search command wrote,
+        // so record_listing_page's key matches what "Load more" will look
+        // up next time this exact combo is searched.
+        let page = S::listing_page(&locator);
+        S::record_listing_page(&conn, &locator, page).map_err(|e| e.to_string())?;
+
+        let fandom = S::metadata_fandom(&summaries[0]).to_string();
+        println!("[fetch] imported {} stories into fandom {fandom:?}, page {page}", summaries.len());
+        return Ok(FetchOutcome::Browse(BrowseFetched { fandom, count: summaries.len() as i64 }));
+    }
+
+    Err("could not determine what kind of page this is (chapter, or listing)".to_string())
+}
+
+/// FFN-specific pre-checks (debug dump, Cloudflare-block detection) plus the
+/// FFN-only category-index shape (no AO3 equivalent, SPEC.md §8), then falls
+/// through to the shared `try_persist_fetch::<source::Ffn>` dispatch.
+fn try_persist_ffn_fetch(
     app: &tauri::AppHandle,
     db: &tauri::State<db::Db>,
     html: &str,
@@ -192,82 +252,23 @@ fn try_persist_fetch(
         return Err("Cloudflare challenge page, not the story — try again".to_string());
     }
 
-    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
-
-    match (ffn::story_id_from_url(page_url), ffn::chapter_num_from_url(page_url)) {
-        (Ok(ffn_story_id), Ok(chapter_num)) => {
-            let (meta, chapters) = ffn::parse_story_page(html, ffn_story_id)?;
-            let content = ffn::parse_chapter_content(html)?;
-
-            println!(
-                "[fetch] {} — chapter {chapter_num} ({} bytes), {} chapters in TOC",
-                meta.title,
-                content.len(),
-                chapters.len()
-            );
-
-            let chapter_title = chapters
-                .iter()
-                .find(|c| c.chapter_num == chapter_num)
-                .map(|c| c.title.as_str())
-                .unwrap_or(&meta.title);
-
-            let story_id = db::upsert_story(&conn, &meta).map_err(|e| e.to_string())?;
-            db::ensure_read_state(&conn, story_id).map_err(|e| e.to_string())?;
-            // Register the *full* TOC every time — any story page lists every
-            // chapter, so this keeps titles browsable even before their own
-            // pages have been fetched. Only the chapter we actually
-            // navigated to gets content.
-            for c in &chapters {
-                db::upsert_chapter_stub(&conn, story_id, c.chapter_num, &c.title, None).map_err(|e| e.to_string())?;
-            }
-            db::upsert_chapter_content(&conn, story_id, chapter_num, chapter_title, &content, None).map_err(|e| e.to_string())?;
-
-            Ok(FetchOutcome::Chapter(ChapterFetched { story_id, chapter_num }))
+    if let Some(category) = ffn::category_from_index_url(page_url) {
+        let mut conn = db.0.lock().map_err(|e| e.to_string())?;
+        let entries = ffn::parse_fandom_index(html, 1000);
+        if entries.is_empty() {
+            return Err("no fandoms found on this page — not a category index, or the layout changed".to_string());
         }
-        _ if ffn::parse_browse_url(page_url).is_some() => {
-            let (category, fandom, page) = ffn::parse_browse_url(page_url).unwrap();
-            let summaries = ffn::parse_browse_page(html, &fandom)?;
-            if summaries.is_empty() {
-                return Err("no stories found on this page — not a browse listing, or the layout changed".to_string());
-            }
-            for meta in &summaries {
-                let story_id = db::upsert_story(&conn, meta).map_err(|e| e.to_string())?;
-                db::ensure_read_state(&conn, story_id).map_err(|e| e.to_string())?;
-            }
-            // Round-tripped from the same URL params build_browse_url wrote,
-            // so record_browse_page's key matches what next_browse_page will
-            // look up next time "Load more" runs for this exact combo.
-            let parsed_url = url::Url::parse(page_url).map_err(|e| e.to_string())?;
-            let min_word_count: i64 = parsed_url
-                .query_pairs()
-                .find(|(k, _)| k == "len")
-                .and_then(|(_, v)| v.parse::<i64>().ok())
-                .map(|thousands| thousands * 1000)
-                .unwrap_or(0);
-            let status = if parsed_url.query_pairs().any(|(k, v)| k == "s" && v == "2") { "complete" } else { "any" };
-            db::record_browse_page(&conn, &category, &fandom, min_word_count, status, page).map_err(|e| e.to_string())?;
-
-            println!("[fetch] imported {} stories from {fandom} browse page {page}", summaries.len());
-            Ok(FetchOutcome::Browse(BrowseFetched { fandom, count: summaries.len() as i64 }))
-        }
-        _ if ffn::category_from_index_url(page_url).is_some() => {
-            let category = ffn::category_from_index_url(page_url).unwrap();
-            let entries = ffn::parse_fandom_index(html, 1000);
-            if entries.is_empty() {
-                return Err("no fandoms found on this page — not a category index, or the layout changed".to_string());
-            }
-            db::replace_fandom_index(&mut conn, &category, &entries).map_err(|e| e.to_string())?;
-            println!("[fetch] indexed {} fandoms (1000+ fics) for category {category}", entries.len());
-            Ok(FetchOutcome::FandomIndex(FandomIndexFetched { category, count: entries.len() as i64 }))
-        }
-        _ => Err("could not determine what kind of FFN page this is (chapter, browse listing, or category index)".to_string()),
+        db::replace_fandom_index(&mut conn, &category, &entries).map_err(|e| e.to_string())?;
+        println!("[fetch] indexed {} fandoms (1000+ fics) for category {category}", entries.len());
+        return Ok(FetchOutcome::FandomIndex(FandomIndexFetched { category, count: entries.len() as i64 }));
     }
+
+    try_persist_fetch::<source::Ffn>(db, html, page_url, None)
 }
 
 #[tauri::command]
 fn report_fetch_result(app: tauri::AppHandle, db: tauri::State<db::Db>, html: String, page_url: String, title: String) {
-    match try_persist_fetch(&app, &db, &html, &page_url, &title) {
+    match try_persist_ffn_fetch(&app, &db, &html, &page_url, &title) {
         Ok(FetchOutcome::Chapter(fetched)) => {
             println!("[fetch] persisted story id={} chapter {}", fetched.story_id, fetched.chapter_num);
             let _ = app.emit("chapter-fetched", fetched);
@@ -385,123 +386,13 @@ async fn fetch_ao3_html(url: &str) -> Result<(String, String), String> {
     Err(format!("AO3 fetch failed after {AO3_FETCH_MAX_ATTEMPTS} attempts: {last_err}"))
 }
 
-/// Same shape as `try_persist_fetch` (parse, upsert, register TOC) but for
-/// AO3's markup/schema (`ao3.rs`, `db::upsert_ao3_story`). Dispatches on
-/// `final_url` (post-redirect — see `fetch_ao3_html`), not the URL that was
-/// originally requested.
-fn try_persist_ao3_fetch(
-    app: &tauri::AppHandle,
-    db: &tauri::State<db::Db>,
-    html: &str,
-    final_url: &str,
-    fandom_override: Option<&str>,
-) -> Result<FetchOutcome, String> {
-    let dump_path = app.path().app_data_dir().expect("resolve app data dir").join("debug-last-ao3-fetch.html");
-    let _ = std::fs::write(&dump_path, html);
-
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-
-    if let Ok(work_id) = ao3::work_id_from_url(final_url) {
-        let (meta, chapters) = ao3::parse_work_page(html, work_id)?;
-        let content = ao3::parse_chapter_content(html)?;
-        let chapter_id = ao3::chapter_id_from_url(final_url)?;
-
-        let chapter_num = match chapter_id {
-            Some(id) => chapters
-                .iter()
-                .find(|c| c.chapter_id == Some(id))
-                .map(|c| c.chapter_num)
-                .ok_or("fetched chapter id not found in this work's own TOC")?,
-            // No /chapters/{id} in the URL: only valid for a one-shot,
-            // which parse_work_page represents as a single synthetic
-            // chapter with chapter_id: None (see Ao3ChapterRef::chapter_id).
-            None if chapters.len() == 1 => 1,
-            None => return Err("multi-chapter work URL had no chapter id — expected a redirect to one".to_string()),
-        };
-
-        println!(
-            "[ao3-fetch] {} — chapter {chapter_num} ({} bytes), {} chapters in TOC",
-            meta.title,
-            content.len(),
-            chapters.len()
-        );
-
-        let chapter_title = chapters
-            .iter()
-            .find(|c| c.chapter_num == chapter_num)
-            .map(|c| c.title.as_str())
-            .unwrap_or(&meta.title);
-
-        let story_id = db::upsert_ao3_story(&conn, &meta).map_err(|e| e.to_string())?;
-        db::ensure_read_state(&conn, story_id).map_err(|e| e.to_string())?;
-        for c in &chapters {
-            db::upsert_chapter_stub(&conn, story_id, c.chapter_num, &c.title, c.chapter_id).map_err(|e| e.to_string())?;
-        }
-        db::upsert_chapter_content(&conn, story_id, chapter_num, chapter_title, &content, chapter_id)
-            .map_err(|e| e.to_string())?;
-
-        return Ok(FetchOutcome::Chapter(ChapterFetched { story_id, chapter_num }));
-    }
-
-    if let Some(tag) = ao3::tag_from_listing_url(final_url) {
-        let mut summaries = ao3::parse_listing_page(html)?;
-        if summaries.is_empty() {
-            return Err("no works found on this page — not a tag listing, or the layout changed".to_string());
-        }
-        // Force-apply the caller's chosen fandom label to every row — same
-        // thing FFN's own browse import already does (§4: "fandom isn't
-        // repeated per row; it's derived once ... and applied to every
-        // parsed entry"). Without this, AO3's own canonical fandom text
-        // (e.g. "Harry Potter - J. K. Rowling") lands in a separate fandom
-        // bucket from whatever the user already calls it on the FFN side,
-        // defeating the point of searching both sources from one Search
-        // screen (user-confirmed 2026-07-19).
-        if let Some(label) = fandom_override {
-            for meta in &mut summaries {
-                meta.fandom = label.to_string();
-            }
-        }
-        for meta in &summaries {
-            let story_id = db::upsert_ao3_story(&conn, meta).map_err(|e| e.to_string())?;
-            db::ensure_read_state(&conn, story_id).map_err(|e| e.to_string())?;
-        }
-        // Round-tripped from the same query params build_tag_browse_url
-        // wrote, same as FFN's browse_state bookkeeping (below) — so
-        // next_ao3_browse_page's lookup key matches what "Load more" will
-        // ask for next time for this exact tag+filter combo.
-        let parsed_url = url::Url::parse(final_url).map_err(|e| e.to_string())?;
-        let min_word_count: i64 = parsed_url
-            .query_pairs()
-            .find(|(k, _)| k == "work_search[words_from]")
-            .and_then(|(_, v)| v.parse().ok())
-            .unwrap_or(0);
-        let status = match parsed_url.query_pairs().find(|(k, _)| k == "work_search[complete]").map(|(_, v)| v.into_owned()) {
-            Some(v) if v == "T" => "complete",
-            Some(v) if v == "F" => "in_progress",
-            _ => "any",
-        };
-        let page: i64 = parsed_url.query_pairs().find(|(k, _)| k == "page").and_then(|(_, v)| v.parse().ok()).unwrap_or(1);
-        db::record_ao3_browse_page(&conn, &tag, min_word_count, status, page).map_err(|e| e.to_string())?;
-
-        // Report back whatever actually ended up in `fandom` (the override,
-        // or — if none was given, e.g. a future non-search caller — each
-        // row's own parsed AO3 fandom text) so the caller's fandom
-        // filter/selection matches what really got stored.
-        let fandom = summaries.first().map(|s| s.fandom.clone()).unwrap_or(tag);
-        println!("[ao3-fetch] imported {} works into fandom {fandom:?}, page {page}", summaries.len());
-        return Ok(FetchOutcome::Browse(BrowseFetched { fandom, count: summaries.len() as i64 }));
-    }
-
-    Err("could not determine what kind of AO3 page this is (work/chapter, or tag listing)".to_string())
-}
-
 /// AO3 counterpart to `fetch_page` — see the module note above on why this
 /// doesn't need the webview/event-callback machinery. Emits the same
 /// `chapter-fetched`/`browse-fetched`/`*-error` events `report_fetch_result`
 /// does, so a future UI (SPEC.md §8, still unwired) can listen the same way
 /// regardless of which source triggered the fetch. `fandom_override`, when
 /// given, force-applies that label to every row of a tag-listing fetch
-/// (ignored for a work/chapter fetch) — see `try_persist_ao3_fetch`.
+/// (ignored for a work/chapter fetch) — see `source::Ao3::apply_fandom_override`.
 #[tauri::command]
 async fn fetch_ao3_page(
     app: tauri::AppHandle,
@@ -510,7 +401,13 @@ async fn fetch_ao3_page(
     fandom_override: Option<String>,
 ) -> Result<(), String> {
     let result = match fetch_ao3_html(&url).await {
-        Ok((html, final_url)) => try_persist_ao3_fetch(&app, &db, &html, &final_url, fandom_override.as_deref()),
+        Ok((html, final_url)) => {
+            // Dumped unconditionally, same posture as the FFN path's own
+            // debug-last-fetch.html — a failed parse should still be inspectable.
+            let dump_path = app.path().app_data_dir().expect("resolve app data dir").join("debug-last-ao3-fetch.html");
+            let _ = std::fs::write(&dump_path, &html);
+            try_persist_fetch::<source::Ao3>(&db, &html, &final_url, fandom_override.as_deref())
+        }
         Err(e) => Err(e),
     };
     match result {
@@ -521,7 +418,7 @@ async fn fetch_ao3_page(
         Ok(FetchOutcome::Browse(fetched)) => {
             let _ = app.emit("browse-fetched", fetched);
         }
-        Ok(FetchOutcome::FandomIndex(_)) => unreachable!("try_persist_ao3_fetch never returns FandomIndex"),
+        Ok(FetchOutcome::FandomIndex(_)) => unreachable!("try_persist_fetch::<source::Ao3> never returns FandomIndex"),
         Err(e) => {
             eprintln!("[ao3-fetch] failed: {e}");
             let _ = app.emit("chapter-fetch-error", e.clone());
@@ -535,81 +432,68 @@ async fn fetch_ao3_page(
 
 #[tauri::command]
 fn list_stories(db: tauri::State<db::Db>, filters: queries::StoryFilters) -> Result<Vec<queries::StoryRow>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::list_stories(&conn, &filters).map_err(|e| e.to_string())
+    db.run(|conn| queries::list_stories(conn, &filters))
 }
 
 #[tauri::command]
 fn list_bookmarks(db: tauri::State<db::Db>, mut filters: queries::StoryFilters) -> Result<Vec<queries::StoryRow>, String> {
     filters.bookmarked_only = true;
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::list_stories(&conn, &filters).map_err(|e| e.to_string())
+    db.run(|conn| queries::list_stories(conn, &filters))
 }
 
 #[tauri::command]
 fn get_story(db: tauri::State<db::Db>, story_id: i64) -> Result<Option<queries::StoryRow>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::get_story(&conn, story_id).map_err(|e| e.to_string())
+    db.run(|conn| queries::get_story(conn, story_id))
 }
 
 #[tauri::command]
 fn list_fandoms(db: tauri::State<db::Db>) -> Result<Vec<String>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::list_fandoms(&conn).map_err(|e| e.to_string())
+    db.run(|conn| queries::list_fandoms(conn))
 }
 
 #[tauri::command]
 fn rename_fandom(db: tauri::State<db::Db>, old_fandom: String, new_fandom: String) -> Result<usize, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::rename_fandom(&conn, &old_fandom, &new_fandom).map_err(|e| e.to_string())
+    db.run(|conn| queries::rename_fandom(conn, &old_fandom, &new_fandom))
 }
 
 #[tauri::command]
 fn list_bookmarked_fandoms(db: tauri::State<db::Db>) -> Result<Vec<String>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::list_bookmarked_fandoms(&conn).map_err(|e| e.to_string())
+    db.run(|conn| queries::list_bookmarked_fandoms(conn))
 }
 
 #[tauri::command]
 fn toggle_read(db: tauri::State<db::Db>, story_id: i64, value: bool) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::set_read(&conn, story_id, value).map_err(|e| e.to_string())
+    db.run(|conn| queries::set_read(conn, story_id, value))
 }
 
 #[tauri::command]
 fn toggle_dismissed(db: tauri::State<db::Db>, story_id: i64, value: bool) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::set_dismissed(&conn, story_id, value).map_err(|e| e.to_string())
+    db.run(|conn| queries::set_dismissed(conn, story_id, value))
 }
 
 #[tauri::command]
 fn toggle_bookmarked(db: tauri::State<db::Db>, story_id: i64, value: bool) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::set_bookmarked(&conn, story_id, value).map_err(|e| e.to_string())
+    db.run(|conn| queries::set_bookmarked(conn, story_id, value))
 }
 
 #[tauri::command]
 fn set_resume_chapter(db: tauri::State<db::Db>, story_id: i64, chapter_num: i64) -> Result<(), String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::set_resume_chapter(&conn, story_id, chapter_num).map_err(|e| e.to_string())
+    db.run(|conn| queries::set_resume_chapter(conn, story_id, chapter_num))
 }
 
 #[tauri::command]
 fn list_chapters(db: tauri::State<db::Db>, story_id: i64) -> Result<Vec<queries::ChapterListItem>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::list_chapters(&conn, story_id).map_err(|e| e.to_string())
+    db.run(|conn| queries::list_chapters(conn, story_id))
 }
 
 #[tauri::command]
 fn get_chapter(db: tauri::State<db::Db>, story_id: i64, chapter_num: i64) -> Result<Option<queries::ChapterContent>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::get_chapter(&conn, story_id, chapter_num).map_err(|e| e.to_string())
+    db.run(|conn| queries::get_chapter(conn, story_id, chapter_num))
 }
 
 #[tauri::command]
 fn get_continue_reading(db: tauri::State<db::Db>, limit: i64) -> Result<Vec<queries::StoryRow>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    queries::get_continue_reading(&conn, limit).map_err(|e| e.to_string())
+    db.run(|conn| queries::get_continue_reading(conn, limit))
 }
 
 /// FFN discovery (SPEC.md §6): fetches the next page of a browse/category
@@ -628,11 +512,8 @@ async fn search_ffn(
     min_word_count: i64,
     status: String,
 ) -> Result<(), String> {
-    let (resolved_category, page) = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        db::next_browse_page(&conn, category.as_deref(), &fandom, min_word_count, &status)
-            .map_err(|e| e.to_string())?
-    };
+    let (resolved_category, page) =
+        db.run(|conn| db::next_browse_page(conn, category.as_deref(), &fandom, min_word_count, &status))?;
     let url = ffn::build_browse_url(&resolved_category, &fandom, min_word_count, &status, page);
     fetch_page(app, url).await
 }
@@ -643,7 +524,7 @@ async fn search_ffn(
 /// closer analog to FFN's "always sort by Favorites for import relevance"
 /// (§8 locked: AO3's bookmarks, not kudos, is the comparable deliberate
 /// save/track signal to FFN's Favorites). `fandom` is force-applied to every
-/// imported row (see `try_persist_ao3_fetch`'s `fandom_override`) so it
+/// imported row (see `try_persist_fetch`'s `fandom_override` param) so it
 /// lands in the same fandom bucket as however this fandom is already named
 /// on the FFN side — the whole point of searching both sources from one
 /// Search screen, not two separate fandom lists (user-confirmed 2026-07-19).
@@ -656,10 +537,7 @@ async fn search_ao3(
     min_word_count: i64,
     status: String,
 ) -> Result<(), String> {
-    let page = {
-        let conn = db.0.lock().map_err(|e| e.to_string())?;
-        db::next_ao3_browse_page(&conn, &tag, min_word_count, &status).map_err(|e| e.to_string())?
-    };
+    let page = db.run(|conn| db::next_ao3_browse_page(conn, &tag, min_word_count, &status))?;
     let url = ao3::build_tag_browse_url(&tag, "bookmarks_count", min_word_count, &status, page);
     fetch_ao3_page(app, db, url, Some(fandom)).await
 }
@@ -675,8 +553,7 @@ async fn index_ffn_category(app: tauri::AppHandle, category: String) -> Result<(
 
 #[tauri::command]
 fn list_fandom_index(db: tauri::State<db::Db>, category: Option<String>) -> Result<Vec<db::FandomIndexEntry>, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-    db::list_fandom_index(&conn, category.as_deref()).map_err(|e| e.to_string())
+    db.run(|conn| db::list_fandom_index(conn, category.as_deref()))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
