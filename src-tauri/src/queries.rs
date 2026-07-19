@@ -8,9 +8,9 @@ use rusqlite::Connection;
 #[serde(rename_all = "camelCase")]
 pub struct StoryRow {
     pub id: i64,
-    /// Aliased from `stories.source_story_id` (SPEC.md §8) — still named
-    /// `ffn_story_id` here since FFN is the only source with rows today.
-    pub ffn_story_id: i64,
+    /// Aliased from `stories.source_story_id` (SPEC.md §8) — the FFN work id
+    /// for `"ffn"` rows, the AO3 work id for `"ao3"` rows.
+    pub source_story_id: i64,
     pub title: String,
     pub author: String,
     pub fandom: String,
@@ -56,7 +56,11 @@ pub struct StoryFilters {
     #[serde(default)]
     pub sort_by: String,
     #[serde(default)]
-    pub hide_read_and_dismissed: bool,
+    pub hide_read: bool,
+    #[serde(default)]
+    pub hide_dismissed: bool,
+    #[serde(default)]
+    pub hide_bookmarked: bool,
     /// Bookmarks screen sets this; Search never does.
     #[serde(default)]
     pub bookmarked_only: bool,
@@ -65,7 +69,7 @@ pub struct StoryFilters {
 fn row_to_story(row: &rusqlite::Row) -> rusqlite::Result<StoryRow> {
     Ok(StoryRow {
         id: row.get(0)?,
-        ffn_story_id: row.get(1)?,
+        source_story_id: row.get(1)?,
         title: row.get(2)?,
         author: row.get(3)?,
         fandom: row.get(4)?,
@@ -87,10 +91,10 @@ fn row_to_story(row: &rusqlite::Row) -> rusqlite::Result<StoryRow> {
     })
 }
 
-/// The `s.source, s.source_story_id AS ffn_story_id, ...` column list shared
-/// by every `StoryRow` query — `row_to_story`'s column indices depend on
-/// this exact order.
-const STORY_COLUMNS: &str = "s.id, s.source_story_id AS ffn_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
+/// The `s.source, s.source_story_id, ...` column list shared by every
+/// `StoryRow` query — `row_to_story`'s column indices depend on this exact
+/// order.
+const STORY_COLUMNS: &str = "s.id, s.source_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
                 s.status, s.word_count, s.favorite_count, s.chapter_count, s.summary,
                 COALESCE(rs.is_read, 0), COALESCE(rs.dismissed, 0), COALESCE(rs.bookmarked, 0),
                 rs.last_chapter_num, s.ffn_updated_at, s.source";
@@ -125,8 +129,14 @@ pub fn list_stories(conn: &Connection, filters: &StoryFilters) -> rusqlite::Resu
         sql.push_str(" AND s.status = ?");
         params.push(Box::new(status.to_string()));
     }
-    if filters.hide_read_and_dismissed {
-        sql.push_str(" AND COALESCE(rs.is_read, 0) = 0 AND COALESCE(rs.dismissed, 0) = 0");
+    if filters.hide_read {
+        sql.push_str(" AND COALESCE(rs.is_read, 0) = 0");
+    }
+    if filters.hide_dismissed {
+        sql.push_str(" AND COALESCE(rs.dismissed, 0) = 0");
+    }
+    if filters.hide_bookmarked {
+        sql.push_str(" AND COALESCE(rs.bookmarked, 0) = 0");
     }
     if filters.bookmarked_only {
         sql.push_str(" AND COALESCE(rs.bookmarked, 0) = 1");
@@ -179,7 +189,7 @@ fn fold(s: &str) -> String {
 }
 
 /// Single story by internal id — the Reader needs this (title, fandom,
-/// `ffn_story_id` for constructing chapter URLs, current read/bookmark
+/// `source_story_id` for constructing chapter URLs, current read/bookmark
 /// state) but doesn't want to run a filtered list query for it.
 pub fn get_story(conn: &Connection, story_id: i64) -> rusqlite::Result<Option<StoryRow>> {
     conn.query_row(

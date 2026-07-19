@@ -41,7 +41,7 @@
     event.preventDefault();
     try {
       stories = await invoke<StoryRow[]>("list_stories", {
-        filters: { sortBy: "favorites", hideReadAndDismissed: false }
+        filters: { sortBy: "favorites", hideRead: false, hideDismissed: false }
       });
       storiesStatus = `${stories.length} stor${stories.length === 1 ? "y" : "ies"}`;
     } catch (e) {
@@ -83,7 +83,7 @@
     event.preventDefault();
     try {
       const all = await invoke<StoryRow[]>("list_stories", { filters: {} });
-      const target = all.find((s) => s.ffnStoryId === Number(prefetchFfnStoryId));
+      const target = all.find((s) => s.sourceStoryId === Number(prefetchFfnStoryId));
       if (!target) {
         prefetchStatus = `No story with ffn_story_id ${prefetchFfnStoryId} in the DB yet — fetch chapter 1 first.`;
         return;

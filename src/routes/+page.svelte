@@ -9,6 +9,8 @@
   import StoryList from "$lib/components/StoryList.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import { getPinnedFandoms, savePinnedFandoms } from "$lib/pinnedFandoms";
+  import { getViewMode, saveViewMode } from "$lib/viewMode";
+  import { getSearchFilterPrefs, saveSearchFilterPrefs, getBookmarksHideRead, saveBookmarksHideRead } from "$lib/filterPrefs";
   import type { SortBy, StoryRow, StorySource, StoryStatus } from "$lib/types";
 
   let screen = $state<"search" | "bookmarks" | "reader">("search");
@@ -29,10 +31,18 @@
   let minWordCount = $state<number | undefined>(undefined);
   let status = $state<StoryStatus | undefined>(undefined);
   let searchSortBy = $state<SortBy>("favorites");
-  let hideReadAndDismissed = $state(true);
-  let searchViewMode = $state<"list" | "card">("list");
+  const initialSearchFilterPrefs = getSearchFilterPrefs();
+  let hideRead = $state(initialSearchFilterPrefs.hideRead);
+  let hideDismissed = $state(initialSearchFilterPrefs.hideDismissed);
+  let hideBookmarked = $state(initialSearchFilterPrefs.hideBookmarked);
+  $effect(() => saveSearchFilterPrefs({ hideRead, hideDismissed, hideBookmarked }));
   let pinnedFandoms = $state<Set<string>>(getPinnedFandoms());
   $effect(() => savePinnedFandoms(pinnedFandoms));
+
+  // Shared between Search and Bookmarks — one persisted preference, not
+  // per-screen state.
+  let viewMode = $state<"list" | "card">(getViewMode());
+  $effect(() => saveViewMode(viewMode));
 
   // `undefined` = All sources. SPEC.md §8: sources aren't merged into one
   // ranking, so this scopes sort-by-favorites/etc to one source at a time.
@@ -52,7 +62,8 @@
   // ---- Bookmarks state ----
   let bookmarkFandom = $state<string | undefined>(undefined);
   let bookmarkSortBy = $state<SortBy>("favorites");
-  let bookmarkViewMode = $state<"list" | "card">("list");
+  let bookmarkHideRead = $state(getBookmarksHideRead());
+  $effect(() => saveBookmarksHideRead(bookmarkHideRead));
 
   let bookmarkedFandoms = $state<string[]>([]);
   let bookmarkStories = $state<StoryRow[]>([]);
@@ -85,7 +96,9 @@
         minWordCount,
         status,
         sortBy: searchSortBy,
-        hideReadAndDismissed
+        hideRead,
+        hideDismissed,
+        hideBookmarked
       });
       errorMessage = "";
     } catch (e) {
@@ -97,7 +110,8 @@
     try {
       bookmarkStories = await api.listBookmarks({
         fandom: bookmarkFandom,
-        sortBy: bookmarkSortBy
+        sortBy: bookmarkSortBy,
+        hideRead: bookmarkHideRead
       });
       errorMessage = "";
     } catch (e) {
@@ -120,13 +134,16 @@
     void minWordCount;
     void status;
     void searchSortBy;
-    void hideReadAndDismissed;
+    void hideRead;
+    void hideDismissed;
+    void hideBookmarked;
     loadSearchStories();
   });
 
   $effect(() => {
     void bookmarkFandom;
     void bookmarkSortBy;
+    void bookmarkHideRead;
     loadBookmarkStories();
   });
 
@@ -290,52 +307,62 @@
 
   {#if screen === "search"}
     <div class="filterbar">
-      <FandomPicker
-        fandoms={fandoms}
-        selected={searchFandom}
-        pinnable
-        bind:pinnedFandoms
-        onSelect={(f) => (searchFandom = f)}
-        onRename={handleRenameFandom}
-      />
-      <button class="search-ffn-btn" onclick={() => (searchModalOpen = true)}>Search</button>
+      <div class="filterbar-row">
+        <FandomPicker
+          fandoms={fandoms}
+          selected={searchFandom}
+          pinnable
+          bind:pinnedFandoms
+          onSelect={(f) => (searchFandom = f)}
+          onRename={handleRenameFandom}
+        />
+        <button class="search-ffn-btn" onclick={() => (searchModalOpen = true)}>Search</button>
 
-      <input class="search-input" placeholder="Search title, author, or summary…" bind:value={searchText} />
+        <input class="search-input" placeholder="Search title, author, or summary…" bind:value={searchText} />
 
-      <div class="field-group" role="group" aria-label="Source">
-        <button class:active={sourceFilter === undefined} onclick={() => (sourceFilter = undefined)}>All</button>
-        <button class:active={sourceFilter === "ffn"} onclick={() => (sourceFilter = "ffn")}>FFN</button>
-        <button class:active={sourceFilter === "ao3"} onclick={() => (sourceFilter = "ao3")}>AO3</button>
+        <div class="sort-select-wrap">
+          <select class="sort-select" bind:value={searchSortBy}>
+            <option value="favorites">Sort: Favorites</option>
+            <option value="updated">Sort: Updated</option>
+            <option value="words">Sort: Word count</option>
+          </select>
+          <ChevronDown size={13} class="sort-caret" />
+        </div>
+
+        <div class="view-toggle" role="group" aria-label="View">
+          <button class:active={viewMode === "list"} onclick={() => (viewMode = "list")} title="List view"><List size={15} /></button>
+          <button class:active={viewMode === "card"} onclick={() => (viewMode = "card")} title="Card view"><LayoutGrid size={15} /></button>
+        </div>
       </div>
 
-      <div class="field-group" role="group" aria-label="Minimum word count">
-        <button class:active={minWordCount === undefined} onclick={() => (minWordCount = undefined)}>Any length</button>
-        <button class:active={minWordCount === 40000} onclick={() => (minWordCount = 40000)}>40K+</button>
-        <button class:active={minWordCount === 100000} onclick={() => (minWordCount = 100000)}>100K+</button>
-      </div>
+      <div class="filterbar-row">
+        <div class="field-group" role="group" aria-label="Source">
+          <button class:active={sourceFilter === undefined} onclick={() => (sourceFilter = undefined)}>All</button>
+          <button class:active={sourceFilter === "ffn"} onclick={() => (sourceFilter = "ffn")}>FFN</button>
+          <button class:active={sourceFilter === "ao3"} onclick={() => (sourceFilter = "ao3")}>AO3</button>
+        </div>
 
-      <div class="field-group" role="group" aria-label="Status">
-        <button class:active={status === undefined} onclick={() => (status = undefined)}>Any status</button>
-        <button class:active={status === "complete"} onclick={() => (status = "complete")}>Done</button>
-        <button class:active={status === "in_progress"} onclick={() => (status = "in_progress")}>Ongoing</button>
-      </div>
+        <div class="field-group" role="group" aria-label="Minimum word count">
+          <button class:active={minWordCount === undefined} onclick={() => (minWordCount = undefined)}>Any length</button>
+          <button class:active={minWordCount === 40000} onclick={() => (minWordCount = 40000)}>40K+</button>
+          <button class:active={minWordCount === 100000} onclick={() => (minWordCount = 100000)}>100K+</button>
+        </div>
 
-      <div class="sort-select-wrap">
-        <select class="sort-select" bind:value={searchSortBy}>
-          <option value="favorites">Sort: Favorites</option>
-          <option value="updated">Sort: Updated</option>
-          <option value="words">Sort: Word count</option>
-        </select>
-        <ChevronDown size={13} class="sort-caret" />
-      </div>
+        <div class="field-group" role="group" aria-label="Status">
+          <button class:active={status === undefined} onclick={() => (status = undefined)}>Any status</button>
+          <button class:active={status === "complete"} onclick={() => (status = "complete")}>Done</button>
+          <button class:active={status === "in_progress"} onclick={() => (status = "in_progress")}>Ongoing</button>
+        </div>
 
-      <label class="hide-toggle">
-        <input type="checkbox" bind:checked={hideReadAndDismissed} /> Hide read &amp; dismissed
-      </label>
-
-      <div class="view-toggle" role="group" aria-label="View">
-        <button class:active={searchViewMode === "list"} onclick={() => (searchViewMode = "list")} title="List view"><List size={15} /></button>
-        <button class:active={searchViewMode === "card"} onclick={() => (searchViewMode = "card")} title="Card view"><LayoutGrid size={15} /></button>
+        <label class="hide-toggle">
+          <input type="checkbox" bind:checked={hideRead} /> Hide read
+        </label>
+        <label class="hide-toggle">
+          <input type="checkbox" bind:checked={hideDismissed} /> Hide dismissed
+        </label>
+        <label class="hide-toggle">
+          <input type="checkbox" bind:checked={hideBookmarked} /> Hide bookmarked
+        </label>
       </div>
     </div>
 
@@ -361,7 +388,7 @@
     {:else}
       <StoryList
         stories={searchStories}
-        viewMode={searchViewMode}
+        viewMode={viewMode}
         onOpenStory={openStory}
         onToggleRead={handleToggleRead}
         onToggleDismissed={handleToggleDismissed}
@@ -392,20 +419,26 @@
     {/if}
 
     <div class="filterbar">
-      <FandomPicker fandoms={bookmarkedFandoms} selected={bookmarkFandom} onSelect={(f) => (bookmarkFandom = f)} />
+      <div class="filterbar-row">
+        <FandomPicker fandoms={bookmarkedFandoms} selected={bookmarkFandom} onSelect={(f) => (bookmarkFandom = f)} />
 
-      <div class="sort-select-wrap">
-        <select class="sort-select" bind:value={bookmarkSortBy}>
-          <option value="favorites">Sort: Favorites</option>
-          <option value="updated">Sort: Updated</option>
-          <option value="words">Sort: Word count</option>
-        </select>
-        <ChevronDown size={13} class="sort-caret" />
-      </div>
+        <div class="sort-select-wrap">
+          <select class="sort-select" bind:value={bookmarkSortBy}>
+            <option value="favorites">Sort: Favorites</option>
+            <option value="updated">Sort: Updated</option>
+            <option value="words">Sort: Word count</option>
+          </select>
+          <ChevronDown size={13} class="sort-caret" />
+        </div>
 
-      <div class="view-toggle" role="group" aria-label="View">
-        <button class:active={bookmarkViewMode === "list"} onclick={() => (bookmarkViewMode = "list")} title="List view"><List size={15} /></button>
-        <button class:active={bookmarkViewMode === "card"} onclick={() => (bookmarkViewMode = "card")} title="Card view"><LayoutGrid size={15} /></button>
+        <label class="hide-toggle">
+          <input type="checkbox" bind:checked={bookmarkHideRead} /> Hide read
+        </label>
+
+        <div class="view-toggle" role="group" aria-label="View">
+          <button class:active={viewMode === "list"} onclick={() => (viewMode = "list")} title="List view"><List size={15} /></button>
+          <button class:active={viewMode === "card"} onclick={() => (viewMode = "card")} title="Card view"><LayoutGrid size={15} /></button>
+        </div>
       </div>
     </div>
 
@@ -414,7 +447,7 @@
     {:else}
       <StoryList
         stories={bookmarkStories}
-        viewMode={bookmarkViewMode}
+        viewMode={viewMode}
         showFandom
         includeDismiss={false}
         onOpenStory={openStory}
@@ -521,12 +554,17 @@
 
   .filterbar {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+    flex-direction: column;
     gap: 0.6rem;
     padding: 0.9rem 1.5rem;
     border-bottom: 1px solid var(--line);
     background: var(--paper-raised);
+  }
+  .filterbar-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
   }
 
   .search-input,

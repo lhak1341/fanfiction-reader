@@ -24,7 +24,7 @@ export interface FicSourceAdapter {
 
 const ffnAdapter: FicSourceAdapter = {
   chapterUrl(story, chapterNum) {
-    return `https://www.fanfiction.net/s/${story.ffnStoryId}/${chapterNum}/`;
+    return `https://www.fanfiction.net/s/${story.sourceStoryId}/${chapterNum}/`;
   },
   loadMore(fandom, minWordCount, status) {
     return api.searchFfnAndWait(fandom, minWordCount, status);
@@ -34,8 +34,8 @@ const ffnAdapter: FicSourceAdapter = {
 const ao3Adapter: FicSourceAdapter = {
   chapterUrl(story, _chapterNum, sourceChapterId) {
     return sourceChapterId
-      ? `https://archiveofourown.org/works/${story.ffnStoryId}/chapters/${sourceChapterId}`
-      : `https://archiveofourown.org/works/${story.ffnStoryId}`;
+      ? `https://archiveofourown.org/works/${story.sourceStoryId}/chapters/${sourceChapterId}`
+      : `https://archiveofourown.org/works/${story.sourceStoryId}`;
   },
   loadMore(fandom, minWordCount, status) {
     // No cached tag index exists (robots.txt blocks AO3's /autocomplete/,

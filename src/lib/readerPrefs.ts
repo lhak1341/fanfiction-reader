@@ -5,10 +5,13 @@ export interface ReaderPrefs {
    * isn't installed locally (no fonts are downloaded/bundled). */
   customFont: string;
   fontSize: number; // px
-  fontWeight: 400 | 500 | 700;
+  fontWeight: number; // 100-900, applies to regular prose text
+  fontWeightBold: number; // 100-900, applies to <b>/<strong> within prose
   lineHeight: number;
   pageWidth: number; // ch units
   letterSpacing: number; // em
+  /** Convert straight quotes/apostrophes to curly ones at render time. */
+  smartQuotes: boolean;
 }
 
 const STORAGE_KEY = "ffn-reader-typography";
@@ -18,9 +21,11 @@ const DEFAULTS: ReaderPrefs = {
   customFont: "",
   fontSize: 18,
   fontWeight: 400,
+  fontWeightBold: 700,
   lineHeight: 1.75,
   pageWidth: 58,
-  letterSpacing: 0
+  letterSpacing: 0,
+  smartQuotes: true
 };
 
 export function getReaderPrefs(): ReaderPrefs {

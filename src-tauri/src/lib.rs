@@ -147,7 +147,26 @@ struct FandomIndexFetched {
 enum FetchOutcome {
     Chapter(ChapterFetched),
     Browse(BrowseFetched),
+}
+
+/// `try_persist_ffn_fetch`'s return shape — a superset of `FetchOutcome`
+/// with the FFN-only category-index case added. Kept as a separate type
+/// (not a third `FetchOutcome` variant) so `fetch_ao3_page`'s dispatch,
+/// which only ever calls `try_persist_fetch::<source::Ao3>`, can't be asked
+/// to handle a case that source structurally never produces.
+enum FfnFetchOutcome {
+    Chapter(ChapterFetched),
+    Browse(BrowseFetched),
     FandomIndex(FandomIndexFetched),
+}
+
+impl From<FetchOutcome> for FfnFetchOutcome {
+    fn from(outcome: FetchOutcome) -> Self {
+        match outcome {
+            FetchOutcome::Chapter(c) => FfnFetchOutcome::Chapter(c),
+            FetchOutcome::Browse(b) => FfnFetchOutcome::Browse(b),
+        }
+    }
 }
 
 /// Generic parse+persist dispatch shared by every `FicSource` (`source.rs`):
@@ -231,7 +250,7 @@ fn try_persist_ffn_fetch(
     html: &str,
     page_url: &str,
     title: &str,
-) -> Result<FetchOutcome, String> {
+) -> Result<FfnFetchOutcome, String> {
     // Dumped to disk unconditionally (before the blocked check) so a false
     // positive there can still be inspected, not just a genuine block.
     let dump_path = app.path().app_data_dir().expect("resolve app data dir").join("debug-last-fetch.html");
@@ -260,16 +279,16 @@ fn try_persist_ffn_fetch(
         }
         db::replace_fandom_index(&mut conn, &category, &entries).map_err(|e| e.to_string())?;
         println!("[fetch] indexed {} fandoms (1000+ fics) for category {category}", entries.len());
-        return Ok(FetchOutcome::FandomIndex(FandomIndexFetched { category, count: entries.len() as i64 }));
+        return Ok(FfnFetchOutcome::FandomIndex(FandomIndexFetched { category, count: entries.len() as i64 }));
     }
 
-    try_persist_fetch::<source::Ffn>(db, html, page_url, None)
+    try_persist_fetch::<source::Ffn>(db, html, page_url, None).map(Into::into)
 }
 
 #[tauri::command]
 fn report_fetch_result(app: tauri::AppHandle, db: tauri::State<db::Db>, html: String, page_url: String, title: String) {
     match try_persist_ffn_fetch(&app, &db, &html, &page_url, &title) {
-        Ok(FetchOutcome::Chapter(fetched)) => {
+        Ok(FfnFetchOutcome::Chapter(fetched)) => {
             println!("[fetch] persisted story id={} chapter {}", fetched.story_id, fetched.chapter_num);
             let _ = app.emit("chapter-fetched", fetched);
             // Auto-close on success — a Reader-triggered fetch shouldn't leave
@@ -279,13 +298,13 @@ fn report_fetch_result(app: tauri::AppHandle, db: tauri::State<db::Db>, html: St
                 let _ = w.close();
             }
         }
-        Ok(FetchOutcome::Browse(fetched)) => {
+        Ok(FfnFetchOutcome::Browse(fetched)) => {
             let _ = app.emit("browse-fetched", fetched);
             if let Some(w) = app.get_webview_window("fetch-page") {
                 let _ = w.close();
             }
         }
-        Ok(FetchOutcome::FandomIndex(fetched)) => {
+        Ok(FfnFetchOutcome::FandomIndex(fetched)) => {
             let _ = app.emit("fandom-index-fetched", fetched);
             if let Some(w) = app.get_webview_window("fetch-page") {
                 let _ = w.close();
@@ -418,7 +437,6 @@ async fn fetch_ao3_page(
         Ok(FetchOutcome::Browse(fetched)) => {
             let _ = app.emit("browse-fetched", fetched);
         }
-        Ok(FetchOutcome::FandomIndex(_)) => unreachable!("try_persist_fetch::<source::Ao3> never returns FandomIndex"),
         Err(e) => {
             eprintln!("[ao3-fetch] failed: {e}");
             let _ = app.emit("chapter-fetch-error", e.clone());

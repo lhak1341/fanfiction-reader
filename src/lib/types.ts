@@ -7,7 +7,7 @@ export type StorySource = "ffn" | "ao3";
 
 export interface StoryRow {
   id: number;
-  ffnStoryId: number;
+  sourceStoryId: number;
   title: string;
   author: string;
   fandom: string;
@@ -40,7 +40,9 @@ export interface StoryFilters {
   minWordCount?: number | null;
   status?: StoryStatus | null;
   sortBy?: SortBy;
-  hideReadAndDismissed?: boolean;
+  hideRead?: boolean;
+  hideDismissed?: boolean;
+  hideBookmarked?: boolean;
   bookmarkedOnly?: boolean;
 }
 

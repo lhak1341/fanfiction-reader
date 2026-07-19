@@ -582,14 +582,53 @@ fn fix_dangling_stories_fk(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// AO3's `<h3 class="landmark heading" id="work">Chapter Text</h3>` — a fixed
+/// screen-reader landmark label, not per-chapter content — leaked into
+/// `chapters.content` for AO3 rows fetched before `ao3::parse_chapter_content`
+/// started stripping it (2026-07-19); it showed up as a redundant heading
+/// above the real prose in the Reader. One-time repair for rows fetched
+/// before the fix; new fetches are unaffected. Guarded by the `LIKE` check
+/// so it's a no-op on already-clean rows (including brand-new fetches).
+fn fix_ao3_landmark_heading_in_chapters(conn: &Connection) -> rusqlite::Result<()> {
+    const NEEDLE: &str = "<h3 class=\"landmark heading\" id=\"work\">Chapter Text</h3>";
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.content FROM chapters c
+         JOIN stories s ON s.id = c.story_id
+         WHERE s.source = 'ao3' AND c.content LIKE '%Chapter Text%'",
+    )?;
+    let rows: Vec<(i64, String)> = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+    drop(stmt);
+    for (id, content) in rows {
+        let Some(idx) = content.find(NEEDLE) else { continue };
+        let mut cleaned = content;
+        cleaned.replace_range(idx..idx + NEEDLE.len(), "");
+        println!("[db] migrating: stripping AO3 landmark heading from chapters.id={id}");
+        conn.execute("UPDATE chapters SET content = ?1 WHERE id = ?2", rusqlite::params![cleaned, id])?;
+    }
+    Ok(())
+}
+
+// Every entry here is independently self-guarding (checks column existence,
+// a LIKE pattern, pragma_foreign_key_list, etc. before acting) and safe to
+// re-run on every launch — see SCHEMA's doc comment on why that means no
+// schema_version table is needed at this scope. This list exists so
+// `migrate` can't grow another hardcoded call that's easy to forget; add a
+// new migration by adding an entry here.
+const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
+    |c| add_column_if_missing(c, "read_state", "last_opened_at", "TEXT"),
+    |c| add_column_if_missing(c, "stories", "tags", "TEXT"),
+    |c| add_column_if_missing(c, "stories", "ffn_updated_at", "TEXT"),
+    |c| add_column_if_missing(c, "chapters", "source_chapter_id", "INTEGER"),
+    fix_percent_encoded_fandoms,
+    migrate_stories_source_column,
+    fix_dangling_stories_fk,
+    fix_ao3_landmark_heading_in_chapters,
+];
+
 fn migrate(conn: &Connection) -> rusqlite::Result<()> {
-    add_column_if_missing(conn, "read_state", "last_opened_at", "TEXT")?;
-    add_column_if_missing(conn, "stories", "tags", "TEXT")?;
-    add_column_if_missing(conn, "stories", "ffn_updated_at", "TEXT")?;
-    add_column_if_missing(conn, "chapters", "source_chapter_id", "INTEGER")?;
-    fix_percent_encoded_fandoms(conn)?;
-    migrate_stories_source_column(conn)?;
-    fix_dangling_stories_fk(conn)?;
+    for f in MIGRATIONS {
+        f(conn)?;
+    }
     Ok(())
 }
 
@@ -707,6 +746,59 @@ mod tests {
         conn.execute_batch(SCHEMA).unwrap();
         fix_dangling_stories_fk(&conn).unwrap();
         assert_eq!(dangling_stories_fk_count(&conn), 0);
+    }
+
+    #[test]
+    fn fix_ao3_landmark_heading_in_chapters_strips_leaked_heading_and_preserves_prose() {
+        let conn = schema_conn("ao3_landmark_heading");
+        let ao3_id = upsert_ao3_story(&conn, &sample_ao3_story(1)).unwrap();
+        let ffn_id = upsert_story(
+            &conn,
+            &crate::ffn::StoryMetadata {
+                ffn_story_id: 2,
+                title: "FFN Story".to_string(),
+                author: "a".to_string(),
+                fandom: "Naruto".to_string(),
+                rating: "Fiction T".to_string(),
+                genre: None,
+                language: None,
+                tags: None,
+                status: "complete".to_string(),
+                word_count: 100,
+                favorite_count: 1,
+                chapter_count: 1,
+                summary: None,
+                updated_at: None,
+            },
+        )
+        .unwrap();
+        upsert_chapter_content(
+            &conn,
+            ao3_id,
+            1,
+            "Chapter 1",
+            "\n    <h3 class=\"landmark heading\" id=\"work\">Chapter Text</h3>\n    <p>Real prose.</p>",
+            None,
+        )
+        .unwrap();
+        // An FFN chapter that innocently contains the literal phrase (not the
+        // landmark tag) must survive untouched — the fix targets the exact
+        // AO3 heading element, not the phrase "Chapter Text" anywhere.
+        upsert_chapter_content(&conn, ffn_id, 1, "Chapter 1", "<p>He typed \"Chapter Text\" as a joke.</p>", None).unwrap();
+
+        fix_ao3_landmark_heading_in_chapters(&conn).unwrap();
+
+        let ao3_content: String = conn.query_row("SELECT content FROM chapters WHERE story_id = ?1 AND chapter_num = 1", [ao3_id], |row| row.get(0)).unwrap();
+        assert_eq!(ao3_content, "\n    \n    <p>Real prose.</p>");
+        assert!(!ao3_content.contains("Chapter Text"));
+
+        let ffn_content: String = conn.query_row("SELECT content FROM chapters WHERE story_id = ?1 AND chapter_num = 1", [ffn_id], |row| row.get(0)).unwrap();
+        assert_eq!(ffn_content, "<p>He typed \"Chapter Text\" as a joke.</p>");
+
+        // Idempotent: already-clean rows are left alone on a second run.
+        fix_ao3_landmark_heading_in_chapters(&conn).unwrap();
+        let ao3_content_again: String = conn.query_row("SELECT content FROM chapters WHERE story_id = ?1 AND chapter_num = 1", [ao3_id], |row| row.get(0)).unwrap();
+        assert_eq!(ao3_content_again, ao3_content);
     }
 
     fn schema_conn(name: &str) -> Connection {

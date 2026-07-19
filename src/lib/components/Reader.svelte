@@ -8,9 +8,10 @@
   import { tick } from "svelte";
   import { ChevronLeft, ChevronRight, Check, Menu, Star, Type, X } from "lucide-svelte";
   import * as api from "$lib/api";
-  import { ficSourceAdapter } from "$lib/ficSource";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import { getReaderPrefs, saveReaderPrefs, type ReaderPrefs } from "$lib/readerPrefs";
+  import { smartenQuotesHtml } from "$lib/typography";
+  import { ensureChapterCached } from "$lib/chapterCache";
   import type { ChapterContent, ChapterListItem, StoryRow } from "$lib/types";
 
   let {
@@ -51,12 +52,17 @@
     return readerPrefs.customFont.trim() ? `"${readerPrefs.customFont.trim()}", ${fallback}` : fallback;
   });
   let proseStyle = $derived(
-    `font-family: ${fontFamilyCss}; font-size: ${readerPrefs.fontSize}px; font-weight: ${readerPrefs.fontWeight}; line-height: ${readerPrefs.lineHeight}; letter-spacing: ${readerPrefs.letterSpacing}em;`
+    `font-family: ${fontFamilyCss}; font-size: ${readerPrefs.fontSize}px; font-weight: ${readerPrefs.fontWeight}; line-height: ${readerPrefs.lineHeight}; letter-spacing: ${readerPrefs.letterSpacing}em; --bold-weight: ${readerPrefs.fontWeightBold};`
   );
   // The global h1 reset (app.css) hardcodes serif and zeroes margin — the
   // chapter title needs its own family (following the same prefs as the
   // prose) and its own spacing, not the reset's.
   let titleStyle = $derived(`font-family: ${fontFamilyCss}; letter-spacing: ${readerPrefs.letterSpacing}em;`);
+
+  let displayedHtml = $derived.by(() => {
+    if (!content) return "";
+    return readerPrefs.smartQuotes ? smartenQuotesHtml(content.content) : content.content;
+  });
 
   function handleScroll() {
     if (!scrollEl) return;
@@ -90,18 +96,17 @@
     );
     for (const n of targets) {
       if (gen !== prefetchGen) return;
-      const existing = await api.getChapter(storyId, n);
-      if (existing?.isCached) continue;
-      if (gen !== prefetchGen) return;
+      let wasFetched = true;
       try {
-        const sourceChapterId = chapters.find((c) => c.chapterNum === n)?.sourceChapterId;
-        const url = ficSourceAdapter(story.source).chapterUrl(story, n, sourceChapterId);
-        await api.fetchChapterAndWait(story.source, url, storyId, n);
-        chapters = await api.listChapters(storyId);
+        const result = await ensureChapterCached(story, chapters, storyId, n);
+        chapters = result.chapters;
+        wasFetched = result.wasFetched;
       } catch {
         // Best-effort — a failed prefetch just means that chapter fetches
-        // normally (foreground) whenever it's actually opened.
+        // normally (foreground) whenever it's actually opened. Treated as
+        // an attempt (paces before the next target), not a clean skip.
       }
+      if (!wasFetched) continue;
       if (gen !== prefetchGen) return;
       await sleep(1500 + Math.random() * 1500);
     }
@@ -112,17 +117,15 @@
     if (scrollEl && content) scrollPositions.set(currentChapterNum, scrollEl.scrollTop);
     loading = true;
     fetchError = "";
+    if (!story) {
+      fetchError = "story metadata not loaded yet";
+      loading = false;
+      return;
+    }
     try {
-      let chapter = await api.getChapter(storyId, num);
-      if (!chapter || !chapter.isCached) {
-        if (!story) throw new Error("story metadata not loaded yet");
-        const sourceChapterId = chapters.find((c) => c.chapterNum === num)?.sourceChapterId;
-        const url = ficSourceAdapter(story.source).chapterUrl(story, num, sourceChapterId);
-        await api.fetchChapterAndWait(story.source, url, storyId, num);
-        chapters = await api.listChapters(storyId);
-        chapter = await api.getChapter(storyId, num);
-      }
-      content = chapter ?? undefined;
+      const result = await ensureChapterCached(story, chapters, storyId, num);
+      chapters = result.chapters;
+      content = result.content ?? undefined;
       currentChapterNum = num;
       await tick();
       // rAF, not just tick(): tick() only guarantees Svelte's own DOM
@@ -277,10 +280,17 @@
           </div>
 
           <span class="font-label">Weight</span>
-          <div class="seg">
-            <button class:active={readerPrefs.fontWeight === 400} onclick={() => updatePrefs({ fontWeight: 400 })}>Light</button>
-            <button class:active={readerPrefs.fontWeight === 500} onclick={() => updatePrefs({ fontWeight: 500 })}>Regular</button>
-            <button class:active={readerPrefs.fontWeight === 700} onclick={() => updatePrefs({ fontWeight: 700 })}>Bold</button>
+          <div class="stepper">
+            <button onclick={() => updatePrefs({ fontWeight: Math.max(100, readerPrefs.fontWeight - 100) })} aria-label="Decrease font weight">−</button>
+            <span class="tnum">{readerPrefs.fontWeight}</span>
+            <button onclick={() => updatePrefs({ fontWeight: Math.min(900, readerPrefs.fontWeight + 100) })} aria-label="Increase font weight">+</button>
+          </div>
+
+          <span class="font-label">Bold weight</span>
+          <div class="stepper">
+            <button onclick={() => updatePrefs({ fontWeightBold: Math.max(100, readerPrefs.fontWeightBold - 100) })} aria-label="Decrease bold weight">−</button>
+            <span class="tnum">{readerPrefs.fontWeightBold}</span>
+            <button onclick={() => updatePrefs({ fontWeightBold: Math.min(900, readerPrefs.fontWeightBold + 100) })} aria-label="Increase bold weight">+</button>
           </div>
 
           <span class="font-label">Line height</span>
@@ -302,6 +312,12 @@
             <button onclick={() => updatePrefs({ pageWidth: Math.max(40, readerPrefs.pageWidth - 2) })} aria-label="Decrease page width">−</button>
             <span class="tnum">{readerPrefs.pageWidth}ch</span>
             <button onclick={() => updatePrefs({ pageWidth: Math.min(90, readerPrefs.pageWidth + 2) })} aria-label="Increase page width">+</button>
+          </div>
+
+          <span class="font-label">Smart quotes</span>
+          <div class="seg">
+            <button class:active={readerPrefs.smartQuotes} onclick={() => updatePrefs({ smartQuotes: true })}>On</button>
+            <button class:active={!readerPrefs.smartQuotes} onclick={() => updatePrefs({ smartQuotes: false })}>Off</button>
           </div>
         </div>
       {/if}
@@ -326,7 +342,7 @@
       {:else if content}
         <h1 class="chapter-title" style={titleStyle}>{content.title}</h1>
         <div class="prose" style={proseStyle}>
-          {@html content.content}
+          {@html displayedHtml}
         </div>
       {/if}
     </div>
@@ -490,6 +506,10 @@
   }
   .prose :global(p) {
     margin: 0 0 1.15em;
+  }
+  .prose :global(b),
+  .prose :global(strong) {
+    font-weight: var(--bold-weight, 700);
   }
   .prose :global(hr) {
     border: none;

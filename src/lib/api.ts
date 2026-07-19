@@ -3,6 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { awaitCorrelatedEvent } from "./tauriEvents";
 import type {
   BrowseFetchedEvent,
   ChapterContent,
@@ -105,29 +106,13 @@ export function onChapterFetchError(handler: (message: string) => void): Promise
 /// of the DB. `source` picks which Tauri command actually does the fetch;
 /// both emit the same events so the waiting logic here is source-agnostic.
 export function fetchChapterAndWait(source: StorySource, url: string, storyId: number, chapterNum: number): Promise<void> {
-  return new Promise((resolve, reject) => {
-    let unlistenOk: (() => void) | undefined;
-    let unlistenErr: (() => void) | undefined;
-    const cleanup = () => {
-      unlistenOk?.();
-      unlistenErr?.();
-    };
-    onChapterFetched((e) => {
-      if (e.storyId === storyId && e.chapterNum === chapterNum) {
-        cleanup();
-        resolve();
-      }
-    }).then((fn) => (unlistenOk = fn));
-    onChapterFetchError((msg) => {
-      cleanup();
-      reject(new Error(msg));
-    }).then((fn) => (unlistenErr = fn));
-    const fetchFn = source === "ao3" ? fetchAo3Page : fetchPage;
-    fetchFn(url).catch((e) => {
-      cleanup();
-      reject(e);
-    });
-  });
+  const fetchFn = source === "ao3" ? fetchAo3Page : fetchPage;
+  return awaitCorrelatedEvent<ChapterFetchedEvent>(
+    () => fetchFn(url),
+    onChapterFetched,
+    onChapterFetchError,
+    (e) => e.storyId === storyId && e.chapterNum === chapterNum
+  ).then(() => {});
 }
 
 // ---- FFN discovery (SPEC.md §6) ----
@@ -160,26 +145,7 @@ export function searchFfnAndWait(
   status: StoryStatus | "any",
   category?: string
 ): Promise<BrowseFetchedEvent> {
-  return new Promise((resolve, reject) => {
-    let unlistenOk: (() => void) | undefined;
-    let unlistenErr: (() => void) | undefined;
-    const cleanup = () => {
-      unlistenOk?.();
-      unlistenErr?.();
-    };
-    onBrowseFetched((e) => {
-      cleanup();
-      resolve(e);
-    }).then((fn) => (unlistenOk = fn));
-    onBrowseFetchError((msg) => {
-      cleanup();
-      reject(new Error(msg));
-    }).then((fn) => (unlistenErr = fn));
-    searchFfn(fandom, minWordCount, status, category).catch((e) => {
-      cleanup();
-      reject(e);
-    });
-  });
+  return awaitCorrelatedEvent<BrowseFetchedEvent>(() => searchFfn(fandom, minWordCount, status, category), onBrowseFetched, onBrowseFetchError);
 }
 
 // ---- AO3 discovery (SPEC.md §8) ----
@@ -203,26 +169,7 @@ export function searchAo3AndWait(
   minWordCount: number,
   status: StoryStatus | "any"
 ): Promise<BrowseFetchedEvent> {
-  return new Promise((resolve, reject) => {
-    let unlistenOk: (() => void) | undefined;
-    let unlistenErr: (() => void) | undefined;
-    const cleanup = () => {
-      unlistenOk?.();
-      unlistenErr?.();
-    };
-    onBrowseFetched((e) => {
-      cleanup();
-      resolve(e);
-    }).then((fn) => (unlistenOk = fn));
-    onBrowseFetchError((msg) => {
-      cleanup();
-      reject(new Error(msg));
-    }).then((fn) => (unlistenErr = fn));
-    searchAo3(tag, fandom, minWordCount, status).catch((e) => {
-      cleanup();
-      reject(e);
-    });
-  });
+  return awaitCorrelatedEvent<BrowseFetchedEvent>(() => searchAo3(tag, fandom, minWordCount, status), onBrowseFetched, onBrowseFetchError);
 }
 
 // ---- Fandom index (SPEC.md §6 — precise fandom picker) ----
@@ -246,26 +193,7 @@ export function onFandomIndexFetchError(handler: (message: string) => void): Pro
 }
 
 export function indexFfnCategoryAndWait(category: string): Promise<FandomIndexFetchedEvent> {
-  return new Promise((resolve, reject) => {
-    let unlistenOk: (() => void) | undefined;
-    let unlistenErr: (() => void) | undefined;
-    const cleanup = () => {
-      unlistenOk?.();
-      unlistenErr?.();
-    };
-    onFandomIndexFetched((e) => {
-      cleanup();
-      resolve(e);
-    }).then((fn) => (unlistenOk = fn));
-    onFandomIndexFetchError((msg) => {
-      cleanup();
-      reject(new Error(msg));
-    }).then((fn) => (unlistenErr = fn));
-    indexFfnCategory(category).catch((e) => {
-      cleanup();
-      reject(e);
-    });
-  });
+  return awaitCorrelatedEvent<FandomIndexFetchedEvent>(() => indexFfnCategory(category), onFandomIndexFetched, onFandomIndexFetchError);
 }
 
 /// Indexes every category sequentially, one webview fetch at a time with a

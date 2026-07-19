@@ -258,10 +258,30 @@ pub fn parse_work_page(html: &str, work_id: i64) -> Result<(Ao3StoryMetadata, Ve
 /// the same page (author's notes before/after the chapter use plain
 /// `class="userstuff"` with no `role`), confirmed against live markup.
 pub fn parse_chapter_content(html: &str) -> Result<String, String> {
-    let doc = Html::parse_document(html);
-    let sel = Selector::parse(r#"div.userstuff.module[role="article"]"#).unwrap();
-    doc.select(&sel)
+    let mut doc = Html::parse_document(html);
+    let article_sel = Selector::parse(r#"div.userstuff.module[role="article"]"#).unwrap();
+    let article_id = doc
+        .select(&article_sel)
         .next()
+        .ok_or_else(|| "could not find the chapter's userstuff article div".to_string())?
+        .id();
+
+    // AO3 prepends a fixed accessibility landmark heading inside the article
+    // div — `<h3 class="landmark heading" id="work">Chapter Text</h3>` —
+    // AO3's own screen-reader label for the region, not per-chapter content,
+    // identical on every chapter. `inner_html()` would otherwise include it
+    // verbatim, showing up as a redundant heading above the real prose.
+    let heading_sel = Selector::parse("h3.landmark.heading").unwrap();
+    let heading_ids: Vec<_> = ElementRef::wrap(doc.tree.get(article_id).unwrap())
+        .unwrap()
+        .select(&heading_sel)
+        .map(|el| el.id())
+        .collect();
+    for id in heading_ids {
+        doc.tree.get_mut(id).unwrap().detach();
+    }
+
+    ElementRef::wrap(doc.tree.get(article_id).unwrap())
         .map(|el| el.inner_html())
         .ok_or_else(|| "could not find the chapter's userstuff article div".to_string())
 }
@@ -503,6 +523,10 @@ mod tests {
     fn parse_chapter_content_extracts_userstuff_article() {
         let content = parse_chapter_content(WORK_PAGE).unwrap();
         assert!(content.len() > 500, "expected real chapter prose, got {} bytes", content.len());
+        assert!(
+            !content.contains("Chapter Text"),
+            "AO3's landmark heading leaked into the persisted chapter content: {content}"
+        );
     }
 
     #[test]
