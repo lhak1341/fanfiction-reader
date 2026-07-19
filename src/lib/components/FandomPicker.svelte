@@ -2,7 +2,7 @@
   // Shared between Search (pinnable, full fandom list) and Bookmarks
   // (not pinnable, scoped to fandoms actually present among bookmarks).
   // Locked in wayfinder ticket #5.
-  import { ChevronDown, Star } from "lucide-svelte";
+  import { Check, ChevronDown, Pencil, Star, X } from "lucide-svelte";
   import { fold } from "$lib/normalize";
 
   let {
@@ -10,13 +10,21 @@
     selected,
     pinnable = false,
     pinnedFandoms = $bindable(new Set<string>()),
-    onSelect
+    onSelect,
+    onRename
   }: {
     fandoms: string[];
     selected: string | undefined;
     pinnable?: boolean;
     pinnedFandoms?: Set<string>;
     onSelect: (f: string | undefined) => void;
+    /// Renames/merges a fandom bucket (updates every story that has it) —
+    /// cleans up duplicate-looking entries (e.g. an AO3 import that kept
+    /// AO3's own canonical tag text instead of matching the FFN side's
+    /// name) or messy AO3 crossover buckets (a comma-joined multi-fandom
+    /// string) by merging them into an existing, cleaner fandom name.
+    /// Omit to hide the rename control entirely (e.g. Bookmarks' picker).
+    onRename?: (oldFandom: string, newFandom: string) => void;
   } = $props();
 
   let open = $state(false);
@@ -38,6 +46,28 @@
     next.has(f) ? next.delete(f) : next.add(f);
     pinnedFandoms = next;
   }
+
+  let renaming = $state<string | undefined>(undefined);
+  let renameValue = $state("");
+
+  function startRename(f: string, event: MouseEvent) {
+    event.stopPropagation();
+    renaming = f;
+    renameValue = f;
+  }
+
+  function cancelRename(event?: MouseEvent) {
+    event?.stopPropagation();
+    renaming = undefined;
+  }
+
+  function submitRename(f: string, event?: Event) {
+    event?.stopPropagation();
+    const next = renameValue.trim();
+    renaming = undefined;
+    if (!next || next === f) return;
+    onRename?.(f, next);
+  }
 </script>
 
 <svelte:window
@@ -50,6 +80,41 @@
   <button class="fandom-select" onclick={() => (open = !open)}>
     Fandom: {selected ?? "All fandoms"} <ChevronDown size={13} class="caret" />
   </button>
+  {#snippet fandomRow(f: string, showPin: boolean, pinned: boolean)}
+    <li>
+      {#if renaming === f}
+        <input
+          class="fandom-rename-input"
+          bind:value={renameValue}
+          onclick={(e) => e.stopPropagation()}
+          onkeydown={(e) => {
+            if (e.key === "Enter") submitRename(f, e);
+            if (e.key === "Escape") cancelRename();
+          }}
+        />
+        <button class="fandom-rename-btn" onclick={(e) => submitRename(f, e)} title="Save"><Check size={12} /></button>
+        <button class="fandom-rename-btn" onclick={cancelRename} title="Cancel"><X size={12} /></button>
+      {:else}
+        {#if showPin}
+          <button
+            class="fandom-pin"
+            class:on={pinned}
+            onclick={(e) => togglePin(f, e)}
+            title={pinned ? `Unpin ${f}` : `Pin ${f}`}
+          >
+            <Star size={12} fill={pinned ? "currentColor" : "none"} />
+          </button>
+        {/if}
+        <button class="fandom-opt" class:current={selected === f} onclick={() => select(f)}>{f}</button>
+        {#if onRename}
+          <button class="fandom-rename-btn" onclick={(e) => startRename(f, e)} title="Rename or merge this fandom">
+            <Pencil size={11} />
+          </button>
+        {/if}
+      {/if}
+    </li>
+  {/snippet}
+
   {#if open}
     <div class="fandom-popover">
       <input class="fandom-search" placeholder="Search fandoms…" bind:value={search} />
@@ -62,20 +127,12 @@
         {#if pinnedVisible.length > 0}
           <li class="fandom-section-label">Pinned</li>
           {#each pinnedVisible as f (f)}
-            <li>
-              <button class="fandom-pin on" onclick={(e) => togglePin(f, e)} title="Unpin {f}"><Star size={12} fill="currentColor" /></button>
-              <button class="fandom-opt" class:current={selected === f} onclick={() => select(f)}>{f}</button>
-            </li>
+            {@render fandomRow(f, true, true)}
           {/each}
           <li class="fandom-section-label">All fandoms</li>
         {/if}
         {#each restVisible as f (f)}
-          <li>
-            {#if pinnable}
-              <button class="fandom-pin" onclick={(e) => togglePin(f, e)} title="Pin {f}"><Star size={12} /></button>
-            {/if}
-            <button class="fandom-opt" class:current={selected === f} onclick={() => select(f)}>{f}</button>
-          </li>
+          {@render fandomRow(f, pinnable, false)}
         {/each}
         {#if visible.length === 0}
           <li class="empty">No fandoms match "{search}"</li>
@@ -175,6 +232,31 @@
   .fandom-options button.fandom-pin.on {
     color: var(--gold);
     opacity: 1;
+  }
+  .fandom-options button.fandom-rename-btn {
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    width: 22px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+    border-radius: 5px;
+    color: var(--ink-soft);
+    opacity: 0.35;
+  }
+  .fandom-options button.fandom-rename-btn:hover {
+    opacity: 0.8;
+  }
+  .fandom-options .fandom-rename-input {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    padding: 0.35rem 0.5rem;
+    font-size: 0.82rem;
+    background: var(--paper);
+    color: var(--ink);
   }
   .fandom-options .fandom-section-label {
     font-size: 0.66rem;

@@ -92,7 +92,7 @@
         prefetchStatus = `Fetching chapter ${num} of ${prefetchTo}…`;
         const url = `https://www.fanfiction.net/s/${prefetchFfnStoryId}/${num}/`;
         try {
-          await api.fetchChapterAndWait(url, target.id, num);
+          await api.fetchChapterAndWait("ffn", url, target.id, num);
         } catch (e) {
           prefetchStatus = `Chapter ${num} failed (${e instanceof Error ? e.message : e}) — re-run with "from: ${num}" to resume.`;
           return;

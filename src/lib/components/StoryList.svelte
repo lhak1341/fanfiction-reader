@@ -36,6 +36,7 @@
           <button class="t link" title={story.title} onclick={() => onOpenStory(story)}>{story.title}</button>
           <div class="meta-line">
             <span>{showFandom ? `${story.author} · ${story.fandom}` : story.author}</span>
+            <span class="source-badge" class:ao3={story.source === "ao3"}>{story.source === "ao3" ? "AO3" : "FFN"}</span>
             <span class="pill" class:complete={story.status === "complete"}>
               {story.status === "complete" ? "Done" : "Ongoing"}
             </span>
@@ -70,7 +71,10 @@
   <div class="cards">
     {#each stories as story (story.id)}
       <div class="card" class:dim={story.isRead || story.dismissed}>
-        <div class="fandom">{story.fandom}</div>
+        <div class="fandom-row">
+          <div class="fandom">{story.fandom}</div>
+          <span class="source-badge" class:ao3={story.source === "ao3"}>{story.source === "ao3" ? "AO3" : "FFN"}</span>
+        </div>
         <h4><button class="link" onclick={() => onOpenStory(story)}>{story.title}</button></h4>
         <p class="summary">{story.summary ?? ""}</p>
         {#if story.tags}
@@ -207,6 +211,24 @@
     background: var(--accent-wash);
     color: var(--accent);
   }
+  .source-badge {
+    display: inline-block;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    flex-shrink: 0;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    color: var(--ink-soft);
+  }
+  .source-badge.ao3 {
+    background: var(--gold-wash);
+    border-color: transparent;
+    color: var(--gold);
+  }
   .pill.complete {
     background: var(--moss-wash);
     color: var(--moss);
@@ -283,6 +305,12 @@
     font-family: var(--serif);
     font-size: 1.02rem;
     font-weight: 600;
+  }
+  .fandom-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
   }
   .card .fandom {
     font-size: 0.72rem;

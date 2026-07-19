@@ -1,13 +1,14 @@
 <script lang="ts">
   import * as api from "$lib/api";
   import { ChevronDown, LayoutGrid, List, RefreshCw } from "lucide-svelte";
+  import { getAo3Tag } from "$lib/ao3TagMap";
   import FandomPicker from "$lib/components/FandomPicker.svelte";
   import Reader from "$lib/components/Reader.svelte";
-  import SearchFfnModal from "$lib/components/SearchFfnModal.svelte";
+  import SearchModal from "$lib/components/SearchModal.svelte";
   import StoryList from "$lib/components/StoryList.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import { getPinnedFandoms, savePinnedFandoms } from "$lib/pinnedFandoms";
-  import type { SortBy, StoryRow, StoryStatus } from "$lib/types";
+  import type { SortBy, StoryRow, StorySource, StoryStatus } from "$lib/types";
 
   let screen = $state<"search" | "bookmarks" | "reader">("search");
   let lastListScreen = $state<"search" | "bookmarks">("search");
@@ -31,6 +32,15 @@
   let searchViewMode = $state<"list" | "card">("list");
   let pinnedFandoms = $state<Set<string>>(getPinnedFandoms());
   $effect(() => savePinnedFandoms(pinnedFandoms));
+
+  // `undefined` = All sources. SPEC.md §8: sources aren't merged into one
+  // ranking, so this scopes sort-by-favorites/etc to one source at a time.
+  let sourceFilter = $state<StorySource | undefined>(undefined);
+  // Which source the *last* modal search/import used — "Load more" falls
+  // back to this when sourceFilter is "All", since a fandom name alone
+  // doesn't say which source to keep paging. Defaults to "ffn" (unchanged
+  // behavior for a session that never touches AO3).
+  let lastSearchSource = $state<StorySource>("ffn");
 
   let fandoms = $state<string[]>([]);
   let searchStories = $state<StoryRow[]>([]);
@@ -69,6 +79,7 @@
     try {
       searchStories = await api.listStories({
         fandom: searchFandom,
+        source: sourceFilter,
         search: searchText.trim() || undefined,
         minWordCount,
         status,
@@ -103,6 +114,7 @@
 
   $effect(() => {
     void searchFandom;
+    void sourceFilter;
     void searchText;
     void minWordCount;
     void status;
@@ -152,7 +164,8 @@
         const story = targets[i];
         refreshProgress = `Refreshing ${i + 1} of ${targets.length}…`;
         try {
-          await api.fetchChapterAndWait(`https://www.fanfiction.net/s/${story.ffnStoryId}/1/`, story.id, 1);
+          const url = api.chapterFetchUrl(story, 1, null);
+          await api.fetchChapterAndWait(story.source, url, story.id, 1);
         } catch {
           // Best-effort — one story failing (e.g. taken down) shouldn't stop the rest.
         }
@@ -165,19 +178,53 @@
     }
   }
 
-  async function handleFfnImported(importedFandom: string) {
+  async function handleImported(importedFandom: string, source: StorySource) {
     searchModalOpen = false;
+    lastSearchSource = source;
     await loadFandoms();
     searchFandom = importedFandom;
     await loadSearchStories();
   }
 
-  async function loadMoreFromFfn() {
+  /// Renames/merges a fandom bucket (FandomPicker's cleanup control) —
+  /// cleans up duplicate-looking entries (an AO3 import that kept AO3's own
+  /// canonical tag text) or messy crossover buckets (a comma-joined
+  /// multi-fandom string). Follows the rename in the current view: keeps
+  /// showing the same stories under their new fandom name, and moves a pin
+  /// to the new name rather than dropping it.
+  async function handleRenameFandom(oldFandom: string, newFandom: string) {
+    try {
+      await api.renameFandom(oldFandom, newFandom);
+      if (pinnedFandoms.has(oldFandom)) {
+        const next = new Set(pinnedFandoms);
+        next.delete(oldFandom);
+        next.add(newFandom);
+        pinnedFandoms = next;
+      }
+      if (searchFandom === oldFandom) searchFandom = newFandom;
+      await loadFandoms();
+      await loadSearchStories();
+    } catch (e) {
+      errorMessage = `Could not rename fandom: ${e}`;
+    }
+  }
+
+  /// Continues paging the current fandom search. Which source to continue
+  /// is `sourceFilter` if the user has explicitly scoped the view to one,
+  /// else whichever source the last modal search used (`lastSearchSource`).
+  async function loadMore() {
     if (!searchFandom) return;
     loadingMore = true;
     loadMoreError = "";
     try {
-      await api.searchFfnAndWait(searchFandom, minWordCount ?? 0, status ?? "any");
+      const source = sourceFilter ?? lastSearchSource;
+      if (source === "ao3") {
+        const tag = getAo3Tag(searchFandom);
+        if (!tag) throw new Error(`No AO3 tag saved for "${searchFandom}" yet — search it once via the modal first.`);
+        await api.searchAo3AndWait(tag, searchFandom, minWordCount ?? 0, status ?? "any");
+      } else {
+        await api.searchFfnAndWait(searchFandom, minWordCount ?? 0, status ?? "any");
+      }
       await loadSearchStories();
     } catch (e) {
       loadMoreError = e instanceof Error ? e.message : String(e);
@@ -260,10 +307,17 @@
         pinnable
         bind:pinnedFandoms
         onSelect={(f) => (searchFandom = f)}
+        onRename={handleRenameFandom}
       />
-      <button class="search-ffn-btn" onclick={() => (searchModalOpen = true)}>Search FFN</button>
+      <button class="search-ffn-btn" onclick={() => (searchModalOpen = true)}>Search</button>
 
       <input class="search-input" placeholder="Search title, author, or summary…" bind:value={searchText} />
+
+      <div class="field-group" role="group" aria-label="Source">
+        <button class:active={sourceFilter === undefined} onclick={() => (sourceFilter = undefined)}>All</button>
+        <button class:active={sourceFilter === "ffn"} onclick={() => (sourceFilter = "ffn")}>FFN</button>
+        <button class:active={sourceFilter === "ao3"} onclick={() => (sourceFilter = "ao3")}>AO3</button>
+      </div>
 
       <div class="field-group" role="group" aria-label="Minimum word count">
         <button class:active={minWordCount === undefined} onclick={() => (minWordCount = undefined)}>Any length</button>
@@ -305,14 +359,14 @@
             No stories for "{searchFandom}" yet.
           {/if}
           <br />
-          <button class="load-more-btn" onclick={loadMoreFromFfn} disabled={loadingMore}>
-            {loadingMore ? "Loading…" : "Load more from FFN"}
+          <button class="load-more-btn" onclick={loadMore} disabled={loadingMore}>
+            {loadingMore ? "Loading…" : "Load more"}
           </button>
           {#if loadMoreError}<span class="error">{loadMoreError}</span>{/if}
         </p>
       {:else}
         <p class="empty-note">
-          No stories yet. Click <button class="link-btn" onclick={() => (searchModalOpen = true)}>Search FFN</button> to pull some in.
+          No stories yet. Click <button class="link-btn" onclick={() => (searchModalOpen = true)}>Search</button> to pull some in.
         </p>
       {/if}
     {:else}
@@ -326,8 +380,8 @@
       />
       {#if searchFandom}
         <div class="load-more-row">
-          <button class="load-more-btn" onclick={loadMoreFromFfn} disabled={loadingMore}>
-            {loadingMore ? "Loading…" : "Load more from FFN"}
+          <button class="load-more-btn" onclick={loadMore} disabled={loadingMore}>
+            {loadingMore ? "Loading…" : "Load more"}
           </button>
           {#if loadMoreError}<span class="error">{loadMoreError}</span>{/if}
         </div>
@@ -383,7 +437,7 @@
   {/if}
 </div>
 {#if searchModalOpen}
-  <SearchFfnModal onClose={() => (searchModalOpen = false)} onImported={handleFfnImported} />
+  <SearchModal onClose={() => (searchModalOpen = false)} onImported={handleImported} />
 {/if}
 {/if}
 

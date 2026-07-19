@@ -31,6 +31,10 @@ pub struct StoryRow {
     /// `StoryMetadata::updated_at`. `None` for one-shots or stories
     /// imported before this field existed.
     pub ffn_updated_at: Option<String>,
+    /// `"ffn"` | `"ao3"` — which source this row came from (SPEC.md §8).
+    /// The Reader needs this to know which fetch command/URL shape to use
+    /// for an uncached chapter.
+    pub source: String,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -38,6 +42,10 @@ pub struct StoryRow {
 pub struct StoryFilters {
     /// `None` or `"All fandoms"` means no fandom filter.
     pub fandom: Option<String>,
+    /// `"ffn"` | `"ao3"` | `None` for both — SPEC.md §8's locked "sources
+    /// aren't merged into one ranking" means sort-by-favorites only makes
+    /// sense scoped to one source at a time; this is that scope control.
+    pub source: Option<String>,
     /// Matched against title, author, and summary — never fandom (locked in
     /// the UI/UX ticket: fandom has its own picker, separate from search).
     pub search: Option<String>,
@@ -75,24 +83,34 @@ fn row_to_story(row: &rusqlite::Row) -> rusqlite::Result<StoryRow> {
         bookmarked: row.get::<_, i64>(16)? != 0,
         last_chapter_num: row.get(17)?,
         ffn_updated_at: row.get(18)?,
+        source: row.get(19)?,
     })
 }
 
-pub fn list_stories(conn: &Connection, filters: &StoryFilters) -> rusqlite::Result<Vec<StoryRow>> {
-    let mut sql = String::from(
-        "SELECT s.id, s.source_story_id AS ffn_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
+/// The `s.source, s.source_story_id AS ffn_story_id, ...` column list shared
+/// by every `StoryRow` query — `row_to_story`'s column indices depend on
+/// this exact order.
+const STORY_COLUMNS: &str = "s.id, s.source_story_id AS ffn_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
                 s.status, s.word_count, s.favorite_count, s.chapter_count, s.summary,
                 COALESCE(rs.is_read, 0), COALESCE(rs.dismissed, 0), COALESCE(rs.bookmarked, 0),
-                rs.last_chapter_num, s.ffn_updated_at
+                rs.last_chapter_num, s.ffn_updated_at, s.source";
+
+pub fn list_stories(conn: &Connection, filters: &StoryFilters) -> rusqlite::Result<Vec<StoryRow>> {
+    let mut sql = format!(
+        "SELECT {STORY_COLUMNS}
          FROM stories s
          LEFT JOIN read_state rs ON rs.story_id = s.id
-         WHERE 1 = 1",
+         WHERE 1 = 1"
     );
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
     if let Some(fandom) = filters.fandom.as_deref().filter(|f| !f.is_empty() && *f != "All fandoms") {
         sql.push_str(" AND s.fandom = ?");
         params.push(Box::new(fandom.to_string()));
+    }
+    if let Some(source) = filters.source.as_deref().filter(|s| !s.is_empty()) {
+        sql.push_str(" AND s.source = ?");
+        params.push(Box::new(source.to_string()));
     }
     // Text search is folded (accent/case-insensitive, e.g. "poke" matches
     // "Poké") in Rust below rather than pushed into SQL — SQLite's LIKE has
@@ -165,18 +183,30 @@ fn fold(s: &str) -> String {
 /// state) but doesn't want to run a filtered list query for it.
 pub fn get_story(conn: &Connection, story_id: i64) -> rusqlite::Result<Option<StoryRow>> {
     conn.query_row(
-        "SELECT s.id, s.source_story_id AS ffn_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
-                s.status, s.word_count, s.favorite_count, s.chapter_count, s.summary,
-                COALESCE(rs.is_read, 0), COALESCE(rs.dismissed, 0), COALESCE(rs.bookmarked, 0),
-                rs.last_chapter_num, s.ffn_updated_at
-         FROM stories s
-         LEFT JOIN read_state rs ON rs.story_id = s.id
-         WHERE s.id = ?1",
+        &format!(
+            "SELECT {STORY_COLUMNS}
+             FROM stories s
+             LEFT JOIN read_state rs ON rs.story_id = s.id
+             WHERE s.id = ?1"
+        ),
         rusqlite::params![story_id],
         row_to_story,
     )
     .map(Some)
     .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
+}
+
+/// Renames a fandom bucket across every story that has it — merges into an
+/// existing fandom if `new_fandom` already names one. Exists because a
+/// fandom's `stories.fandom` text isn't always consistent: AO3 rows
+/// searched before `search_ao3`'s fandom-label override (SPEC.md §8) kept
+/// AO3's own canonical tag text (e.g. "Harry Potter - J. K. Rowling")
+/// instead of matching the FFN side's shorter name, and AO3 crossover works
+/// store a comma-joined multi-fandom string as one bucket (e.g. "Naruto,
+/// Game of Thrones (TV), ...") — both need a manual one-time fix-up, not
+/// just prevention going forward. Returns how many rows changed.
+pub fn rename_fandom(conn: &Connection, old_fandom: &str, new_fandom: &str) -> rusqlite::Result<usize> {
+    conn.execute("UPDATE stories SET fandom = ?1 WHERE fandom = ?2", rusqlite::params![new_fandom, old_fandom])
 }
 
 pub fn list_fandoms(conn: &Connection) -> rusqlite::Result<Vec<String>> {
@@ -240,17 +270,14 @@ pub fn set_resume_chapter(conn: &Connection, story_id: i64, chapter_num: i64) ->
 /// and isn't limited to bookmarked ones (you can be mid-story without
 /// having bookmarked it).
 pub fn get_continue_reading(conn: &Connection, limit: i64) -> rusqlite::Result<Vec<StoryRow>> {
-    let mut stmt = conn.prepare(
-        "SELECT s.id, s.source_story_id AS ffn_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
-                s.status, s.word_count, s.favorite_count, s.chapter_count, s.summary,
-                COALESCE(rs.is_read, 0), COALESCE(rs.dismissed, 0), COALESCE(rs.bookmarked, 0),
-                rs.last_chapter_num, s.ffn_updated_at
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {STORY_COLUMNS}
          FROM stories s
          JOIN read_state rs ON rs.story_id = s.id
          WHERE rs.last_opened_at IS NOT NULL AND rs.is_read = 0 AND rs.dismissed = 0
          ORDER BY rs.last_opened_at DESC
-         LIMIT ?1",
-    )?;
+         LIMIT ?1"
+    ))?;
     let rows = stmt.query_map(rusqlite::params![limit], row_to_story)?;
     rows.collect()
 }
@@ -261,6 +288,10 @@ pub struct ChapterListItem {
     pub chapter_num: i64,
     pub title: String,
     pub is_cached: bool,
+    /// AO3's opaque per-chapter id (`chapters.source_chapter_id`, SPEC.md
+    /// §8) — the Reader needs this to build a `/works/{id}/chapters/{id}`
+    /// fetch URL for an AO3 chapter; always `null` for FFN rows.
+    pub source_chapter_id: Option<i64>,
 }
 
 /// Full TOC for a story, including chapters whose content hasn't been
@@ -268,13 +299,14 @@ pub struct ChapterListItem {
 /// whole list to be browsable even before every chapter has been opened.
 pub fn list_chapters(conn: &Connection, story_id: i64) -> rusqlite::Result<Vec<ChapterListItem>> {
     let mut stmt = conn.prepare(
-        "SELECT chapter_num, title, content <> '' FROM chapters WHERE story_id = ?1 ORDER BY chapter_num",
+        "SELECT chapter_num, title, content <> '', source_chapter_id FROM chapters WHERE story_id = ?1 ORDER BY chapter_num",
     )?;
     let rows = stmt.query_map(rusqlite::params![story_id], |row| {
         Ok(ChapterListItem {
             chapter_num: row.get(0)?,
             title: row.get(1)?,
             is_cached: row.get(2)?,
+            source_chapter_id: row.get(3)?,
         })
     })?;
     rows.collect()
@@ -306,4 +338,112 @@ pub fn get_chapter(conn: &Connection, story_id: i64, chapter_num: i64) -> rusqli
     )
     .map(Some)
     .or_else(|e| if e == rusqlite::Error::QueryReturnedNoRows { Ok(None) } else { Err(e) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        conn.execute_batch(crate::db::SCHEMA).unwrap();
+        conn
+    }
+
+    fn sample_ao3(source_story_id: i64) -> crate::ao3::Ao3StoryMetadata {
+        crate::ao3::Ao3StoryMetadata {
+            source_story_id,
+            title: "AO3 Story".to_string(),
+            author: "ao3_author".to_string(),
+            fandom: "Naruto".to_string(),
+            rating: "Explicit".to_string(),
+            category: Some("F/M".to_string()),
+            warnings: None,
+            tags: None,
+            language: None,
+            status: "in_progress".to_string(),
+            word_count: 5000,
+            favorite_count: 50,
+            chapter_count: 2,
+            summary: None,
+        }
+    }
+
+    fn sample_ffn(ffn_story_id: i64) -> crate::ffn::StoryMetadata {
+        crate::ffn::StoryMetadata {
+            ffn_story_id,
+            title: "FFN Story".to_string(),
+            author: "ffn_author".to_string(),
+            fandom: "Naruto".to_string(),
+            rating: "Fiction T".to_string(),
+            genre: None,
+            language: None,
+            tags: None,
+            status: "complete".to_string(),
+            word_count: 3000,
+            favorite_count: 30,
+            chapter_count: 1,
+            summary: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn story_row_reports_correct_source_for_each_source() {
+        let conn = test_conn();
+        let ffn_id = crate::db::upsert_story(&conn, &sample_ffn(1)).unwrap();
+        let ao3_id = crate::db::upsert_ao3_story(&conn, &sample_ao3(2)).unwrap();
+        crate::db::ensure_read_state(&conn, ffn_id).unwrap();
+        crate::db::ensure_read_state(&conn, ao3_id).unwrap();
+
+        let ffn_row = get_story(&conn, ffn_id).unwrap().unwrap();
+        let ao3_row = get_story(&conn, ao3_id).unwrap().unwrap();
+        assert_eq!(ffn_row.source, "ffn");
+        assert_eq!(ao3_row.source, "ao3");
+
+        let all = list_stories(&conn, &StoryFilters::default()).unwrap();
+        assert_eq!(all.len(), 2);
+
+        let ao3_only = list_stories(&conn, &StoryFilters { source: Some("ao3".to_string()), ..Default::default() }).unwrap();
+        assert_eq!(ao3_only.len(), 1);
+        assert_eq!(ao3_only[0].source, "ao3");
+    }
+
+    #[test]
+    fn chapter_list_item_exposes_source_chapter_id() {
+        let conn = test_conn();
+        let ao3_id = crate::db::upsert_ao3_story(&conn, &sample_ao3(2)).unwrap();
+        crate::db::upsert_chapter_stub(&conn, ao3_id, 1, "Chapter 1", Some(999)).unwrap();
+
+        let ffn_id = crate::db::upsert_story(&conn, &sample_ffn(1)).unwrap();
+        crate::db::upsert_chapter_stub(&conn, ffn_id, 1, "Chapter 1", None).unwrap();
+
+        let ao3_chapters = list_chapters(&conn, ao3_id).unwrap();
+        assert_eq!(ao3_chapters[0].source_chapter_id, Some(999));
+
+        let ffn_chapters = list_chapters(&conn, ffn_id).unwrap();
+        assert_eq!(ffn_chapters[0].source_chapter_id, None);
+    }
+
+    #[test]
+    fn rename_fandom_updates_matching_rows_and_merges_into_an_existing_one() {
+        let conn = test_conn();
+        let mut ao3_meta = sample_ao3(1);
+        ao3_meta.fandom = "Harry Potter - J. K. Rowling".to_string();
+        crate::db::upsert_ao3_story(&conn, &ao3_meta).unwrap();
+
+        let mut ffn_meta = sample_ffn(2);
+        ffn_meta.fandom = "Harry Potter".to_string();
+        crate::db::upsert_story(&conn, &ffn_meta).unwrap();
+
+        let changed = rename_fandom(&conn, "Harry Potter - J. K. Rowling", "Harry Potter").unwrap();
+        assert_eq!(changed, 1);
+
+        let fandoms = list_fandoms(&conn).unwrap();
+        assert_eq!(fandoms, vec!["Harry Potter".to_string()]);
+
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM stories WHERE fandom = 'Harry Potter'", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 2);
+    }
 }

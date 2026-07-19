@@ -9,6 +9,7 @@ commands.allow = [
     "list_bookmarks",
     "get_story",
     "list_fandoms",
+    "rename_fandom",
     "list_bookmarked_fandoms",
     "toggle_read",
     "toggle_dismissed",
@@ -20,4 +21,6 @@ commands.allow = [
     "search_ffn",
     "index_ffn_category",
     "list_fandom_index",
+    "fetch_ao3_page",
+    "search_ao3",
 ]

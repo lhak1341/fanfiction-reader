@@ -84,7 +84,6 @@
   // as bot traffic to Cloudflare in a way a single manual fetch doesn't).
   async function prefetchNeighbors(gen: number, centerNum: number) {
     if (!story) return;
-    const ffnStoryId = story.ffnStoryId;
     const targets = [centerNum - 2, centerNum - 1, centerNum + 1, centerNum + 2].filter(
       (n) => n >= 1 && n <= story!.chapterCount
     );
@@ -94,7 +93,9 @@
       if (existing?.isCached) continue;
       if (gen !== prefetchGen) return;
       try {
-        await api.fetchChapterAndWait(`https://www.fanfiction.net/s/${ffnStoryId}/${n}/`, storyId, n);
+        const sourceChapterId = chapters.find((c) => c.chapterNum === n)?.sourceChapterId;
+        const url = api.chapterFetchUrl(story, n, sourceChapterId);
+        await api.fetchChapterAndWait(story.source, url, storyId, n);
         chapters = await api.listChapters(storyId);
       } catch {
         // Best-effort — a failed prefetch just means that chapter fetches
@@ -114,8 +115,9 @@
       let chapter = await api.getChapter(storyId, num);
       if (!chapter || !chapter.isCached) {
         if (!story) throw new Error("story metadata not loaded yet");
-        const url = `https://www.fanfiction.net/s/${story.ffnStoryId}/${num}/`;
-        await api.fetchChapterAndWait(url, storyId, num);
+        const sourceChapterId = chapters.find((c) => c.chapterNum === num)?.sourceChapterId;
+        const url = api.chapterFetchUrl(story, num, sourceChapterId);
+        await api.fetchChapterAndWait(story.source, url, storyId, num);
         chapters = await api.listChapters(storyId);
         chapter = await api.getChapter(storyId, num);
       }

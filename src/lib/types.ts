@@ -3,6 +3,7 @@
 
 export type StoryStatus = "complete" | "in_progress";
 export type SortBy = "favorites" | "updated" | "words";
+export type StorySource = "ffn" | "ao3";
 
 export interface StoryRow {
   id: number;
@@ -26,10 +27,15 @@ export interface StoryRow {
   /** Raw "Updated:" text from FFN's metadata line, verbatim. `null` for
    * one-shots or stories imported before this field existed. */
   ffnUpdatedAt: string | null;
+  source: StorySource;
 }
 
 export interface StoryFilters {
   fandom?: string | null;
+  /** `undefined`/`null` means both sources (SPEC.md §8: sources aren't
+   * merged into one ranking, so sort-by-favorites only makes sense scoped
+   * to one at a time). */
+  source?: StorySource | null;
   search?: string | null;
   minWordCount?: number | null;
   status?: StoryStatus | null;
@@ -42,6 +48,9 @@ export interface ChapterListItem {
   chapterNum: number;
   title: string;
   isCached: boolean;
+  /** AO3's opaque per-chapter id — needed to build a
+   * `/works/{id}/chapters/{id}` fetch URL. `null` for FFN chapters. */
+  sourceChapterId: number | null;
 }
 
 export interface ChapterContent {

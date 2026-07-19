@@ -3,11 +3,10 @@
 //! and tag-scoped listing pages, not guessed from AO3's public API docs or
 //! third-party scrapers, same standard `ffn.rs` holds itself to (§4).
 //!
-//! Not yet wired into `db.rs`/`lib.rs` — AO3 rows need their own upsert path
-//! (its metadata shape doesn't match `ffn::StoryMetadata`: category,
-//! warnings, a chapter_id per chapter that `chapters` has no column for yet)
-//! and a fetch path (`reqwest`, confirmed sufficient in §8 — no webview
-//! needed). This module is the parsing layer only.
+//! This module is the parsing layer only — the upsert path
+//! (`db::upsert_ao3_story`) and fetch path (`fetch_ao3_html`/
+//! `try_persist_ao3_fetch` in `lib.rs`, plain `reqwest`, no webview needed)
+//! live elsewhere, same split `ffn.rs`'s own parsing/fetch layers have.
 
 use scraper::{ElementRef, Html, Selector};
 
@@ -267,31 +266,66 @@ pub fn parse_chapter_content(html: &str) -> Result<String, String> {
         .ok_or_else(|| "could not find the chapter's userstuff article div".to_string())
 }
 
-/// Builds a tag-scoped AO3 browse URL — the only browse shape `robots.txt`
-/// allows (SPEC.md §8; the global `/works?` search is disallowed for all
-/// crawlers). Confirmed live (2026-07-19): `work_search[sort_column]`
-/// actually reorders results (tested `kudos_count` against the unsorted
-/// default), and `page` (not FFN's `p`) is AO3's own pagination param, seen
-/// in the listing page's own "next page" links.
+/// Recognizes a listing URL built by `build_tag_browse_url`
+/// (`/works?tag_id={tag}&...`) and recovers the (decoded) tag — used to
+/// dispatch a fetched page to `parse_listing_page` vs `parse_work_page`
+/// without re-deriving the tag from the listing markup itself (unlike FFN's
+/// browse rows, which repeat nothing about the search itself). Matches on
+/// the bare `/works` path (no id segment) plus a `tag_id` query param, so it
+/// can't collide with `work_id_from_url`'s `/works/{id}` shape.
+pub fn tag_from_listing_url(url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    let mut segs = parsed.path_segments()?;
+    let (Some("works"), None) = (segs.next(), segs.next()) else { return None };
+    parsed.query_pairs().find(|(k, _)| k == "tag_id").map(|(_, v)| v.into_owned())
+}
+
+/// Builds an AO3 listing URL scoped to one tag via `tag_id`, sortable and
+/// filterable by word-count/completion-status.
 ///
-/// **Not yet confirmed**: word-count/status filter param names. AO3's own
-/// filter sidebar (`#work-filters`) didn't render at all in a bare,
-/// logged-out fetch — it appears to require an authenticated session — so
-/// there was no live form markup to read real field names off of, unlike
-/// FFN's `r=10` (§4), which was caught by diffing real filtered URLs.
-/// Guessing them risks the same silent-wrong-results failure `r=10`'s
-/// absence caused for FFN; needs its own check (maybe by finding an
-/// unauthenticated URL shape that includes them, or accepting session-gated
-/// filtering) before adding.
-pub fn build_tag_browse_url(fandom_tag: &str, sort_column: &str, page: i64) -> String {
+/// **Deliberately crosses a scope line locked earlier in SPEC.md §8**: the
+/// tag-scoped `/tags/{tag}/works` path is the only browse shape `robots.txt`
+/// allows for crawlers; the global `/works` path (used here, scoped only by
+/// the `tag_id` query param) is disallowed there. Confirmed live
+/// (2026-07-19) that `/tags/{tag}/works` does *not* apply `work_search[...]`
+/// params at all — the filter sidebar's own form (`#work-filters`) posts to
+/// `action="/works"` with `tag_id` as a hidden field, which is what a human
+/// clicking "Sort and Filter" on a tag page actually submits; there's no
+/// server-side-filtered shape that stays inside the tag-scoped path. Decided
+/// (2026-07-19, user-confirmed) to use `/works?tag_id=...` anyway, same
+/// personal-use-scale posture already applied to FFN's Cloudflare/ToS
+/// situation (§1) — this mirrors exactly what a human's browser sends when
+/// filtering a tag search, just via `reqwest` instead of a click.
+///
+/// Confirmed live: `work_search[sort_column]` reorders results (tested
+/// `kudos_count` against the unsorted default); `page` is AO3's own
+/// pagination param; `work_search[words_from]` is a minimum word count
+/// (tested `1000` against `100000` — the latter returned only 6-digit+ word
+/// counts); `work_search[complete]` is `"T"` for complete-only or `"F"` for
+/// in-progress-only (tested both — verified via each result's own
+/// `span.complete-yes/complete-no.iswip` badge, not just absence of the
+/// other), omitted entirely for "any" (mirrors FFN's `s=2`-or-omit pattern,
+/// §4). No max-word-count or "any" `words_from` — mirrors FFN's `len`
+/// (minimum-only, §4).
+pub fn build_tag_browse_url(fandom_tag: &str, sort_column: &str, min_word_count: i64, status: &str, page: i64) -> String {
     let encoded_tag = url::form_urlencoded::byte_serialize(fandom_tag.as_bytes()).collect::<String>();
-    format!(
-        "https://archiveofourown.org/tags/{encoded_tag}/works?work_search%5Bsort_column%5D={sort_column}&page={page}"
-    )
+    let mut url = format!(
+        "https://archiveofourown.org/works?tag_id={encoded_tag}&work_search%5Bsort_column%5D={sort_column}&page={page}"
+    );
+    if min_word_count > 0 {
+        url.push_str(&format!("&work_search%5Bwords_from%5D={min_word_count}"));
+    }
+    match status {
+        "complete" => url.push_str("&work_search%5Bcomplete%5D=T"),
+        "in_progress" => url.push_str("&work_search%5Bcomplete%5D=F"),
+        _ => {}
+    }
+    url
 }
 
 /// Parses an AO3 tag-scoped work listing page (e.g.
-/// `https://archiveofourown.org/tags/Naruto/works`) into one
+/// `https://archiveofourown.org/works?tag_id=Naruto`, see
+/// `build_tag_browse_url`) into one
 /// [`Ao3StoryMetadata`] per work shown. Unlike the full work page, listing
 /// rows carry no `dl.work.meta.group` — rating/category/status come from the
 /// `ul.required-tags` summary badges instead (one value each, read via each), and full warning/relationship/character/freeform detail comes from the separate `ul.tags.commas` block. `chapter_count` is the
@@ -391,4 +425,45 @@ pub fn parse_listing_page(html: &str) -> Result<Vec<Ao3StoryMetadata>, String> {
     }
 
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_tag_browse_url_omits_optional_filters_when_unset() {
+        let url = build_tag_browse_url("Naruto", "kudos_count", 0, "any", 3);
+        assert_eq!(
+            url,
+            "https://archiveofourown.org/works?tag_id=Naruto&work_search%5Bsort_column%5D=kudos_count&page=3"
+        );
+    }
+
+    #[test]
+    fn build_tag_browse_url_includes_word_count_and_status_when_set() {
+        let url = build_tag_browse_url("Naruto (Anime & Manga)", "kudos_count", 100_000, "complete", 1);
+        assert_eq!(
+            url,
+            "https://archiveofourown.org/works?tag_id=Naruto+%28Anime+%26+Manga%29&work_search%5Bsort_column%5D=kudos_count&page=1&work_search%5Bwords_from%5D=100000&work_search%5Bcomplete%5D=T"
+        );
+
+        let url = build_tag_browse_url("Naruto", "kudos_count", 0, "in_progress", 1);
+        assert!(url.ends_with("&work_search%5Bcomplete%5D=F"));
+    }
+
+    #[test]
+    fn tag_from_listing_url_recovers_the_tag_and_ignores_work_urls() {
+        let listing_url = build_tag_browse_url("Naruto (Anime & Manga)", "kudos_count", 100_000, "complete", 1);
+        assert_eq!(tag_from_listing_url(&listing_url).as_deref(), Some("Naruto (Anime & Manga)"));
+
+        assert_eq!(tag_from_listing_url("https://archiveofourown.org/works/85954646"), None);
+        assert_eq!(tag_from_listing_url("https://archiveofourown.org/works/85954646/chapters/227238471"), None);
+    }
+
+    #[test]
+    fn work_id_from_url_does_not_false_positive_on_a_listing_url() {
+        let listing_url = build_tag_browse_url("Naruto", "kudos_count", 0, "any", 1);
+        assert!(work_id_from_url(&listing_url).is_err());
+    }
 }

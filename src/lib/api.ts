@@ -11,6 +11,7 @@ import type {
   FandomIndexFetchedEvent,
   StoryFilters,
   StoryRow,
+  StorySource,
   StoryStatus
 } from "./types";
 
@@ -28,6 +29,12 @@ export function getStory(storyId: number): Promise<StoryRow | null> {
 
 export function listFandoms(): Promise<string[]> {
   return invoke("list_fandoms");
+}
+
+/// Renames a fandom bucket across every story that has it — merges into an
+/// existing fandom if `newFandom` already names one. Returns rows changed.
+export function renameFandom(oldFandom: string, newFandom: string): Promise<number> {
+  return invoke("rename_fandom", { oldFandom, newFandom });
 }
 
 export function listBookmarkedFandoms(): Promise<string[]> {
@@ -62,14 +69,21 @@ export function getContinueReading(limit: number): Promise<StoryRow[]> {
   return invoke("get_continue_reading", { limit });
 }
 
-// ---- On-demand chapter fetch (SPEC.md §3/§4) ----
-// `fetch_page` opens a real webview and returns as soon as the window is
-// created — parsing/persisting happens later, on page-load. The Rust side
-// emits `chapter-fetched` / `chapter-fetch-error` once that actually
-// finishes; callers await one of those, not the `fetch_page` promise itself.
+// ---- On-demand chapter fetch (SPEC.md §3/§4/§8) ----
+// `fetch_page` (FFN) opens a real webview and returns as soon as the window
+// is created — parsing/persisting happens later, on page-load. `fetch_ao3_page`
+// (AO3) fetches and persists in one direct call instead (no webview needed,
+// §8) but emits the *same* `chapter-fetched`/`chapter-fetch-error` events, so
+// callers await one of those either way, not the fetch call's own promise.
 
 export function fetchPage(url: string): Promise<void> {
   return invoke("fetch_page", { url });
+}
+
+/// `fandomOverride`, when given, force-applies that label to every row of a
+/// tag-listing fetch (ignored for a chapter fetch) — see `searchAo3`.
+export function fetchAo3Page(url: string, fandomOverride?: string): Promise<void> {
+  return invoke("fetch_ao3_page", { url, fandomOverride: fandomOverride ?? null });
 }
 
 export interface ChapterFetchedEvent {
@@ -86,9 +100,11 @@ export function onChapterFetchError(handler: (message: string) => void): Promise
 }
 
 /// Fetches one chapter and resolves once it's actually persisted (or rejects
-/// on a fetch error) — the awaitable version of `fetchPage`, for callers that
-/// need to know when it's safe to read the result back out of the DB.
-export function fetchChapterAndWait(url: string, storyId: number, chapterNum: number): Promise<void> {
+/// on a fetch error) — the awaitable version of `fetchPage`/`fetchAo3Page`,
+/// for callers that need to know when it's safe to read the result back out
+/// of the DB. `source` picks which Tauri command actually does the fetch;
+/// both emit the same events so the waiting logic here is source-agnostic.
+export function fetchChapterAndWait(source: StorySource, url: string, storyId: number, chapterNum: number): Promise<void> {
   return new Promise((resolve, reject) => {
     let unlistenOk: (() => void) | undefined;
     let unlistenErr: (() => void) | undefined;
@@ -106,11 +122,25 @@ export function fetchChapterAndWait(url: string, storyId: number, chapterNum: nu
       cleanup();
       reject(new Error(msg));
     }).then((fn) => (unlistenErr = fn));
-    fetchPage(url).catch((e) => {
+    const fetchFn = source === "ao3" ? fetchAo3Page : fetchPage;
+    fetchFn(url).catch((e) => {
       cleanup();
       reject(e);
     });
   });
+}
+
+/// Builds the fetch URL for a given chapter, source-aware. AO3 chapters
+/// beyond the first need their own opaque `sourceChapterId`
+/// (`/works/{id}/chapters/{id}`, SPEC.md §8) — a one-shot with no chapter id
+/// known yet falls back to the bare `/works/{id}` page.
+export function chapterFetchUrl(story: StoryRow, chapterNum: number, sourceChapterId: number | null | undefined): string {
+  if (story.source === "ao3") {
+    return sourceChapterId
+      ? `https://archiveofourown.org/works/${story.ffnStoryId}/chapters/${sourceChapterId}`
+      : `https://archiveofourown.org/works/${story.ffnStoryId}`;
+  }
+  return `https://www.fanfiction.net/s/${story.ffnStoryId}/${chapterNum}/`;
 }
 
 // ---- FFN discovery (SPEC.md §6) ----
@@ -159,6 +189,49 @@ export function searchFfnAndWait(
       reject(new Error(msg));
     }).then((fn) => (unlistenErr = fn));
     searchFfn(fandom, minWordCount, status, category).catch((e) => {
+      cleanup();
+      reject(e);
+    });
+  });
+}
+
+// ---- AO3 discovery (SPEC.md §8) ----
+// Same fetch_ao3_page mechanism as an AO3 chapter fetch, and the same
+// browse-fetched/-error events as searchFfn — the direct `reqwest` call
+// happens synchronously inside the Tauri command (§8), no separate
+// window/callback round-trip like FFN needs.
+
+/// `fandom` is force-applied to every imported row (see `fetchAo3Page`'s
+/// `fandomOverride`) so it lands in the same fandom bucket as however this
+/// fandom is already named on the FFN side, rather than AO3's own canonical
+/// tag text splitting into a separate bucket.
+export function searchAo3(tag: string, fandom: string, minWordCount: number, status: StoryStatus | "any"): Promise<void> {
+  return invoke("search_ao3", { tag, fandom, minWordCount, status });
+}
+
+/// Awaitable version of `searchAo3`, matching `searchFfnAndWait`'s shape.
+export function searchAo3AndWait(
+  tag: string,
+  fandom: string,
+  minWordCount: number,
+  status: StoryStatus | "any"
+): Promise<BrowseFetchedEvent> {
+  return new Promise((resolve, reject) => {
+    let unlistenOk: (() => void) | undefined;
+    let unlistenErr: (() => void) | undefined;
+    const cleanup = () => {
+      unlistenOk?.();
+      unlistenErr?.();
+    };
+    onBrowseFetched((e) => {
+      cleanup();
+      resolve(e);
+    }).then((fn) => (unlistenOk = fn));
+    onBrowseFetchError((msg) => {
+      cleanup();
+      reject(new Error(msg));
+    }).then((fn) => (unlistenErr = fn));
+    searchAo3(tag, fandom, minWordCount, status).catch((e) => {
       cleanup();
       reject(e);
     });
