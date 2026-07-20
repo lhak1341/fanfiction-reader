@@ -3,7 +3,7 @@
   // list/card rendering only differs by whether fandom shows per-row
   // (Bookmarks spans fandoms; Search is already fandom-scoped) and whether
   // dismiss is offered (not meaningful on an already-bookmarked row).
-  import { Calendar, Check, Heart, Star, WholeWord, X } from "lucide-svelte";
+  import { Calendar, Check, CloudCheck, Download, Heart, Star, WholeWord, X } from "lucide-svelte";
   import { fmt, shortDate } from "$lib/format";
   import type { StoryRow } from "$lib/types";
 
@@ -15,7 +15,10 @@
     onOpenStory,
     onToggleRead,
     onToggleDismissed,
-    onToggleBookmarked
+    onToggleBookmarked,
+    onDownloadAll,
+    downloadingStoryId = null,
+    downloadProgress = ""
   }: {
     stories: StoryRow[];
     viewMode: "list" | "card";
@@ -25,6 +28,10 @@
     onToggleRead: (s: StoryRow) => void;
     onToggleDismissed: (s: StoryRow) => void;
     onToggleBookmarked: (s: StoryRow) => void;
+    // Bookmarks-only "download all chapters" action — omitted on Search.
+    onDownloadAll?: (s: StoryRow) => void;
+    downloadingStoryId?: number | null;
+    downloadProgress?: string;
   } = $props();
 
   // AO3 rows can carry a dozen+ freeform tags — capping the chip count
@@ -34,6 +41,10 @@
   function visibleTags(tags: string): { shown: string[]; extra: number } {
     const all = tags.split(", ");
     return { shown: all.slice(0, MAX_TAG_CHIPS), extra: Math.max(0, all.length - MAX_TAG_CHIPS) };
+  }
+
+  function isFullyDownloaded(story: StoryRow): boolean {
+    return story.chapterCount > 0 && story.cachedChapterCount >= story.chapterCount;
   }
 </script>
 
@@ -46,6 +57,9 @@
           <div class="meta-line">
             <span>{showFandom ? `${story.author} · ${story.fandom}` : story.author}</span>
             <span class="source-badge" class:ao3={story.source === "ao3"}>{story.source === "ao3" ? "AO3" : "FFN"}</span>
+            {#if onDownloadAll && isFullyDownloaded(story)}
+              <span class="offline-badge" title="All chapters downloaded — readable offline"><CloudCheck size={11} /> Offline</span>
+            {/if}
             <span class="pill" class:complete={story.status === "complete"}>
               {story.status === "complete" ? "Done" : "Ongoing"}
             </span>
@@ -72,6 +86,17 @@
           <button class="icon-btn" class:on-bookmark={story.bookmarked} onclick={() => onToggleBookmarked(story)} title="Bookmark">
             <Star size={13} fill={story.bookmarked ? "currentColor" : "none"} />
           </button>
+          {#if onDownloadAll && (downloadingStoryId === story.id || !isFullyDownloaded(story))}
+            <button
+              class="icon-btn"
+              class:spinning={downloadingStoryId === story.id}
+              onclick={() => onDownloadAll(story)}
+              disabled={downloadingStoryId !== null}
+              title={downloadingStoryId === story.id ? downloadProgress : "Download all chapters for offline reading"}
+            >
+              <Download size={13} />
+            </button>
+          {/if}
         </div>
       </div>
     {/each}
@@ -82,6 +107,9 @@
       <div class="card" class:dim={story.isRead || story.dismissed}>
         <div class="fandom-row">
           <div class="fandom" title={story.fandom}>{story.fandom}</div>
+          {#if onDownloadAll && isFullyDownloaded(story)}
+            <span class="offline-badge" title="All chapters downloaded — readable offline"><CloudCheck size={11} /> Offline</span>
+          {/if}
           <span class="source-badge" class:ao3={story.source === "ao3"}>{story.source === "ao3" ? "AO3" : "FFN"}</span>
         </div>
         <h4><button class="link" onclick={() => onOpenStory(story)}>{story.title}</button></h4>
@@ -119,6 +147,17 @@
             <button class="icon-btn" class:on-bookmark={story.bookmarked} onclick={() => onToggleBookmarked(story)} title="Bookmark">
               <Star size={13} fill={story.bookmarked ? "currentColor" : "none"} />
             </button>
+            {#if onDownloadAll && (downloadingStoryId === story.id || !isFullyDownloaded(story))}
+              <button
+                class="icon-btn"
+                class:spinning={downloadingStoryId === story.id}
+                onclick={() => onDownloadAll(story)}
+                disabled={downloadingStoryId !== null}
+                title={downloadingStoryId === story.id ? downloadProgress : "Download all chapters for offline reading"}
+              >
+                <Download size={13} />
+              </button>
+            {/if}
           </div>
         </div>
       </div>
@@ -246,6 +285,19 @@
     background: var(--moss-wash);
     color: var(--moss);
   }
+  .offline-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+    background: var(--moss-wash);
+    color: var(--moss);
+  }
   .updated-note {
     display: inline-flex;
     align-items: center;
@@ -290,6 +342,20 @@
     background: var(--gold-wash);
     color: var(--gold);
     border-color: transparent;
+  }
+  .icon-btn:disabled {
+    opacity: 0.6;
+  }
+  .icon-btn.spinning :global(svg) {
+    animation: download-spin 0.9s linear infinite;
+  }
+  @keyframes download-spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .cards {

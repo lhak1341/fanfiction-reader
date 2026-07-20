@@ -28,6 +28,9 @@ export interface StoryRow {
    * one-shots or stories imported before this field existed. */
   ffnUpdatedAt: string | null;
   source: StorySource;
+  /** How many of `chapterCount` chapters are already cached locally.
+   * `=== chapterCount` means fully downloaded/offline-ready. */
+  cachedChapterCount: number;
 }
 
 export interface StoryFilters {

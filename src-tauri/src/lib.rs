@@ -44,28 +44,27 @@ pub struct FetchLock(pub tokio::sync::Mutex<()>);
 /// `report_fetch_result` pick up the rendered HTML once the page finishes
 /// loading. Used both by the debug tools (arbitrary URL) and by the Reader
 /// (fetching a chapter that isn't cached yet) — same mechanism either way.
+///
+/// Reuses one `fetch-page` window across every fetch for the life of the
+/// app rather than destroying/rebuilding it per call: on macOS, creating a
+/// *new* NSWindow activates the app regardless of `.focused(false)` (that
+/// flag only controls focus once the app is already frontmost) — a bulk
+/// download hitting this once per chapter was yanking focus back on every
+/// single one, even while `visible(false)`. `navigate()` on an existing
+/// webview doesn't create a window, so it doesn't activate anything; the
+/// window is only ever *built* once (first fetch of the app session).
 #[tauri::command]
 async fn fetch_page(app: tauri::AppHandle, url: String) -> Result<(), String> {
     let lock = app.state::<FetchLock>();
     let _guard = lock.0.lock().await;
 
-    // destroy(), not close(): close() emits a CloseRequested event and goes
-    // through the normal (interceptable, not-necessarily-immediate) close
-    // pipeline — the next line's WebviewWindowBuilder::build() could run
-    // before the label is actually freed. destroy() force-closes with no
-    // event round-trip, then we poll (briefly) to confirm the label is
-    // clear before reusing it.
-    if let Some(existing) = app.get_webview_window("fetch-page") {
-        let _ = existing.destroy();
-        for _ in 0..50 {
-            if app.get_webview_window("fetch-page").is_none() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-    }
-
     let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
+
+    if let Some(existing) = app.get_webview_window("fetch-page") {
+        println!("[fetch] navigating existing window to {parsed}");
+        existing.navigate(parsed).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
 
     println!("[fetch] opening window for {parsed}");
 
@@ -76,6 +75,8 @@ async fn fetch_page(app: tauri::AppHandle, url: String) -> Result<(), String> {
     // page's own native `load` event instead, via an init script that runs
     // before the page's own scripts on every navigation, tracks what's
     // actually on screen rather than Tauri's navigation-delegate state.
+    // The init script and `on_navigation` below apply to every subsequent
+    // `navigate()` call on this same webview, not just this first load.
     tauri::WebviewWindowBuilder::new(&app, "fetch-page", tauri::WebviewUrl::External(parsed))
         .title("Fetching… (watch for a Cloudflare challenge)")
         .inner_size(900.0, 700.0)
@@ -86,6 +87,7 @@ async fn fetch_page(app: tauri::AppHandle, url: String) -> Result<(), String> {
         // it in and the fetch will just time out. Temporarily flip this to
         // `true` to debug that case.
         .visible(false)
+        .focused(false)
         .on_navigation(|url| {
             println!("[fetch] on_navigation: {url}");
             true
@@ -291,24 +293,19 @@ fn report_fetch_result(app: tauri::AppHandle, db: tauri::State<db::Db>, html: St
         Ok(FfnFetchOutcome::Chapter(fetched)) => {
             println!("[fetch] persisted story id={} chapter {}", fetched.story_id, fetched.chapter_num);
             let _ = app.emit("chapter-fetched", fetched);
-            // Auto-close on success — a Reader-triggered fetch shouldn't leave
-            // a window sitting open. Left open on error so the page (a
-            // Cloudflare challenge, an FFN error page, etc.) stays visible.
-            if let Some(w) = app.get_webview_window("fetch-page") {
-                let _ = w.close();
-            }
+            // Left open (still hidden) rather than closed on success — it's
+            // reused via `navigate()` by the next `fetch_page` call (see its
+            // doc comment). Closing here used to force every single fetch
+            // back through `WebviewWindowBuilder::build()`, which is what
+            // was actually causing the app to steal OS focus on every
+            // chapter of a bulk download, not window creation being
+            // unavoidable in general.
         }
         Ok(FfnFetchOutcome::Browse(fetched)) => {
             let _ = app.emit("browse-fetched", fetched);
-            if let Some(w) = app.get_webview_window("fetch-page") {
-                let _ = w.close();
-            }
         }
         Ok(FfnFetchOutcome::FandomIndex(fetched)) => {
             let _ = app.emit("fandom-index-fetched", fetched);
-            if let Some(w) = app.get_webview_window("fetch-page") {
-                let _ = w.close();
-            }
         }
         Err(e) => {
             eprintln!("[fetch] failed: {e}");

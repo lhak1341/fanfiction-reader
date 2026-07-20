@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as api from "$lib/api";
   import { ChevronDown, LayoutGrid, List, RefreshCw } from "lucide-svelte";
+  import { ensureChapterCached } from "$lib/chapterCache";
   import { ficSourceAdapter } from "$lib/ficSource";
   import { applyFandomRename } from "$lib/fandom";
   import FandomPicker from "$lib/components/FandomPicker.svelte";
@@ -196,6 +197,46 @@
     }
   }
 
+  // Force-fetches every not-yet-cached chapter of one bookmarked story, so
+  // it's fully readable offline ahead of time rather than filling in as you
+  // navigate (Reader's own prefetch only ever looks 2 chapters ahead). Same
+  // paced/best-effort loop as `refreshBookmarks`, scoped to one story at a
+  // time (`downloadingStoryId` gates concurrent clicks).
+  let downloadingStoryId = $state<number | null>(null);
+  let downloadingStoryTitle = $state("");
+  let downloadProgress = $state("");
+  let downloadDone = $state(0);
+  let downloadTotal = $state(0);
+
+  async function downloadAllChapters(story: StoryRow) {
+    if (downloadingStoryId !== null) return;
+    downloadingStoryId = story.id;
+    downloadingStoryTitle = story.title;
+    downloadProgress = "";
+    downloadDone = 0;
+    downloadTotal = 0;
+    try {
+      let chapters = await api.listChapters(story.id);
+      const missing = chapters.filter((c) => !c.isCached);
+      downloadTotal = missing.length;
+      for (let i = 0; i < missing.length; i++) {
+        downloadProgress = `Downloading ${i + 1} of ${missing.length}…`;
+        try {
+          const result = await ensureChapterCached(story, chapters, story.id, missing[i].chapterNum);
+          chapters = result.chapters;
+        } catch {
+          // Best-effort — one chapter failing shouldn't stop the rest.
+        }
+        downloadDone = i + 1;
+        if (i < missing.length - 1) await sleep(1500 + Math.random() * 1500);
+      }
+      await refreshAll();
+    } finally {
+      downloadingStoryId = null;
+      downloadProgress = "";
+    }
+  }
+
   async function handleImported(importedFandom: string, source: StorySource) {
     searchModalOpen = false;
     lastSearchSource = source;
@@ -303,6 +344,15 @@
 
   {#if errorMessage}
     <p class="error">{errorMessage}</p>
+  {/if}
+
+  {#if downloadingStoryId !== null}
+    <div class="download-banner">
+      <span class="download-banner-text">Downloading "{downloadingStoryTitle}" — {downloadProgress}</span>
+      <div class="download-banner-track">
+        <div class="download-banner-fill" style="width: {downloadTotal ? (downloadDone / downloadTotal) * 100 : 0}%"></div>
+      </div>
+    </div>
   {/if}
 
   {#if screen === "search"}
@@ -454,6 +504,9 @@
         onToggleRead={handleToggleRead}
         onToggleDismissed={handleToggleDismissed}
         onToggleBookmarked={handleToggleBookmarked}
+        onDownloadAll={downloadAllChapters}
+        downloadingStoryId={downloadingStoryId}
+        downloadProgress={downloadDone && downloadTotal ? `Downloading ${downloadDone} of ${downloadTotal}…` : downloadProgress}
       />
     {/if}
   {/if}
@@ -661,6 +714,27 @@
   .error {
     color: var(--rust);
     padding: 0.8rem 1.5rem 0;
+  }
+  .download-banner {
+    padding: 0.6rem 1.5rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+  .download-banner-text {
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+  }
+  .download-banner-track {
+    height: 4px;
+    border-radius: 999px;
+    background: var(--accent-wash);
+    overflow: hidden;
+  }
+  .download-banner-fill {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s ease;
   }
   .empty-note {
     padding: 2.5rem 1.5rem;

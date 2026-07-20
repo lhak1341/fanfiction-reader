@@ -33,7 +33,8 @@ const story: StoryRow = {
   bookmarked: false,
   lastChapterNum: null,
   ffnUpdatedAt: null,
-  source: "ffn"
+  source: "ffn",
+  cachedChapterCount: 0
 };
 
 const chapters: ChapterListItem[] = [{ chapterNum: 2, title: "Ch 2", isCached: false, sourceChapterId: null }];

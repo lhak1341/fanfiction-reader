@@ -35,6 +35,10 @@ pub struct StoryRow {
     /// The Reader needs this to know which fetch command/URL shape to use
     /// for an uncached chapter.
     pub source: String,
+    /// How many of `chapter_count` chapters already have `content <> ''`.
+    /// `== chapter_count` means the story is fully cached (offline-ready) —
+    /// drives Bookmarks' "downloaded" badge (SPEC.md §6).
+    pub cached_chapter_count: i64,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -88,6 +92,7 @@ fn row_to_story(row: &rusqlite::Row) -> rusqlite::Result<StoryRow> {
         last_chapter_num: row.get(17)?,
         ffn_updated_at: row.get(18)?,
         source: row.get(19)?,
+        cached_chapter_count: row.get(20)?,
     })
 }
 
@@ -97,7 +102,8 @@ fn row_to_story(row: &rusqlite::Row) -> rusqlite::Result<StoryRow> {
 const STORY_COLUMNS: &str = "s.id, s.source_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
                 s.status, s.word_count, s.favorite_count, s.chapter_count, s.summary,
                 COALESCE(rs.is_read, 0), COALESCE(rs.dismissed, 0), COALESCE(rs.bookmarked, 0),
-                rs.last_chapter_num, s.ffn_updated_at, s.source";
+                rs.last_chapter_num, s.ffn_updated_at, s.source,
+                (SELECT COUNT(*) FROM chapters c WHERE c.story_id = s.id AND c.content <> '')";
 
 pub fn list_stories(conn: &Connection, filters: &StoryFilters) -> rusqlite::Result<Vec<StoryRow>> {
     let mut sql = format!(
