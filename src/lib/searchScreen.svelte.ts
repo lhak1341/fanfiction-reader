@@ -35,6 +35,29 @@ export class SearchScreen {
   fandoms = $state<string[]>([]);
   stories = $state<StoryRow[]>([]);
   modalOpen = $state(false);
+
+  // Architecture review candidate 4 (2026-07-21): the single value
+  // +page.svelte's $effect watches to trigger loadStories() — concentrates
+  // the "which fields affect the story list" list here (unit-testable) so
+  // adding a filter field only requires updating this getter, not also a
+  // separate void-list in +page.svelte. A plain getter (not $derived) —
+  // $effect tracks whatever $state fields it reads during its own run, so
+  // reading this getter from inside the effect is enough; $derived would
+  // additionally need a live reactive/effect-root context to ever recompute,
+  // which a bare `new SearchScreen()` in a unit test doesn't have.
+  get reloadTrigger() {
+    return [
+      this.fandom,
+      this.sourceFilter,
+      this.text,
+      this.minWordCount,
+      this.status,
+      this.sortBy,
+      this.hideRead,
+      this.hideDismissed,
+      this.hideBookmarked
+    ];
+  }
   loadingMore = $state(false);
   loadMoreError = $state("");
 

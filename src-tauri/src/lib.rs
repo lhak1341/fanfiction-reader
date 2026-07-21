@@ -228,6 +228,26 @@ fn try_persist_fetch<S: FicSource>(
     Err("could not determine what kind of page this is (chapter, or listing)".to_string())
 }
 
+/// Scoped to the `<title>` (never full page text) — story prose is free-form
+/// English and can innocently contain phrases like "just a moment"; a
+/// Cloudflare block page's *title* is one of a small fixed set that a real
+/// FFN chapter title (always "<story> Chapter N: ... | FanFiction") can't
+/// plausibly collide with. `cf-browser-verification` is a real CSS class
+/// Cloudflare's interstitial injects, safe to check against the full page.
+///
+/// Architecture review candidate 2 (2026-07-21): pulled free of `AppHandle`/
+/// `tauri::State` (the same move already made for `try_persist_fetch`) so
+/// this heuristic — previously untestable — has direct unit test coverage,
+/// including its known false-positive risk (a real fic titled with one of
+/// the trigger phrases).
+fn looks_blocked(html: &str, title: &str) -> bool {
+    let title_lower = title.to_lowercase();
+    title_lower.contains("just a moment")
+        || title_lower.contains("attention required")
+        || title_lower.contains("checking your browser")
+        || html.contains("cf-browser-verification")
+}
+
 /// FFN-specific pre-checks (debug dump, Cloudflare-block detection) plus the
 /// FFN-only category-index shape (no AO3 equivalent, SPEC.md §8), then falls
 /// through to the shared `try_persist_fetch::<source::Ffn>` dispatch.
@@ -243,18 +263,7 @@ fn try_persist_ffn_fetch(
     let dump_path = app.path().app_data_dir().expect("resolve app data dir").join("debug-last-fetch.html");
     let _ = std::fs::write(&dump_path, html);
 
-    // Scoped to the <title> (never full page text) — story prose is free-form
-    // English and can innocently contain phrases like "just a moment"; a
-    // Cloudflare block page's *title* is one of a small fixed set that a real
-    // FFN chapter title (always "<story> Chapter N: ... | FanFiction") can't
-    // plausibly collide with. `cf-browser-verification` is a real CSS class
-    // Cloudflare's interstitial injects, safe to check against the full page.
-    let title_lower = title.to_lowercase();
-    let looks_blocked = title_lower.contains("just a moment")
-        || title_lower.contains("attention required")
-        || title_lower.contains("checking your browser")
-        || html.contains("cf-browser-verification");
-    if looks_blocked {
+    if looks_blocked(html, title) {
         return Err("Cloudflare challenge page, not the story — try again".to_string());
     }
 
@@ -613,6 +622,35 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", true).unwrap();
         conn.execute_batch(db::SCHEMA).unwrap();
         db::Db(std::sync::Mutex::new(conn))
+    }
+
+    #[test]
+    fn looks_blocked_true_for_each_known_cloudflare_title() {
+        let clean_html = "<html><body>story prose</body></html>";
+        assert!(looks_blocked(clean_html, "Just a moment..."));
+        assert!(looks_blocked(clean_html, "Attention Required! | Cloudflare"));
+        assert!(looks_blocked(clean_html, "Checking your browser before accessing..."));
+    }
+
+    #[test]
+    fn looks_blocked_true_for_cf_browser_verification_marker_in_html() {
+        let html = "<html><body><div id=\"cf-browser-verification\">...</div></body></html>";
+        assert!(looks_blocked(html, "Some Story Chapter 1: Title | FanFiction"));
+    }
+
+    #[test]
+    fn looks_blocked_false_for_a_real_chapter_title_and_html() {
+        let html = "<html><body>Once upon a time, our hero set out.</body></html>";
+        assert!(!looks_blocked(html, "Worth Dying For Chapter 1: Beginnings | FanFiction"));
+    }
+
+    #[test]
+    fn looks_blocked_false_positive_on_a_fic_titled_with_a_trigger_phrase() {
+        // Known, accepted risk (see looks_blocked's doc comment): a title-only
+        // heuristic can't distinguish a Cloudflare interstitial from a real fic
+        // that happens to share its title text.
+        let html = "<html><body>story prose</body></html>";
+        assert!(looks_blocked(html, "Checking Your Browser Chapter 1: A Fic | FanFiction"));
     }
 
     #[test]

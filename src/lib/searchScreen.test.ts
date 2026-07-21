@@ -23,6 +23,32 @@ beforeEach(() => {
   vi.mocked(api.listStories).mockResolvedValue([]);
 });
 
+describe("SearchScreen.reloadTrigger", () => {
+  // Architecture review candidate 4: +page.svelte's $effect watches this
+  // single value instead of enumerating each field itself — this locks in
+  // that every field loadStories() reads is actually tracked here.
+  it("changes when any field loadStories() reads is mutated", () => {
+    const search = makeScreen();
+    const mutations: Array<() => void> = [
+      () => (search.fandom = "Naruto"),
+      () => (search.sourceFilter = "ao3"),
+      () => (search.text = "hello"),
+      () => (search.minWordCount = 1000),
+      () => (search.status = "complete"),
+      () => (search.sortBy = "updated"),
+      () => (search.hideRead = !search.hideRead),
+      () => (search.hideDismissed = !search.hideDismissed),
+      () => (search.hideBookmarked = !search.hideBookmarked)
+    ];
+
+    for (const mutate of mutations) {
+      const before = search.reloadTrigger;
+      mutate();
+      expect(search.reloadTrigger).not.toEqual(before);
+    }
+  });
+});
+
 describe("SearchScreen.renameFandom", () => {
   it("moves a pin to the new name and follows the current selection", async () => {
     vi.mocked(api.renameFandom).mockResolvedValue(1);

@@ -21,6 +21,13 @@ export class BookmarksScreen {
   stories = $state<StoryRow[]>([]);
   continueReading = $state<StoryRow[]>([]);
 
+  // Architecture review candidate 4 (2026-07-21): the single value
+  // +page.svelte's $effect watches to trigger loadStories() — see
+  // SearchScreen.reloadTrigger for why this is a plain getter, not $derived.
+  get reloadTrigger() {
+    return [this.fandom, this.sortBy, this.hideRead];
+  }
+
   // Paced the same way as bulk chapter prefetch/discovery: a burst of
   // requests with no gaps reads as bot traffic to Cloudflare.
   refreshing = $state(false);

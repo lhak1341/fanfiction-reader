@@ -1,5 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_JITTER_MS, runPacedBestEffort } from "./pacedLoop";
+import { DEFAULT_JITTER_MS, jitterDelay, runPacedBestEffort } from "./pacedLoop";
+
+describe("jitterDelay", () => {
+  // Architecture review candidate 5: exported so Reader.svelte's
+  // prefetchNeighbors can share this arithmetic instead of re-deriving it —
+  // worth locking in the bounds directly now that two call sites depend on it.
+  it("defaults to a value within DEFAULT_JITTER_MS's range", () => {
+    for (let i = 0; i < 50; i++) {
+      const ms = jitterDelay();
+      expect(ms).toBeGreaterThanOrEqual(DEFAULT_JITTER_MS.min);
+      expect(ms).toBeLessThan(DEFAULT_JITTER_MS.max);
+    }
+  });
+
+  it("respects a custom jitter range", () => {
+    const custom = { min: 100, max: 200 };
+    for (let i = 0; i < 50; i++) {
+      const ms = jitterDelay(custom);
+      expect(ms).toBeGreaterThanOrEqual(custom.min);
+      expect(ms).toBeLessThan(custom.max);
+    }
+  });
+});
 
 describe("runPacedBestEffort", () => {
   it("calls fn for every item, in order, passing through the result", async () => {

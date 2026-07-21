@@ -86,33 +86,31 @@ fn join_tag_texts<'a>(root: &ElementRef, sel: &Selector) -> Option<String> {
 }
 
 /// AO3 work URLs look like `/works/85954646` or
-/// `/works/85954646/chapters/227238471` — the id is always the second path
-/// segment.
-pub fn work_id_from_url(url: &str) -> Result<i64, String> {
-    let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
-    let id = parsed
-        .path_segments()
-        .and_then(|mut segs| {
-            segs.next(); // "works"
-            segs.next()
-        })
-        .ok_or("URL did not contain a work id")?;
-    id.parse().map_err(|_| format!("work id segment {id:?} was not numeric"))
-}
-
-/// `/works/{id}/chapters/{chapter_id}` — `None` for a bare `/works/{id}`
-/// URL (one-shot, or "entire work" view).
-pub fn chapter_id_from_url(url: &str) -> Result<Option<i64>, String> {
+/// `/works/85954646/chapters/227238471` — the work id is always the second
+/// path segment, an optional chapter id the fourth.
+///
+/// Outer `Ok(None)` means the URL isn't this shape at all (leading segment
+/// isn't `works`, or no id segment follows it) — architecture review
+/// candidate 1 (2026-07-21): this used to be checked per-field by two
+/// separate functions that could disagree with each other about shape.
+/// Inner `None` keeps its existing, correct domain meaning: a bare
+/// `/works/{id}` URL is a legitimate one-shot/entire-work view, not a
+/// malformed chapter id.
+pub fn ao3_locator_from_url(url: &str) -> Result<Option<(i64, Option<i64>)>, String> {
     let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
     let mut segs = parsed.path_segments().ok_or("URL had no path")?;
-    segs.next(); // "works"
-    segs.next().ok_or("URL did not contain a work id")?;
-    match (segs.next(), segs.next()) {
-        (Some("chapters"), Some(id)) => {
-            id.parse().map(Some).map_err(|_| format!("chapter id segment {id:?} was not numeric"))
-        }
-        _ => Ok(None),
+    if segs.next() != Some("works") {
+        return Ok(None);
     }
+    let Some(work_id) = segs.next() else { return Ok(None) };
+    let work_id: i64 = work_id.parse().map_err(|_| format!("work id segment {work_id:?} was not numeric"))?;
+    let chapter_id = match (segs.next(), segs.next()) {
+        (Some("chapters"), Some(id)) => {
+            Some(id.parse().map_err(|_| format!("chapter id segment {id:?} was not numeric"))?)
+        }
+        _ => None,
+    };
+    Ok(Some((work_id, chapter_id)))
 }
 
 /// Parses a single AO3 work page (e.g. `https://archiveofourown.org/works/85954646`,
@@ -286,7 +284,7 @@ pub fn parse_chapter_content(html: &str) -> Result<String, String> {
 /// without re-deriving the tag from the listing markup itself (unlike FFN's
 /// browse rows, which repeat nothing about the search itself). Matches on
 /// the bare `/works` path (no id segment) plus a `tag_id` query param, so it
-/// can't collide with `work_id_from_url`'s `/works/{id}` shape.
+/// can't collide with `ao3_locator_from_url`'s `/works/{id}` shape.
 pub fn tag_from_listing_url(url: &str) -> Option<String> {
     let parsed = url::Url::parse(url).ok()?;
     let mut segs = parsed.path_segments()?;
@@ -476,9 +474,41 @@ mod tests {
     }
 
     #[test]
-    fn work_id_from_url_does_not_false_positive_on_a_listing_url() {
+    fn ao3_locator_from_url_does_not_false_positive_on_a_listing_url() {
+        // Bare `/works` with no id segment — a shape mismatch (NoMatch), not
+        // a malformed id.
         let listing_url = build_tag_browse_url("Naruto", "kudos_count", 0, "any", 1);
-        assert!(work_id_from_url(&listing_url).is_err());
+        assert_eq!(ao3_locator_from_url(&listing_url), Ok(None));
+    }
+
+    #[test]
+    fn ao3_locator_from_url_matches_a_real_chapter_url() {
+        let locator = ao3_locator_from_url("https://archiveofourown.org/works/85954646/chapters/227238471").unwrap();
+        assert_eq!(locator, Some((85_954_646, Some(227_238_471))));
+    }
+
+    #[test]
+    fn ao3_locator_from_url_matches_a_one_shot_url() {
+        let locator = ao3_locator_from_url("https://archiveofourown.org/works/85954646").unwrap();
+        assert_eq!(locator, Some((85_954_646, None)));
+    }
+
+    #[test]
+    fn ao3_locator_from_url_no_match_for_a_user_profile_url() {
+        let locator = ao3_locator_from_url("https://archiveofourown.org/users/someone/pseuds/someone").unwrap();
+        assert_eq!(locator, None);
+    }
+
+    #[test]
+    fn ao3_locator_from_url_malformed_for_non_numeric_work_id() {
+        let err = ao3_locator_from_url("https://archiveofourown.org/works/not-a-number").unwrap_err();
+        assert!(err.contains("work id segment"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn ao3_locator_from_url_malformed_for_non_numeric_chapter_id() {
+        let err = ao3_locator_from_url("https://archiveofourown.org/works/85954646/chapters/not-a-number").unwrap_err();
+        assert!(err.contains("chapter id segment"), "unexpected error: {err}");
     }
 
     // Real markup captured live (2026-07-19), see architecture review

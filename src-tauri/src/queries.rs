@@ -72,38 +72,43 @@ pub struct StoryFilters {
 
 fn row_to_story(row: &rusqlite::Row) -> rusqlite::Result<StoryRow> {
     Ok(StoryRow {
-        id: row.get(0)?,
-        source_story_id: row.get(1)?,
-        title: row.get(2)?,
-        author: row.get(3)?,
-        fandom: row.get(4)?,
-        rating: row.get(5)?,
-        genre: row.get(6)?,
-        language: row.get(7)?,
-        tags: row.get(8)?,
-        status: row.get(9)?,
-        word_count: row.get(10)?,
-        favorite_count: row.get(11)?,
-        chapter_count: row.get(12)?,
-        summary: row.get(13)?,
-        is_read: row.get::<_, i64>(14)? != 0,
-        dismissed: row.get::<_, i64>(15)? != 0,
-        bookmarked: row.get::<_, i64>(16)? != 0,
-        last_chapter_num: row.get(17)?,
-        ffn_updated_at: row.get(18)?,
-        source: row.get(19)?,
-        cached_chapter_count: row.get(20)?,
+        id: row.get("id")?,
+        source_story_id: row.get("source_story_id")?,
+        title: row.get("title")?,
+        author: row.get("author")?,
+        fandom: row.get("fandom")?,
+        rating: row.get("rating")?,
+        genre: row.get("genre")?,
+        language: row.get("language")?,
+        tags: row.get("tags")?,
+        status: row.get("status")?,
+        word_count: row.get("word_count")?,
+        favorite_count: row.get("favorite_count")?,
+        chapter_count: row.get("chapter_count")?,
+        summary: row.get("summary")?,
+        is_read: row.get::<_, i64>("is_read")? != 0,
+        dismissed: row.get::<_, i64>("dismissed")? != 0,
+        bookmarked: row.get::<_, i64>("bookmarked")? != 0,
+        last_chapter_num: row.get("last_chapter_num")?,
+        ffn_updated_at: row.get("ffn_updated_at")?,
+        source: row.get("source")?,
+        cached_chapter_count: row.get("cached_chapter_count")?,
     })
 }
 
 /// The `s.source, s.source_story_id, ...` column list shared by every
-/// `StoryRow` query — `row_to_story`'s column indices depend on this exact
-/// order.
-const STORY_COLUMNS: &str = "s.id, s.source_story_id, s.title, s.author, s.fandom, s.rating, s.genre, s.language, s.tags,
-                s.status, s.word_count, s.favorite_count, s.chapter_count, s.summary,
-                COALESCE(rs.is_read, 0), COALESCE(rs.dismissed, 0), COALESCE(rs.bookmarked, 0),
-                rs.last_chapter_num, s.ffn_updated_at, s.source,
-                (SELECT COUNT(*) FROM chapters c WHERE c.story_id = s.id AND c.content <> '')";
+/// `StoryRow` query. Architecture review candidate 3 (2026-07-21):
+/// `row_to_story` looks these up by name (every expression carries an
+/// explicit `AS`), not position — reordering this list can't silently
+/// mismap a field the way positional `row.get(N)` could.
+const STORY_COLUMNS: &str = "s.id AS id, s.source_story_id AS source_story_id, s.title AS title, s.author AS author,
+                s.fandom AS fandom, s.rating AS rating, s.genre AS genre, s.language AS language, s.tags AS tags,
+                s.status AS status, s.word_count AS word_count, s.favorite_count AS favorite_count,
+                s.chapter_count AS chapter_count, s.summary AS summary,
+                COALESCE(rs.is_read, 0) AS is_read, COALESCE(rs.dismissed, 0) AS dismissed,
+                COALESCE(rs.bookmarked, 0) AS bookmarked,
+                rs.last_chapter_num AS last_chapter_num, s.ffn_updated_at AS ffn_updated_at, s.source AS source,
+                (SELECT COUNT(*) FROM chapters c WHERE c.story_id = s.id AND c.content <> '') AS cached_chapter_count";
 
 pub fn list_stories(conn: &Connection, filters: &StoryFilters) -> rusqlite::Result<Vec<StoryRow>> {
     let mut sql = format!(
@@ -424,6 +429,33 @@ mod tests {
         let ao3_only = list_stories(&conn, &StoryFilters { source: Some("ao3".to_string()), ..Default::default() }).unwrap();
         assert_eq!(ao3_only.len(), 1);
         assert_eq!(ao3_only[0].source, "ao3");
+    }
+
+    #[test]
+    fn row_to_story_maps_by_name_not_position() {
+        // Architecture review candidate 3: row_to_story must keep working
+        // against a SELECT whose column order doesn't match STORY_COLUMNS's
+        // own order — proves the mapping is name-based, not positional.
+        let conn = test_conn();
+        let ffn_id = crate::db::upsert_story(&conn, &sample_ffn(1)).unwrap();
+        crate::db::ensure_read_state(&conn, ffn_id).unwrap();
+
+        let reordered_sql = "SELECT
+                s.title AS title, s.id AS id, s.source AS source, s.source_story_id AS source_story_id,
+                s.author AS author, s.fandom AS fandom, s.rating AS rating, s.genre AS genre,
+                s.language AS language, s.tags AS tags, s.status AS status, s.word_count AS word_count,
+                s.favorite_count AS favorite_count, s.chapter_count AS chapter_count, s.summary AS summary,
+                COALESCE(rs.bookmarked, 0) AS bookmarked, COALESCE(rs.is_read, 0) AS is_read,
+                COALESCE(rs.dismissed, 0) AS dismissed, rs.last_chapter_num AS last_chapter_num,
+                s.ffn_updated_at AS ffn_updated_at,
+                (SELECT COUNT(*) FROM chapters c WHERE c.story_id = s.id AND c.content <> '') AS cached_chapter_count
+             FROM stories s LEFT JOIN read_state rs ON rs.story_id = s.id WHERE s.id = ?1";
+
+        let row = conn.query_row(reordered_sql, rusqlite::params![ffn_id], row_to_story).unwrap();
+        assert_eq!(row.id, ffn_id);
+        assert_eq!(row.title, "FFN Story");
+        assert_eq!(row.source, "ffn");
+        assert_eq!(row.word_count, 3000);
     }
 
     #[test]

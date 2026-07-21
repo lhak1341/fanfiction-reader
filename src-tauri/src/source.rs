@@ -84,6 +84,7 @@ pub trait FicSource {
 
 pub struct Ffn;
 
+#[derive(Debug)]
 pub struct FfnChapterLocator {
     pub story_id: i64,
     pub chapter_num: i64,
@@ -104,10 +105,7 @@ impl FicSource for Ffn {
     type ListingLocator = FfnListingLocator;
 
     fn chapter_locator_from_url(url: &str) -> Result<Option<Self::ChapterLocator>, String> {
-        match (ffn::story_id_from_url(url), ffn::chapter_num_from_url(url)) {
-            (Ok(story_id), Ok(chapter_num)) => Ok(Some(FfnChapterLocator { story_id, chapter_num })),
-            _ => Ok(None),
-        }
+        Ok(ffn::ffn_locator_from_url(url)?.map(|(story_id, chapter_num)| FfnChapterLocator { story_id, chapter_num }))
     }
 
     fn listing_locator_from_url(url: &str) -> Option<Self::ListingLocator> {
@@ -167,6 +165,7 @@ impl FicSource for Ffn {
 
 pub struct Ao3;
 
+#[derive(Debug)]
 pub struct Ao3ChapterLocator {
     pub work_id: i64,
     pub chapter_id: Option<i64>,
@@ -186,9 +185,7 @@ impl FicSource for Ao3 {
     type ListingLocator = Ao3ListingLocator;
 
     fn chapter_locator_from_url(url: &str) -> Result<Option<Self::ChapterLocator>, String> {
-        let Ok(work_id) = ao3::work_id_from_url(url) else { return Ok(None) };
-        let chapter_id = ao3::chapter_id_from_url(url)?;
-        Ok(Some(Ao3ChapterLocator { work_id, chapter_id }))
+        Ok(ao3::ao3_locator_from_url(url)?.map(|(work_id, chapter_id)| Ao3ChapterLocator { work_id, chapter_id }))
     }
 
     fn listing_locator_from_url(url: &str) -> Option<Self::ListingLocator> {
@@ -255,5 +252,25 @@ impl FicSource for Ao3 {
 
     fn record_listing_page(conn: &Connection, locator: &Self::ListingLocator, page: i64) -> rusqlite::Result<()> {
         db::record_ao3_browse_page(conn, &locator.tag, locator.min_word_count, &locator.status, page)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Architecture review candidate 1 (2026-07-21): chapter_locator_from_url
+    // must propagate a malformed-but-shape-matching URL's real parse error
+    // instead of collapsing it into Ok(None).
+    #[test]
+    fn ffn_chapter_locator_from_url_propagates_malformed_error() {
+        let err = Ffn::chapter_locator_from_url("https://www.fanfiction.net/s/not-a-number/1/Title").unwrap_err();
+        assert!(err.contains("story id segment"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn ao3_chapter_locator_from_url_propagates_malformed_error() {
+        let err = Ao3::chapter_locator_from_url("https://archiveofourown.org/works/not-a-number").unwrap_err();
+        assert!(err.contains("work id segment"), "unexpected error: {err}");
     }
 }

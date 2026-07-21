@@ -42,23 +42,13 @@
   $effect(() => saveSearchFilterPrefs({ hideRead: search.hideRead, hideDismissed: search.hideDismissed, hideBookmarked: search.hideBookmarked }));
   $effect(() => savePinnedFandoms(search.pinnedFandoms));
   $effect(() => {
-    void search.fandom;
-    void search.sourceFilter;
-    void search.text;
-    void search.minWordCount;
-    void search.status;
-    void search.sortBy;
-    void search.hideRead;
-    void search.hideDismissed;
-    void search.hideBookmarked;
+    void search.reloadTrigger;
     search.loadStories();
   });
 
   $effect(() => saveBookmarksHideRead(bookmarks.hideRead));
   $effect(() => {
-    void bookmarks.fandom;
-    void bookmarks.sortBy;
-    void bookmarks.hideRead;
+    void bookmarks.reloadTrigger;
     bookmarks.loadStories();
   });
 

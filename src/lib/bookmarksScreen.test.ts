@@ -54,6 +54,25 @@ beforeEach(() => {
   vi.mocked(api.getContinueReading).mockResolvedValue([]);
 });
 
+describe("BookmarksScreen.reloadTrigger", () => {
+  // Architecture review candidate 4: +page.svelte's $effect watches this
+  // single value instead of enumerating each field itself.
+  it("changes when any field loadStories() reads is mutated", () => {
+    const bookmarks = makeScreen();
+    const mutations: Array<() => void> = [
+      () => (bookmarks.fandom = "Naruto"),
+      () => (bookmarks.sortBy = "updated"),
+      () => (bookmarks.hideRead = true)
+    ];
+
+    for (const mutate of mutations) {
+      const before = bookmarks.reloadTrigger;
+      mutate();
+      expect(bookmarks.reloadTrigger).not.toEqual(before);
+    }
+  });
+});
+
 describe("BookmarksScreen.refresh", () => {
   it("is a no-op re-entry while a refresh is already in flight", async () => {
     const bookmarks = makeScreen();

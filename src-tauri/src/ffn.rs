@@ -49,33 +49,28 @@ fn extract_labeled(haystack: &str, label: &str) -> Option<String> {
     Some(rest[..end].trim().to_string())
 }
 
-/// FFN story URLs look like `/s/8067258/1/Worth-Dying-For` — the id is the
-/// second path segment. Mirrors FanFicFare's `set_story_idurl`.
-pub fn story_id_from_url(url: &str) -> Result<i64, String> {
+/// FFN story URLs look like `/s/8067258/1/Worth-Dying-For` — the story id is
+/// the second path segment, the chapter number the third. Mirrors
+/// FanFicFare's `set_story_idurl`.
+///
+/// `Ok(None)` means the URL isn't this shape at all (leading segment isn't
+/// `s`) — architecture review candidate 1 (2026-07-21): this used to be
+/// checked per-field by two separate functions that each blindly skipped
+/// segment 0, so a URL like `/u/12345/someone` would false-match as story id
+/// 12345. Checking the shape once, here, for both ids together means they
+/// can't disagree about it.
+pub fn ffn_locator_from_url(url: &str) -> Result<Option<(i64, i64)>, String> {
     let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
-    let id = parsed
-        .path_segments()
-        .and_then(|mut segs| {
-            segs.next(); // "s"
-            segs.next()
-        })
-        .ok_or("URL did not contain a story id")?;
-    id.parse().map_err(|_| format!("story id segment {id:?} was not numeric"))
-}
-
-/// FFN chapter URLs look like `/s/8067258/1/Worth-Dying-For` — the chapter
-/// number is the third path segment.
-pub fn chapter_num_from_url(url: &str) -> Result<i64, String> {
-    let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
-    let num = parsed
-        .path_segments()
-        .and_then(|mut segs| {
-            segs.next(); // "s"
-            segs.next(); // story id
-            segs.next()
-        })
-        .ok_or("URL did not contain a chapter number")?;
-    num.parse().map_err(|_| format!("chapter segment {num:?} was not numeric"))
+    let mut segs = parsed.path_segments().ok_or("URL had no path")?;
+    if segs.next() != Some("s") {
+        return Ok(None);
+    }
+    let Some(story_id) = segs.next() else { return Ok(None) };
+    let Some(chapter_num) = segs.next() else { return Ok(None) };
+    let story_id: i64 = story_id.parse().map_err(|_| format!("story id segment {story_id:?} was not numeric"))?;
+    let chapter_num: i64 =
+        chapter_num.parse().map_err(|_| format!("chapter segment {chapter_num:?} was not numeric"))?;
+    Ok(Some((story_id, chapter_num)))
 }
 
 pub fn parse_story_page(html: &str, ffn_story_id: i64) -> Result<(StoryMetadata, Vec<ChapterRef>), String> {
@@ -507,5 +502,31 @@ mod tests {
         assert_eq!(entries[0], ("Harry Potter".to_string(), 852_000));
         assert_eq!(entries[1], ("Twilight".to_string(), 223_000));
         assert_eq!(entries.last().unwrap(), &("Keeper of the Lost Cities".to_string(), 1_000));
+    }
+
+    #[test]
+    fn ffn_locator_from_url_matches_a_real_chapter_url() {
+        let locator = ffn_locator_from_url("https://www.fanfiction.net/s/8067258/1/Worth-Dying-For").unwrap();
+        assert_eq!(locator, Some((8_067_258, 1)));
+    }
+
+    #[test]
+    fn ffn_locator_from_url_no_match_for_a_profile_url() {
+        // architecture review candidate 1: this used to false-match as story
+        // id 12345 because the leading segment was never checked.
+        let locator = ffn_locator_from_url("https://www.fanfiction.net/u/12345/someone").unwrap();
+        assert_eq!(locator, None);
+    }
+
+    #[test]
+    fn ffn_locator_from_url_malformed_for_non_numeric_story_id() {
+        let err = ffn_locator_from_url("https://www.fanfiction.net/s/not-a-number/1/Title").unwrap_err();
+        assert!(err.contains("story id segment"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn ffn_locator_from_url_malformed_for_non_numeric_chapter_num() {
+        let err = ffn_locator_from_url("https://www.fanfiction.net/s/8067258/not-a-number/Title").unwrap_err();
+        assert!(err.contains("chapter segment"), "unexpected error: {err}");
     }
 }

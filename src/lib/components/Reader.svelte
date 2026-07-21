@@ -12,7 +12,7 @@
   import { getReaderPrefs, saveReaderPrefs, type ReaderPrefs } from "$lib/readerPrefs";
   import { smartenQuotesHtml } from "$lib/typography";
   import { ensureChapterCached } from "$lib/chapterCache";
-  import { DEFAULT_JITTER_MS } from "$lib/pacedLoop";
+  import { jitterDelay, sleep } from "$lib/pacedLoop";
   import type { ChapterContent, ChapterListItem, StoryRow } from "$lib/types";
 
   let {
@@ -76,15 +76,9 @@
   // resumes where you left off, instead of always landing at the top.
   const scrollPositions = new Map<number, number>();
 
-  function sleep(ms: number) {
-    return new Promise((r) => setTimeout(r, ms));
-  }
-
   // Bumped on every loadChapter call; a running prefetch chain checks it
   // before each step and bails the moment a real navigation supersedes it.
   let prefetchGen = 0;
-
-  const jitterMs = () => DEFAULT_JITTER_MS.min + Math.random() * (DEFAULT_JITTER_MS.max - DEFAULT_JITTER_MS.min);
 
   // Quietly warms the two chapters on either side of wherever you land, so
   // paging back and forth feels instant most of the time. Best-effort and
@@ -111,7 +105,7 @@
       }
       if (!wasFetched) continue;
       if (gen !== prefetchGen) return;
-      await sleep(jitterMs());
+      await sleep(jitterDelay());
     }
   }
 

@@ -11,11 +11,16 @@
 // loop in the app waits somewhere in this range between items.
 export const DEFAULT_JITTER_MS = { min: 1500, max: 3000 };
 
-function jitterDelay(jitter: typeof DEFAULT_JITTER_MS): number {
+// Architecture review candidate 5 (2026-07-21): exported so Reader.svelte's
+// prefetchNeighbors (which can't reuse runPacedBestEffort itself — it needs
+// mid-loop cancellation via a generation token and skips pacing entirely on
+// an already-cached chapter) can still share this arithmetic instead of
+// re-deriving it.
+export function jitterDelay(jitter: typeof DEFAULT_JITTER_MS = DEFAULT_JITTER_MS): number {
   return jitter.min + Math.random() * (jitter.max - jitter.min);
 }
 
-function sleep(ms: number) {
+export function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
