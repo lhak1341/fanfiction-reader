@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { awaitCorrelatedEvent } from "./tauriEvents";
+import { runPacedBestEffort } from "./pacedLoop";
 import type {
   BrowseFetchedEvent,
   ChapterContent,
@@ -196,25 +197,14 @@ export function indexFfnCategoryAndWait(category: string): Promise<FandomIndexFe
   return awaitCorrelatedEvent<FandomIndexFetchedEvent>(() => indexFfnCategory(category), onFandomIndexFetched, onFandomIndexFetchError);
 }
 
-/// Indexes every category sequentially, one webview fetch at a time with a
-/// gap between them — same reasoning as chapter prefetching: several fetches
-/// back-to-back reads as bot traffic to Cloudflare in a way a single fetch
-/// doesn't. `onProgress` fires after each category (success or failure) so
-/// the caller can show a running status.
+/// Indexes every category sequentially (see `runPacedBestEffort`, pacedLoop.ts,
+/// for why this is paced). `onProgress` fires after each category (success or
+/// failure) so the caller can show a running status.
 export async function indexAllCategoriesAndWait(
   categories: readonly string[],
   onProgress?: (category: string, result: FandomIndexFetchedEvent | Error) => void
 ): Promise<void> {
-  for (let i = 0; i < categories.length; i++) {
-    const category = categories[i];
-    try {
-      const result = await indexFfnCategoryAndWait(category);
-      onProgress?.(category, result);
-    } catch (e) {
-      onProgress?.(category, e instanceof Error ? e : new Error(String(e)));
-    }
-    if (i < categories.length - 1) {
-      await new Promise((r) => setTimeout(r, 1500 + Math.random() * 1500));
-    }
-  }
+  await runPacedBestEffort(categories, indexFfnCategoryAndWait, (_i, _total, category, result) =>
+    onProgress?.(category, result)
+  );
 }

@@ -10,6 +10,8 @@
 
 use scraper::{ElementRef, Html, Selector};
 
+use crate::scrape::{parse_int, text_of};
+
 #[derive(Debug, serde::Serialize)]
 pub struct Ao3StoryMetadata {
     pub source_story_id: i64,
@@ -67,14 +69,6 @@ pub struct Ao3ChapterRef {
     /// has no chapter-select dropdown at all, and its one chapter is served
     /// directly at `/works/{work_id}` with no `/chapters/{id}` sub-path.
     pub chapter_id: Option<i64>,
-}
-
-fn text_of(el: &ElementRef) -> String {
-    el.text().collect::<String>().trim().to_string()
-}
-
-fn parse_word_count(s: &str) -> i64 {
-    s.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0)
 }
 
 /// Joins an element's matched children's text into one comma-separated
@@ -196,17 +190,17 @@ pub fn parse_work_page(html: &str, work_id: i64) -> Result<(Ao3StoryMetadata, Ve
     let stats = meta.select(&stats_sel).next().ok_or("could not find the nested stats block")?;
 
     let words_sel = Selector::parse("dd.words").unwrap();
-    let word_count = stats.select(&words_sel).next().map(|e| parse_word_count(&text_of(&e))).unwrap_or(0);
+    let word_count = stats.select(&words_sel).next().map(|e| parse_int(&text_of(&e))).unwrap_or(0);
 
     let bookmarks_sel = Selector::parse("dd.bookmarks").unwrap();
-    let favorite_count = stats.select(&bookmarks_sel).next().map(|e| parse_word_count(&text_of(&e))).unwrap_or(0);
+    let favorite_count = stats.select(&bookmarks_sel).next().map(|e| parse_int(&text_of(&e))).unwrap_or(0);
 
     let chapters_stat_sel = Selector::parse("dd.chapters").unwrap();
     let chapters_stat = stats.select(&chapters_stat_sel).next().map(|e| text_of(&e)).unwrap_or_default();
     // "80/?" (ongoing) or "12/12" (complete) — posted-so-far is always the
     // part before the slash.
     let (posted_str, planned_str) = chapters_stat.split_once('/').unwrap_or((chapters_stat.as_str(), ""));
-    let posted = parse_word_count(posted_str).max(1);
+    let posted = parse_int(posted_str).max(1);
     let status = if planned_str.trim() == "?" || planned_str.trim() != posted_str.trim() {
         "in_progress"
     } else {
@@ -421,10 +415,10 @@ pub fn parse_listing_page(html: &str) -> Result<Vec<Ao3StoryMetadata>, String> {
 
         let summary = row.select(&summary_sel).next().map(|e| text_of(&e)).filter(|s| !s.is_empty());
         let language = row.select(&language_sel).next().map(|e| text_of(&e)).filter(|s| !s.is_empty());
-        let word_count = row.select(&words_sel).next().map(|e| parse_word_count(&text_of(&e))).unwrap_or(0);
-        let favorite_count = row.select(&bookmarks_sel).next().map(|e| parse_word_count(&text_of(&e))).unwrap_or(0);
+        let word_count = row.select(&words_sel).next().map(|e| parse_int(&text_of(&e))).unwrap_or(0);
+        let favorite_count = row.select(&bookmarks_sel).next().map(|e| parse_int(&text_of(&e))).unwrap_or(0);
         let chapters_stat = row.select(&chapters_sel).next().map(|e| text_of(&e)).unwrap_or_default();
-        let chapter_count = chapters_stat.split_once('/').map(|(n, _)| parse_word_count(n)).unwrap_or(1).max(1);
+        let chapter_count = chapters_stat.split_once('/').map(|(n, _)| parse_int(n)).unwrap_or(1).max(1);
 
         out.push(Ao3StoryMetadata {
             source_story_id,

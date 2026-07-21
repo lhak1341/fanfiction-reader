@@ -5,6 +5,8 @@
 use percent_encoding::percent_decode_str;
 use scraper::{ElementRef, Html, Selector};
 
+use crate::scrape::{parse_int, text_of};
+
 #[derive(Debug, serde::Serialize)]
 pub struct StoryMetadata {
     pub ffn_story_id: i64,
@@ -38,10 +40,6 @@ pub struct ChapterRef {
     pub title: String,
 }
 
-fn text_of(el: &ElementRef) -> String {
-    el.text().collect::<String>().trim().to_string()
-}
-
 /// Pulls the value out of a "Label: value - ..." segment, e.g. `"76,552"`
 /// out of `"... Words: 76,552 - Reviews: ..."`.
 fn extract_labeled(haystack: &str, label: &str) -> Option<String> {
@@ -49,14 +47,6 @@ fn extract_labeled(haystack: &str, label: &str) -> Option<String> {
     let rest = &haystack[start..];
     let end = rest.find(" - ").unwrap_or(rest.len());
     Some(rest[..end].trim().to_string())
-}
-
-fn parse_int(s: &str) -> i64 {
-    s.chars()
-        .filter(|c| c.is_ascii_digit())
-        .collect::<String>()
-        .parse()
-        .unwrap_or(0)
 }
 
 /// FFN story URLs look like `/s/8067258/1/Worth-Dying-For` — the id is the

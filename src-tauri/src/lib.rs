@@ -2,6 +2,7 @@ mod ao3;
 mod db;
 mod ffn;
 mod queries;
+mod scrape;
 mod source;
 
 use source::{ChapterInfo, FicSource};
@@ -146,29 +147,13 @@ struct FandomIndexFetched {
     count: i64,
 }
 
+/// `FandomIndex` is FFN-only (no AO3 equivalent, SPEC.md §8) — `fetch_ao3_page`'s
+/// dispatch only ever calls `try_persist_fetch::<source::Ao3>`, which structurally
+/// never produces it, so that match arm is `unreachable!()` rather than handled.
 enum FetchOutcome {
     Chapter(ChapterFetched),
     Browse(BrowseFetched),
-}
-
-/// `try_persist_ffn_fetch`'s return shape — a superset of `FetchOutcome`
-/// with the FFN-only category-index case added. Kept as a separate type
-/// (not a third `FetchOutcome` variant) so `fetch_ao3_page`'s dispatch,
-/// which only ever calls `try_persist_fetch::<source::Ao3>`, can't be asked
-/// to handle a case that source structurally never produces.
-enum FfnFetchOutcome {
-    Chapter(ChapterFetched),
-    Browse(BrowseFetched),
     FandomIndex(FandomIndexFetched),
-}
-
-impl From<FetchOutcome> for FfnFetchOutcome {
-    fn from(outcome: FetchOutcome) -> Self {
-        match outcome {
-            FetchOutcome::Chapter(c) => FfnFetchOutcome::Chapter(c),
-            FetchOutcome::Browse(b) => FfnFetchOutcome::Browse(b),
-        }
-    }
 }
 
 /// Generic parse+persist dispatch shared by every `FicSource` (`source.rs`):
@@ -177,7 +162,7 @@ impl From<FetchOutcome> for FfnFetchOutcome {
 /// `chapter-fetched`/`browse-fetched`/`*-error` events, since the command
 /// that kicked off the fetch already returned by the time this runs.
 fn try_persist_fetch<S: FicSource>(
-    db: &tauri::State<db::Db>,
+    db: &db::Db,
     html: &str,
     page_url: &str,
     fandom_override: Option<&str>,
@@ -252,7 +237,7 @@ fn try_persist_ffn_fetch(
     html: &str,
     page_url: &str,
     title: &str,
-) -> Result<FfnFetchOutcome, String> {
+) -> Result<FetchOutcome, String> {
     // Dumped to disk unconditionally (before the blocked check) so a false
     // positive there can still be inspected, not just a genuine block.
     let dump_path = app.path().app_data_dir().expect("resolve app data dir").join("debug-last-fetch.html");
@@ -281,16 +266,16 @@ fn try_persist_ffn_fetch(
         }
         db::replace_fandom_index(&mut conn, &category, &entries).map_err(|e| e.to_string())?;
         println!("[fetch] indexed {} fandoms (1000+ fics) for category {category}", entries.len());
-        return Ok(FfnFetchOutcome::FandomIndex(FandomIndexFetched { category, count: entries.len() as i64 }));
+        return Ok(FetchOutcome::FandomIndex(FandomIndexFetched { category, count: entries.len() as i64 }));
     }
 
-    try_persist_fetch::<source::Ffn>(db, html, page_url, None).map(Into::into)
+    try_persist_fetch::<source::Ffn>(db, html, page_url, None)
 }
 
 #[tauri::command]
 fn report_fetch_result(app: tauri::AppHandle, db: tauri::State<db::Db>, html: String, page_url: String, title: String) {
     match try_persist_ffn_fetch(&app, &db, &html, &page_url, &title) {
-        Ok(FfnFetchOutcome::Chapter(fetched)) => {
+        Ok(FetchOutcome::Chapter(fetched)) => {
             println!("[fetch] persisted story id={} chapter {}", fetched.story_id, fetched.chapter_num);
             let _ = app.emit("chapter-fetched", fetched);
             // Left open (still hidden) rather than closed on success — it's
@@ -301,10 +286,10 @@ fn report_fetch_result(app: tauri::AppHandle, db: tauri::State<db::Db>, html: St
             // chapter of a bulk download, not window creation being
             // unavoidable in general.
         }
-        Ok(FfnFetchOutcome::Browse(fetched)) => {
+        Ok(FetchOutcome::Browse(fetched)) => {
             let _ = app.emit("browse-fetched", fetched);
         }
-        Ok(FfnFetchOutcome::FandomIndex(fetched)) => {
+        Ok(FetchOutcome::FandomIndex(fetched)) => {
             let _ = app.emit("fandom-index-fetched", fetched);
         }
         Err(e) => {
@@ -434,6 +419,7 @@ async fn fetch_ao3_page(
         Ok(FetchOutcome::Browse(fetched)) => {
             let _ = app.emit("browse-fetched", fetched);
         }
+        Ok(FetchOutcome::FandomIndex(_)) => unreachable!("AO3 never produces a FandomIndex outcome"),
         Err(e) => {
             eprintln!("[ao3-fetch] failed: {e}");
             let _ = app.emit("chapter-fetch-error", e.clone());
@@ -607,4 +593,94 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    const FFN_STORY_PAGE: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ffn_story_page.html"));
+    const FFN_BROWSE_LISTING: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ffn_browse_listing.html"));
+    const AO3_WORK_PAGE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ao3_work_page.html"));
+    const AO3_LISTING_PAGE: &str =
+        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ao3_listing_page.html"));
+
+    fn test_db() -> db::Db {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        conn.execute_batch(db::SCHEMA).unwrap();
+        db::Db(std::sync::Mutex::new(conn))
+    }
+
+    #[test]
+    fn ffn_chapter_url_dispatches_to_chapter_branch_and_resolves_chapter_num() {
+        let dbh = test_db();
+        let url = "https://www.fanfiction.net/s/13493099/34/Welcome-to-the-insane-world-of-Pok-mon";
+
+        let outcome = try_persist_fetch::<source::Ffn>(&dbh, FFN_STORY_PAGE, url, None).unwrap();
+
+        match outcome {
+            FetchOutcome::Chapter(fetched) => assert_eq!(fetched.chapter_num, 34),
+            _ => panic!("expected a Chapter outcome for a chapter URL"),
+        }
+    }
+
+    #[test]
+    fn ffn_listing_url_dispatches_to_browse_branch() {
+        let dbh = test_db();
+        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "any", 1);
+
+        let outcome = try_persist_fetch::<source::Ffn>(&dbh, FFN_BROWSE_LISTING, &url, None).unwrap();
+
+        match outcome {
+            FetchOutcome::Browse(fetched) => assert_eq!(fetched.count, 25),
+            _ => panic!("expected a Browse outcome for a listing URL"),
+        }
+    }
+
+    #[test]
+    fn empty_listing_page_is_an_error_not_a_zero_count_browse_outcome() {
+        let dbh = test_db();
+        let url = ffn::build_browse_url("anime", "Nonexistent Fandom", 0, "any", 1);
+
+        // FFN_STORY_PAGE is a chapter page, not a listing — parse_browse_page
+        // against it should find zero story rows.
+        let result = try_persist_fetch::<source::Ffn>(&dbh, FFN_STORY_PAGE, &url, None);
+
+        assert!(result.is_err(), "expected an error for a listing page with zero story rows");
+    }
+
+    #[test]
+    fn ao3_fandom_override_applies_on_listing_rows() {
+        let dbh = test_db();
+        let url = ao3::build_tag_browse_url("Harry Potter", "bookmarks_count", 0, "any", 1);
+
+        try_persist_fetch::<source::Ao3>(&dbh, AO3_LISTING_PAGE, &url, Some("Overridden Fandom")).unwrap();
+
+        let conn = dbh.0.lock().unwrap();
+        let fandom: String = conn.query_row("SELECT fandom FROM stories LIMIT 1", [], |row| row.get(0)).unwrap();
+        assert_eq!(fandom, "Overridden Fandom");
+    }
+
+    #[test]
+    fn ao3_fandom_override_is_ignored_on_the_chapter_path() {
+        let dbh = test_db();
+        let url = "https://archiveofourown.org/works/85954646/chapters/227238471";
+
+        let outcome =
+            try_persist_fetch::<source::Ao3>(&dbh, AO3_WORK_PAGE, url, Some("Should Not Apply Here")).unwrap();
+
+        match outcome {
+            FetchOutcome::Chapter(fetched) => {
+                let conn = dbh.0.lock().unwrap();
+                let fandom: String =
+                    conn.query_row("SELECT fandom FROM stories WHERE id = ?1", [fetched.story_id], |row| row.get(0)).unwrap();
+                assert_eq!(fandom, "Original Work, Naruto (Anime & Manga)");
+            }
+            _ => panic!("expected a Chapter outcome for a work/chapter URL"),
+        }
+    }
 }

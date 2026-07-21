@@ -1,18 +1,17 @@
 <script lang="ts">
   import * as api from "$lib/api";
   import { ChevronDown, LayoutGrid, List, RefreshCw } from "lucide-svelte";
-  import { ensureChapterCached } from "$lib/chapterCache";
-  import { ficSourceAdapter } from "$lib/ficSource";
-  import { applyFandomRename } from "$lib/fandom";
   import FandomPicker from "$lib/components/FandomPicker.svelte";
   import Reader from "$lib/components/Reader.svelte";
   import SearchModal from "$lib/components/SearchModal.svelte";
   import StoryList from "$lib/components/StoryList.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
-  import { getPinnedFandoms, savePinnedFandoms } from "$lib/pinnedFandoms";
+  import { SearchScreen } from "$lib/searchScreen.svelte";
+  import { BookmarksScreen } from "$lib/bookmarksScreen.svelte";
   import { getViewMode, saveViewMode } from "$lib/viewMode";
-  import { getSearchFilterPrefs, saveSearchFilterPrefs, getBookmarksHideRead, saveBookmarksHideRead } from "$lib/filterPrefs";
-  import type { SortBy, StoryRow, StorySource, StoryStatus } from "$lib/types";
+  import { saveSearchFilterPrefs, getBookmarksHideRead, saveBookmarksHideRead } from "$lib/filterPrefs";
+  import { savePinnedFandoms } from "$lib/pinnedFandoms";
+  import type { StoryRow } from "$lib/types";
 
   let screen = $state<"search" | "bookmarks" | "reader">("search");
   let lastListScreen = $state<"search" | "bookmarks">("search");
@@ -26,258 +25,66 @@
     screen = "reader";
   }
 
-  // ---- Search state ----
-  let searchFandom = $state<string | undefined>(undefined); // undefined = "All fandoms"
-  let searchText = $state("");
-  let minWordCount = $state<number | undefined>(undefined);
-  let status = $state<StoryStatus | undefined>(undefined);
-  let searchSortBy = $state<SortBy>("favorites");
-  const initialSearchFilterPrefs = getSearchFilterPrefs();
-  let hideRead = $state(initialSearchFilterPrefs.hideRead);
-  let hideDismissed = $state(initialSearchFilterPrefs.hideDismissed);
-  let hideBookmarked = $state(initialSearchFilterPrefs.hideBookmarked);
-  $effect(() => saveSearchFilterPrefs({ hideRead, hideDismissed, hideBookmarked }));
-  let pinnedFandoms = $state<Set<string>>(getPinnedFandoms());
-  $effect(() => savePinnedFandoms(pinnedFandoms));
+  let errorMessage = $state("");
+
+  const search = new SearchScreen((msg) => (errorMessage = msg));
+  const bookmarks = new BookmarksScreen((msg) => (errorMessage = msg), getBookmarksHideRead());
 
   // Shared between Search and Bookmarks — one persisted preference, not
   // per-screen state.
   let viewMode = $state<"list" | "card">(getViewMode());
   $effect(() => saveViewMode(viewMode));
 
-  // `undefined` = All sources. SPEC.md §8: sources aren't merged into one
-  // ranking, so this scopes sort-by-favorites/etc to one source at a time.
-  let sourceFilter = $state<StorySource | undefined>(undefined);
-  // Which source the *last* modal search/import used — "Load more" falls
-  // back to this when sourceFilter is "All", since a fandom name alone
-  // doesn't say which source to keep paging. Defaults to "ffn" (unchanged
-  // behavior for a session that never touches AO3).
-  let lastSearchSource = $state<StorySource>("ffn");
-
-  let fandoms = $state<string[]>([]);
-  let searchStories = $state<StoryRow[]>([]);
-  let searchModalOpen = $state(false);
-  let loadingMore = $state(false);
-  let loadMoreError = $state("");
-
-  // ---- Bookmarks state ----
-  let bookmarkFandom = $state<string | undefined>(undefined);
-  let bookmarkSortBy = $state<SortBy>("favorites");
-  let bookmarkHideRead = $state(getBookmarksHideRead());
-  $effect(() => saveBookmarksHideRead(bookmarkHideRead));
-
-  let bookmarkedFandoms = $state<string[]>([]);
-  let bookmarkStories = $state<StoryRow[]>([]);
-  let continueReading = $state<StoryRow[]>([]);
-
-  let errorMessage = $state("");
-
-  async function loadFandoms() {
-    try {
-      fandoms = await api.listFandoms();
-    } catch (e) {
-      errorMessage = `Could not load fandoms: ${e}`;
-    }
-  }
-
-  async function loadBookmarkedFandoms() {
-    try {
-      bookmarkedFandoms = await api.listBookmarkedFandoms();
-    } catch (e) {
-      errorMessage = `Could not load bookmarked fandoms: ${e}`;
-    }
-  }
-
-  async function loadSearchStories() {
-    try {
-      searchStories = await api.listStories({
-        fandom: searchFandom,
-        source: sourceFilter,
-        search: searchText.trim() || undefined,
-        minWordCount,
-        status,
-        sortBy: searchSortBy,
-        hideRead,
-        hideDismissed,
-        hideBookmarked
-      });
-      errorMessage = "";
-    } catch (e) {
-      errorMessage = `Could not load stories: ${e}`;
-    }
-  }
-
-  async function loadBookmarkStories() {
-    try {
-      bookmarkStories = await api.listBookmarks({
-        fandom: bookmarkFandom,
-        sortBy: bookmarkSortBy,
-        hideRead: bookmarkHideRead
-      });
-      errorMessage = "";
-    } catch (e) {
-      errorMessage = `Could not load bookmarks: ${e}`;
-    }
-  }
-
-  async function loadContinueReading() {
-    try {
-      continueReading = await api.getContinueReading(5);
-    } catch (e) {
-      errorMessage = `Could not load continue reading: ${e}`;
-    }
-  }
-
+  // Reactive auto-reload and pref persistence live here rather than inside
+  // SearchScreen/BookmarksScreen's constructors — `$effect` needs a live
+  // component/effect-root context, which the classes don't have when
+  // constructed directly in a unit test (see searchScreen.svelte.ts).
+  $effect(() => saveSearchFilterPrefs({ hideRead: search.hideRead, hideDismissed: search.hideDismissed, hideBookmarked: search.hideBookmarked }));
+  $effect(() => savePinnedFandoms(search.pinnedFandoms));
   $effect(() => {
-    void searchFandom;
-    void sourceFilter;
-    void searchText;
-    void minWordCount;
-    void status;
-    void searchSortBy;
-    void hideRead;
-    void hideDismissed;
-    void hideBookmarked;
-    loadSearchStories();
+    void search.fandom;
+    void search.sourceFilter;
+    void search.text;
+    void search.minWordCount;
+    void search.status;
+    void search.sortBy;
+    void search.hideRead;
+    void search.hideDismissed;
+    void search.hideBookmarked;
+    search.loadStories();
   });
 
+  $effect(() => saveBookmarksHideRead(bookmarks.hideRead));
   $effect(() => {
-    void bookmarkFandom;
-    void bookmarkSortBy;
-    void bookmarkHideRead;
-    loadBookmarkStories();
+    void bookmarks.fandom;
+    void bookmarks.sortBy;
+    void bookmarks.hideRead;
+    bookmarks.loadStories();
   });
 
-  loadFandoms();
-  loadBookmarkedFandoms();
-  loadContinueReading();
+  search.loadFandoms();
+  bookmarks.loadFandoms();
+  bookmarks.loadContinueReading();
 
   // Any toggle can affect both lists (a story visible in Search may be the
   // one just bookmarked/unbookmarked) plus the bookmarked-fandoms scope and
   // the Continue Reading surface — dataset is tiny, so just refresh everything.
   async function refreshAll() {
-    await Promise.all([loadSearchStories(), loadBookmarkStories(), loadBookmarkedFandoms(), loadContinueReading()]);
+    await Promise.all([search.loadStories(), bookmarks.reloadAll()]);
   }
 
-  function sleep(ms: number) {
-    return new Promise((r) => setTimeout(r, ms));
+  async function handleRefreshBookmarks() {
+    await bookmarks.refresh();
+    await search.loadStories();
   }
 
-  // Re-fetches each in-progress bookmarked story's own page (chapter 1) —
-  // that's enough to refresh its metadata (favorites, word/chapter count,
-  // the FFN "Updated:" text, and status if it's actually finished now) and
-  // pick up any new chapters, same as any other story-page fetch. Skips
-  // stories already marked complete locally (SPEC.md §6) — those don't
-  // change. Paced the same way as bulk chapter prefetch/discovery: a burst
-  // of requests with no gaps reads as bot traffic to Cloudflare.
-  let refreshingBookmarks = $state(false);
-  let refreshProgress = $state("");
-
-  async function refreshBookmarks() {
-    if (refreshingBookmarks) return;
-    refreshingBookmarks = true;
-    refreshProgress = "";
-    try {
-      const targets = await api.listBookmarks({ status: "in_progress" });
-      for (let i = 0; i < targets.length; i++) {
-        const story = targets[i];
-        refreshProgress = `Refreshing ${i + 1} of ${targets.length}…`;
-        try {
-          const url = ficSourceAdapter(story.source).chapterUrl(story, 1, null);
-          await api.fetchChapterAndWait(story.source, url, story.id, 1);
-        } catch {
-          // Best-effort — one story failing (e.g. taken down) shouldn't stop the rest.
-        }
-        await refreshAll();
-        if (i < targets.length - 1) await sleep(1500 + Math.random() * 1500);
-      }
-    } finally {
-      refreshingBookmarks = false;
-      refreshProgress = "";
-    }
+  async function handleDownloadAllChapters(story: StoryRow) {
+    await bookmarks.downloadAllChapters(story);
+    await search.loadStories();
   }
 
-  // Force-fetches every not-yet-cached chapter of one bookmarked story, so
-  // it's fully readable offline ahead of time rather than filling in as you
-  // navigate (Reader's own prefetch only ever looks 2 chapters ahead). Same
-  // paced/best-effort loop as `refreshBookmarks`, scoped to one story at a
-  // time (`downloadingStoryId` gates concurrent clicks).
-  let downloadingStoryId = $state<number | null>(null);
-  let downloadingStoryTitle = $state("");
-  let downloadProgress = $state("");
-  let downloadDone = $state(0);
-  let downloadTotal = $state(0);
-
-  async function downloadAllChapters(story: StoryRow) {
-    if (downloadingStoryId !== null) return;
-    downloadingStoryId = story.id;
-    downloadingStoryTitle = story.title;
-    downloadProgress = "";
-    downloadDone = 0;
-    downloadTotal = 0;
-    try {
-      let chapters = await api.listChapters(story.id);
-      const missing = chapters.filter((c) => !c.isCached);
-      downloadTotal = missing.length;
-      for (let i = 0; i < missing.length; i++) {
-        downloadProgress = `Downloading ${i + 1} of ${missing.length}…`;
-        try {
-          const result = await ensureChapterCached(story, chapters, story.id, missing[i].chapterNum);
-          chapters = result.chapters;
-        } catch {
-          // Best-effort — one chapter failing shouldn't stop the rest.
-        }
-        downloadDone = i + 1;
-        if (i < missing.length - 1) await sleep(1500 + Math.random() * 1500);
-      }
-      await refreshAll();
-    } finally {
-      downloadingStoryId = null;
-      downloadProgress = "";
-    }
-  }
-
-  async function handleImported(importedFandom: string, source: StorySource) {
-    searchModalOpen = false;
-    lastSearchSource = source;
-    await loadFandoms();
-    searchFandom = importedFandom;
-    await loadSearchStories();
-  }
-
-  /// Renames/merges a fandom bucket (FandomPicker's cleanup control) —
-  /// cleans up duplicate-looking entries (an AO3 import that kept AO3's own
-  /// canonical tag text) or messy crossover buckets (a comma-joined
-  /// multi-fandom string). Follows the rename in the current view: keeps
-  /// showing the same stories under their new fandom name, and moves a pin
-  /// to the new name rather than dropping it.
-  async function handleRenameFandom(oldFandom: string, newFandom: string) {
-    try {
-      await api.renameFandom(oldFandom, newFandom);
-      ({ pinnedFandoms, searchFandom } = applyFandomRename(oldFandom, newFandom, pinnedFandoms, searchFandom));
-      await loadFandoms();
-      await loadSearchStories();
-    } catch (e) {
-      errorMessage = `Could not rename fandom: ${e}`;
-    }
-  }
-
-  /// Continues paging the current fandom search. Which source to continue
-  /// is `sourceFilter` if the user has explicitly scoped the view to one,
-  /// else whichever source the last modal search used (`lastSearchSource`).
-  async function loadMore() {
-    if (!searchFandom) return;
-    loadingMore = true;
-    loadMoreError = "";
-    try {
-      const source = sourceFilter ?? lastSearchSource;
-      await ficSourceAdapter(source).loadMore(searchFandom, minWordCount ?? 0, status ?? "any");
-      await loadSearchStories();
-    } catch (e) {
-      loadMoreError = e instanceof Error ? e.message : String(e);
-    } finally {
-      loadingMore = false;
-    }
+  function fmtChapter(story: StoryRow) {
+    return story.lastChapterNum ? `Ch. ${story.lastChapterNum} of ${story.chapterCount}` : "Not started";
   }
 
   async function handleToggleRead(story: StoryRow) {
@@ -306,10 +113,6 @@
       errorMessage = `Could not update bookmark: ${e}`;
     }
   }
-
-  function fmtChapter(story: StoryRow) {
-    return story.lastChapterNum ? `Ch. ${story.lastChapterNum} of ${story.chapterCount}` : "Not started";
-  }
 </script>
 
 {#if screen === "reader" && readerStoryId !== undefined && readerChapterNum !== undefined}
@@ -330,10 +133,10 @@
     <div class="top-shell-right">
       <button
         class="refresh-btn"
-        class:spinning={refreshingBookmarks}
-        onclick={refreshBookmarks}
-        disabled={refreshingBookmarks}
-        title={refreshingBookmarks ? refreshProgress : "Refresh bookmarked stories (in-progress only)"}
+        class:spinning={bookmarks.refreshing}
+        onclick={handleRefreshBookmarks}
+        disabled={bookmarks.refreshing}
+        title={bookmarks.refreshing ? bookmarks.refreshProgress : "Refresh bookmarked stories (in-progress only)"}
       >
         <RefreshCw size={15} />
       </button>
@@ -346,11 +149,11 @@
     <p class="error">{errorMessage}</p>
   {/if}
 
-  {#if downloadingStoryId !== null}
+  {#if bookmarks.downloadingStoryId !== null}
     <div class="download-banner">
-      <span class="download-banner-text">Downloading "{downloadingStoryTitle}" — {downloadProgress}</span>
+      <span class="download-banner-text">Downloading "{bookmarks.downloadingStoryTitle}" — {bookmarks.downloadProgress}</span>
       <div class="download-banner-track">
-        <div class="download-banner-fill" style="width: {downloadTotal ? (downloadDone / downloadTotal) * 100 : 0}%"></div>
+        <div class="download-banner-fill" style="width: {bookmarks.downloadTotal ? (bookmarks.downloadDone / bookmarks.downloadTotal) * 100 : 0}%"></div>
       </div>
     </div>
   {/if}
@@ -359,19 +162,19 @@
     <div class="filterbar">
       <div class="filterbar-row">
         <FandomPicker
-          fandoms={fandoms}
-          selected={searchFandom}
+          fandoms={search.fandoms}
+          selected={search.fandom}
           pinnable
-          bind:pinnedFandoms
-          onSelect={(f) => (searchFandom = f)}
-          onRename={handleRenameFandom}
+          bind:pinnedFandoms={search.pinnedFandoms}
+          onSelect={(f) => (search.fandom = f)}
+          onRename={(oldFandom, newFandom) => search.renameFandom(oldFandom, newFandom)}
         />
-        <button class="search-ffn-btn" onclick={() => (searchModalOpen = true)}>Search</button>
+        <button class="search-ffn-btn" onclick={() => (search.modalOpen = true)}>Search</button>
 
-        <input class="search-input" placeholder="Search title, author, or summary…" bind:value={searchText} />
+        <input class="search-input" placeholder="Search title, author, or summary…" bind:value={search.text} />
 
         <div class="sort-select-wrap">
-          <select class="sort-select" bind:value={searchSortBy}>
+          <select class="sort-select" bind:value={search.sortBy}>
             <option value="favorites">Sort: Favorites</option>
             <option value="updated">Sort: Updated</option>
             <option value="words">Sort: Word count</option>
@@ -387,78 +190,78 @@
 
       <div class="filterbar-row">
         <div class="field-group" role="group" aria-label="Source">
-          <button class:active={sourceFilter === undefined} onclick={() => (sourceFilter = undefined)}>All</button>
-          <button class:active={sourceFilter === "ffn"} onclick={() => (sourceFilter = "ffn")}>FFN</button>
-          <button class:active={sourceFilter === "ao3"} onclick={() => (sourceFilter = "ao3")}>AO3</button>
+          <button class:active={search.sourceFilter === undefined} onclick={() => (search.sourceFilter = undefined)}>All</button>
+          <button class:active={search.sourceFilter === "ffn"} onclick={() => (search.sourceFilter = "ffn")}>FFN</button>
+          <button class:active={search.sourceFilter === "ao3"} onclick={() => (search.sourceFilter = "ao3")}>AO3</button>
         </div>
 
         <div class="field-group" role="group" aria-label="Minimum word count">
-          <button class:active={minWordCount === undefined} onclick={() => (minWordCount = undefined)}>Any length</button>
-          <button class:active={minWordCount === 40000} onclick={() => (minWordCount = 40000)}>40K+</button>
-          <button class:active={minWordCount === 100000} onclick={() => (minWordCount = 100000)}>100K+</button>
+          <button class:active={search.minWordCount === undefined} onclick={() => (search.minWordCount = undefined)}>Any length</button>
+          <button class:active={search.minWordCount === 40000} onclick={() => (search.minWordCount = 40000)}>40K+</button>
+          <button class:active={search.minWordCount === 100000} onclick={() => (search.minWordCount = 100000)}>100K+</button>
         </div>
 
         <div class="field-group" role="group" aria-label="Status">
-          <button class:active={status === undefined} onclick={() => (status = undefined)}>Any status</button>
-          <button class:active={status === "complete"} onclick={() => (status = "complete")}>Done</button>
-          <button class:active={status === "in_progress"} onclick={() => (status = "in_progress")}>Ongoing</button>
+          <button class:active={search.status === undefined} onclick={() => (search.status = undefined)}>Any status</button>
+          <button class:active={search.status === "complete"} onclick={() => (search.status = "complete")}>Done</button>
+          <button class:active={search.status === "in_progress"} onclick={() => (search.status = "in_progress")}>Ongoing</button>
         </div>
 
         <label class="hide-toggle">
-          <input type="checkbox" bind:checked={hideRead} /> Hide read
+          <input type="checkbox" bind:checked={search.hideRead} /> Hide read
         </label>
         <label class="hide-toggle">
-          <input type="checkbox" bind:checked={hideDismissed} /> Hide dismissed
+          <input type="checkbox" bind:checked={search.hideDismissed} /> Hide dismissed
         </label>
         <label class="hide-toggle">
-          <input type="checkbox" bind:checked={hideBookmarked} /> Hide bookmarked
+          <input type="checkbox" bind:checked={search.hideBookmarked} /> Hide bookmarked
         </label>
       </div>
     </div>
 
-    {#if searchStories.length === 0}
-      {#if searchFandom}
+    {#if search.stories.length === 0}
+      {#if search.fandom}
         <p class="empty-note">
-          {#if fandoms.includes(searchFandom)}
-            You've gone through everything imported for "{searchFandom}" with these filters.
+          {#if search.fandoms.includes(search.fandom)}
+            You've gone through everything imported for "{search.fandom}" with these filters.
           {:else}
-            No stories for "{searchFandom}" yet.
+            No stories for "{search.fandom}" yet.
           {/if}
           <br />
-          <button class="load-more-btn" onclick={loadMore} disabled={loadingMore}>
-            {loadingMore ? "Loading…" : "Load more"}
+          <button class="load-more-btn" onclick={() => search.loadMore()} disabled={search.loadingMore}>
+            {search.loadingMore ? "Loading…" : "Load more"}
           </button>
-          {#if loadMoreError}<span class="error">{loadMoreError}</span>{/if}
+          {#if search.loadMoreError}<span class="error">{search.loadMoreError}</span>{/if}
         </p>
       {:else}
         <p class="empty-note">
-          No stories yet. Click <button class="link-btn" onclick={() => (searchModalOpen = true)}>Search</button> to pull some in.
+          No stories yet. Click <button class="link-btn" onclick={() => (search.modalOpen = true)}>Search</button> to pull some in.
         </p>
       {/if}
     {:else}
       <StoryList
-        stories={searchStories}
+        stories={search.stories}
         viewMode={viewMode}
         onOpenStory={openStory}
         onToggleRead={handleToggleRead}
         onToggleDismissed={handleToggleDismissed}
         onToggleBookmarked={handleToggleBookmarked}
       />
-      {#if searchFandom}
+      {#if search.fandom}
         <div class="load-more-row">
-          <button class="load-more-btn" onclick={loadMore} disabled={loadingMore}>
-            {loadingMore ? "Loading…" : "Load more"}
+          <button class="load-more-btn" onclick={() => search.loadMore()} disabled={search.loadingMore}>
+            {search.loadingMore ? "Loading…" : "Load more"}
           </button>
-          {#if loadMoreError}<span class="error">{loadMoreError}</span>{/if}
+          {#if search.loadMoreError}<span class="error">{search.loadMoreError}</span>{/if}
         </div>
       {/if}
     {/if}
   {:else}
-    {#if continueReading.length > 0}
+    {#if bookmarks.continueReading.length > 0}
       <div class="continue-reading">
         <h3>Continue Reading</h3>
         <div class="continue-row">
-          {#each continueReading as story (story.id)}
+          {#each bookmarks.continueReading as story (story.id)}
             <button class="continue-card" onclick={() => openStory(story)}>
               <div class="t">{story.title}</div>
               <div class="meta">{story.fandom} · {fmtChapter(story)}</div>
@@ -470,10 +273,10 @@
 
     <div class="filterbar">
       <div class="filterbar-row">
-        <FandomPicker fandoms={bookmarkedFandoms} selected={bookmarkFandom} onSelect={(f) => (bookmarkFandom = f)} />
+        <FandomPicker fandoms={bookmarks.fandoms} selected={bookmarks.fandom} onSelect={(f) => (bookmarks.fandom = f)} />
 
         <div class="sort-select-wrap">
-          <select class="sort-select" bind:value={bookmarkSortBy}>
+          <select class="sort-select" bind:value={bookmarks.sortBy}>
             <option value="favorites">Sort: Favorites</option>
             <option value="updated">Sort: Updated</option>
             <option value="words">Sort: Word count</option>
@@ -482,7 +285,7 @@
         </div>
 
         <label class="hide-toggle">
-          <input type="checkbox" bind:checked={bookmarkHideRead} /> Hide read
+          <input type="checkbox" bind:checked={bookmarks.hideRead} /> Hide read
         </label>
 
         <div class="view-toggle" role="group" aria-label="View">
@@ -492,11 +295,11 @@
       </div>
     </div>
 
-    {#if bookmarkStories.length === 0}
+    {#if bookmarks.stories.length === 0}
       <p class="empty-note">No bookmarks yet. Bookmark a story from Search to see it here.</p>
     {:else}
       <StoryList
-        stories={bookmarkStories}
+        stories={bookmarks.stories}
         viewMode={viewMode}
         showFandom
         includeDismiss={false}
@@ -504,15 +307,15 @@
         onToggleRead={handleToggleRead}
         onToggleDismissed={handleToggleDismissed}
         onToggleBookmarked={handleToggleBookmarked}
-        onDownloadAll={downloadAllChapters}
-        downloadingStoryId={downloadingStoryId}
-        downloadProgress={downloadDone && downloadTotal ? `Downloading ${downloadDone} of ${downloadTotal}…` : downloadProgress}
+        onDownloadAll={handleDownloadAllChapters}
+        downloadingStoryId={bookmarks.downloadingStoryId}
+        downloadProgress={bookmarks.downloadDone && bookmarks.downloadTotal ? `Downloading ${bookmarks.downloadDone} of ${bookmarks.downloadTotal}…` : bookmarks.downloadProgress}
       />
     {/if}
   {/if}
 </div>
-{#if searchModalOpen}
-  <SearchModal onClose={() => (searchModalOpen = false)} onImported={handleImported} />
+{#if search.modalOpen}
+  <SearchModal onClose={() => (search.modalOpen = false)} onImported={(fandom, source) => search.handleImported(fandom, source)} />
 {/if}
 {/if}
 

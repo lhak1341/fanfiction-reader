@@ -12,6 +12,7 @@
   import { getReaderPrefs, saveReaderPrefs, type ReaderPrefs } from "$lib/readerPrefs";
   import { smartenQuotesHtml } from "$lib/typography";
   import { ensureChapterCached } from "$lib/chapterCache";
+  import { DEFAULT_JITTER_MS } from "$lib/pacedLoop";
   import type { ChapterContent, ChapterListItem, StoryRow } from "$lib/types";
 
   let {
@@ -83,6 +84,8 @@
   // before each step and bails the moment a real navigation supersedes it.
   let prefetchGen = 0;
 
+  const jitterMs = () => DEFAULT_JITTER_MS.min + Math.random() * (DEFAULT_JITTER_MS.max - DEFAULT_JITTER_MS.min);
+
   // Quietly warms the two chapters on either side of wherever you land, so
   // paging back and forth feels instant most of the time. Best-effort and
   // low-priority: skips chapters already cached, bails on the generation
@@ -108,7 +111,7 @@
       }
       if (!wasFetched) continue;
       if (gen !== prefetchGen) return;
-      await sleep(1500 + Math.random() * 1500);
+      await sleep(jitterMs());
     }
   }
 
