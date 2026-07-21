@@ -3,8 +3,10 @@
   // list/card rendering only differs by whether fandom shows per-row
   // (Bookmarks spans fandoms; Search is already fandom-scoped) and whether
   // dismiss is offered (not meaningful on an already-bookmarked row).
-  import { Calendar, Check, CloudCheck, Download, Heart, Star, WholeWord, X } from "lucide-svelte";
-  import { fmt, shortDate } from "$lib/format";
+  import { CloudCheck, Heart, WholeWord } from "lucide-svelte";
+  import { fmt } from "$lib/format";
+  import RowActions from "$lib/components/RowActions.svelte";
+  import StatusBadges from "$lib/components/StatusBadges.svelte";
   import type { StoryRow } from "$lib/types";
 
   let {
@@ -48,6 +50,7 @@
   }
 </script>
 
+
 {#if viewMode === "list"}
   <div class="list-body">
     {#each stories as story (story.id)}
@@ -60,12 +63,7 @@
             {#if onDownloadAll && isFullyDownloaded(story)}
               <span class="offline-badge" title="All chapters downloaded — readable offline"><CloudCheck size={11} /> Offline</span>
             {/if}
-            <span class="pill" class:complete={story.status === "complete"}>
-              {story.status === "complete" ? "Done" : "Ongoing"}
-            </span>
-            {#if story.status === "in_progress" && story.ffnUpdatedAt && shortDate(story.ffnUpdatedAt)}
-              <span class="updated-note" title="Last updated {story.ffnUpdatedAt}"><Calendar size={11} /> {shortDate(story.ffnUpdatedAt)}</span>
-            {/if}
+            <StatusBadges status={story.status} ffnUpdatedAt={story.ffnUpdatedAt} />
           </div>
         </div>
         <div class="desc-col">
@@ -78,26 +76,16 @@
           <span class="tnum stat-icon" title="Word count"><WholeWord size={12} /> {fmt(story.wordCount)}</span>
           <span class="tnum stat-icon" title="Favorites"><Heart size={12} /> {fmt(story.favoriteCount)}</span>
         </div>
-        <div class="row-actions">
-          <button class="icon-btn" class:on-read={story.isRead} onclick={() => onToggleRead(story)} title="Mark as read"><Check size={13} /></button>
-          {#if includeDismiss}
-            <button class="icon-btn" class:on-dismiss={story.dismissed} onclick={() => onToggleDismissed(story)} title="Dismiss — not for me"><X size={13} /></button>
-          {/if}
-          <button class="icon-btn" class:on-bookmark={story.bookmarked} onclick={() => onToggleBookmarked(story)} title="Bookmark">
-            <Star size={13} fill={story.bookmarked ? "currentColor" : "none"} />
-          </button>
-          {#if onDownloadAll && (downloadingStoryId === story.id || !isFullyDownloaded(story))}
-            <button
-              class="icon-btn"
-              class:spinning={downloadingStoryId === story.id}
-              onclick={() => onDownloadAll(story)}
-              disabled={downloadingStoryId !== null}
-              title={downloadingStoryId === story.id ? downloadProgress : "Download all chapters for offline reading"}
-            >
-              <Download size={13} />
-            </button>
-          {/if}
-        </div>
+        <RowActions
+          {story}
+          {includeDismiss}
+          {onToggleRead}
+          {onToggleDismissed}
+          {onToggleBookmarked}
+          {onDownloadAll}
+          {downloadingStoryId}
+          {downloadProgress}
+        />
       </div>
     {/each}
   </div>
@@ -132,33 +120,18 @@
         </div>
         <div class="cardfoot">
           <div class="cardfoot-status">
-            <span class="pill" class:complete={story.status === "complete"}>
-              {story.status === "complete" ? "Done" : "Ongoing"}
-            </span>
-            {#if story.status === "in_progress" && story.ffnUpdatedAt && shortDate(story.ffnUpdatedAt)}
-              <span class="updated-note" title="Last updated {story.ffnUpdatedAt}"><Calendar size={11} /> {shortDate(story.ffnUpdatedAt)}</span>
-            {/if}
+            <StatusBadges status={story.status} ffnUpdatedAt={story.ffnUpdatedAt} />
           </div>
-          <div class="row-actions">
-            <button class="icon-btn" class:on-read={story.isRead} onclick={() => onToggleRead(story)} title="Mark as read"><Check size={13} /></button>
-            {#if includeDismiss}
-              <button class="icon-btn" class:on-dismiss={story.dismissed} onclick={() => onToggleDismissed(story)} title="Dismiss"><X size={13} /></button>
-            {/if}
-            <button class="icon-btn" class:on-bookmark={story.bookmarked} onclick={() => onToggleBookmarked(story)} title="Bookmark">
-              <Star size={13} fill={story.bookmarked ? "currentColor" : "none"} />
-            </button>
-            {#if onDownloadAll && (downloadingStoryId === story.id || !isFullyDownloaded(story))}
-              <button
-                class="icon-btn"
-                class:spinning={downloadingStoryId === story.id}
-                onclick={() => onDownloadAll(story)}
-                disabled={downloadingStoryId !== null}
-                title={downloadingStoryId === story.id ? downloadProgress : "Download all chapters for offline reading"}
-              >
-                <Download size={13} />
-              </button>
-            {/if}
-          </div>
+          <RowActions
+            {story}
+            {includeDismiss}
+            {onToggleRead}
+            {onToggleDismissed}
+            {onToggleBookmarked}
+            {onDownloadAll}
+            {downloadingStoryId}
+            {downloadProgress}
+          />
         </div>
       </div>
     {/each}
@@ -252,17 +225,6 @@
     flex-shrink: 0;
   }
 
-  .pill {
-    display: inline-block;
-    padding: 0.1rem 0.5rem;
-    border-radius: 999px;
-    font-size: 0.65rem;
-    font-weight: 700;
-    white-space: nowrap;
-    flex-shrink: 0;
-    background: var(--accent-wash);
-    color: var(--accent);
-  }
   .source-badge {
     display: inline-block;
     padding: 0.05rem 0.4rem;
@@ -281,10 +243,6 @@
     border-color: transparent;
     color: var(--gold);
   }
-  .pill.complete {
-    background: var(--moss-wash);
-    color: var(--moss);
-  }
   .offline-badge {
     display: inline-flex;
     align-items: center;
@@ -298,64 +256,10 @@
     background: var(--moss-wash);
     color: var(--moss);
   }
-  .updated-note {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.2rem;
-    font-size: 0.7rem;
-    color: var(--ink-soft);
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-
-  .row-actions {
-    display: flex;
-    gap: 0.3rem;
-    flex-shrink: 0;
-  }
-  .icon-btn {
-    border: 1px solid var(--line);
-    background: var(--paper);
-    border-radius: 5px;
-    width: 26px;
-    height: 26px;
-    display: grid;
-    place-items: center;
-    color: var(--ink-soft);
-  }
   .stat-icon {
     display: inline-flex;
     align-items: center;
     gap: 0.2rem;
-  }
-  .icon-btn.on-read {
-    background: var(--moss-wash);
-    color: var(--moss);
-    border-color: transparent;
-  }
-  .icon-btn.on-dismiss {
-    background: var(--rust-wash);
-    color: var(--rust);
-    border-color: transparent;
-  }
-  .icon-btn.on-bookmark {
-    background: var(--gold-wash);
-    color: var(--gold);
-    border-color: transparent;
-  }
-  .icon-btn:disabled {
-    opacity: 0.6;
-  }
-  .icon-btn.spinning :global(svg) {
-    animation: download-spin 0.9s linear infinite;
-  }
-  @keyframes download-spin {
-    from {
-      transform: rotate(0deg);
-    }
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   .cards {

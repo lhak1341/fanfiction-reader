@@ -9,6 +9,7 @@
   import { ChevronLeft, ChevronRight, Check, Menu, Star, Type, X } from "lucide-svelte";
   import * as api from "$lib/api";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+  import Stepper from "$lib/components/Stepper.svelte";
   import { getReaderPrefs, saveReaderPrefs, type ReaderPrefs } from "$lib/readerPrefs";
   import { smartenQuotesHtml } from "$lib/typography";
   import { ensureChapterCached } from "$lib/chapterCache";
@@ -269,47 +270,64 @@
             onchange={(e) => updatePrefs({ customFont: e.currentTarget.value })}
           />
 
-          <span class="font-label">Size</span>
-          <div class="stepper">
-            <button onclick={() => updatePrefs({ fontSize: Math.max(14, readerPrefs.fontSize - 1) })} aria-label="Decrease font size">−</button>
-            <span class="tnum">{readerPrefs.fontSize}px</span>
-            <button onclick={() => updatePrefs({ fontSize: Math.min(28, readerPrefs.fontSize + 1) })} aria-label="Increase font size">+</button>
-          </div>
+          <Stepper
+            label="Size"
+            value={readerPrefs.fontSize}
+            min={14}
+            max={28}
+            step={1}
+            unit="px"
+            onchange={(v) => updatePrefs({ fontSize: v })}
+          />
 
-          <span class="font-label">Weight</span>
-          <div class="stepper">
-            <button onclick={() => updatePrefs({ fontWeight: Math.max(100, readerPrefs.fontWeight - 100) })} aria-label="Decrease font weight">−</button>
-            <span class="tnum">{readerPrefs.fontWeight}</span>
-            <button onclick={() => updatePrefs({ fontWeight: Math.min(900, readerPrefs.fontWeight + 100) })} aria-label="Increase font weight">+</button>
-          </div>
+          <Stepper
+            label="Weight"
+            value={readerPrefs.fontWeight}
+            min={100}
+            max={900}
+            step={100}
+            onchange={(v) => updatePrefs({ fontWeight: v })}
+          />
 
-          <span class="font-label">Bold weight</span>
-          <div class="stepper">
-            <button onclick={() => updatePrefs({ fontWeightBold: Math.max(100, readerPrefs.fontWeightBold - 100) })} aria-label="Decrease bold weight">−</button>
-            <span class="tnum">{readerPrefs.fontWeightBold}</span>
-            <button onclick={() => updatePrefs({ fontWeightBold: Math.min(900, readerPrefs.fontWeightBold + 100) })} aria-label="Increase bold weight">+</button>
-          </div>
+          <Stepper
+            label="Bold weight"
+            value={readerPrefs.fontWeightBold}
+            min={100}
+            max={900}
+            step={100}
+            onchange={(v) => updatePrefs({ fontWeightBold: v })}
+          />
 
-          <span class="font-label">Line height</span>
-          <div class="stepper">
-            <button onclick={() => updatePrefs({ lineHeight: Math.round((Math.max(1.2, readerPrefs.lineHeight - 0.1)) * 100) / 100 })} aria-label="Decrease line height">−</button>
-            <span class="tnum">{readerPrefs.lineHeight.toFixed(2)}</span>
-            <button onclick={() => updatePrefs({ lineHeight: Math.round((Math.min(2.4, readerPrefs.lineHeight + 0.1)) * 100) / 100 })} aria-label="Increase line height">+</button>
-          </div>
+          <Stepper
+            label="Line height"
+            value={readerPrefs.lineHeight}
+            min={1.2}
+            max={2.4}
+            step={0.1}
+            decimals={2}
+            onchange={(v) => updatePrefs({ lineHeight: v })}
+          />
 
-          <span class="font-label">Kerning</span>
-          <div class="stepper">
-            <button onclick={() => updatePrefs({ letterSpacing: Math.round((Math.max(-0.05, readerPrefs.letterSpacing - 0.01)) * 1000) / 1000 })} aria-label="Decrease letter spacing">−</button>
-            <span class="tnum">{readerPrefs.letterSpacing.toFixed(2)}em</span>
-            <button onclick={() => updatePrefs({ letterSpacing: Math.round((Math.min(0.2, readerPrefs.letterSpacing + 0.01)) * 1000) / 1000 })} aria-label="Increase letter spacing">+</button>
-          </div>
+          <Stepper
+            label="Kerning"
+            value={readerPrefs.letterSpacing}
+            min={-0.05}
+            max={0.2}
+            step={0.01}
+            decimals={3}
+            unit="em"
+            onchange={(v) => updatePrefs({ letterSpacing: v })}
+          />
 
-          <span class="font-label">Page width</span>
-          <div class="stepper">
-            <button onclick={() => updatePrefs({ pageWidth: Math.max(40, readerPrefs.pageWidth - 2) })} aria-label="Decrease page width">−</button>
-            <span class="tnum">{readerPrefs.pageWidth}ch</span>
-            <button onclick={() => updatePrefs({ pageWidth: Math.min(90, readerPrefs.pageWidth + 2) })} aria-label="Increase page width">+</button>
-          </div>
+          <Stepper
+            label="Page width"
+            value={readerPrefs.pageWidth}
+            min={40}
+            max={90}
+            step={2}
+            unit="ch"
+            onchange={(v) => updatePrefs({ pageWidth: v })}
+          />
 
           <span class="font-label">Smart quotes</span>
           <div class="seg">
@@ -666,8 +684,7 @@
     background: var(--paper);
     color: var(--ink);
   }
-  .seg,
-  .stepper {
+  .seg {
     display: flex;
     width: 100%;
     border: 1px solid var(--line);
@@ -676,9 +693,6 @@
   }
   .seg button {
     flex: 1;
-  }
-  .seg button,
-  .stepper button {
     background: var(--paper);
     border: none;
     color: var(--ink-soft);
@@ -686,27 +700,13 @@
     font-size: 0.72rem;
     border-right: 1px solid var(--line);
   }
-  .seg button:last-child,
-  .stepper button:last-child {
+  .seg button:last-child {
     border-right: none;
   }
   .seg button.active {
     background: var(--accent-wash);
     color: var(--accent);
     font-weight: 700;
-  }
-  .stepper {
-    align-items: center;
-  }
-  .stepper button {
-    flex-shrink: 0;
-  }
-  .stepper span {
-    flex: 1;
-    text-align: center;
-    padding: 0 0.4rem;
-    font-size: 0.76rem;
-    color: var(--ink);
   }
 
   .drawer-overlay {

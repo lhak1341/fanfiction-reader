@@ -281,33 +281,63 @@ fn try_persist_ffn_fetch(
     try_persist_fetch::<source::Ffn>(db, html, page_url, None)
 }
 
-#[tauri::command]
-fn report_fetch_result(app: tauri::AppHandle, db: tauri::State<db::Db>, html: String, page_url: String, title: String) {
-    match try_persist_ffn_fetch(&app, &db, &html, &page_url, &title) {
+/// Which caller is turning a `FetchOutcome` into events — only distinction
+/// that matters is `FandomIndex` (FFN-only, SPEC.md §8): AO3 structurally
+/// never produces that variant, so it also never emits its error event.
+enum FetchSource {
+    Ffn,
+    Ao3,
+}
+
+impl FetchSource {
+    fn log_prefix(&self) -> &'static str {
+        match self {
+            FetchSource::Ffn => "[fetch]",
+            FetchSource::Ao3 => "[ao3-fetch]",
+        }
+    }
+}
+
+/// Shared outcome-to-events mapping behind both fetch paths
+/// (`report_fetch_result`'s window round-trip, `fetch_ao3_page`'s direct
+/// HTTP call): same three success events, same error fan-out, differing
+/// only in log prefix and whether `FandomIndex` applies (`FetchSource`).
+fn emit_fetch_outcome(app: &tauri::AppHandle, result: Result<FetchOutcome, String>, source: FetchSource) {
+    let prefix = source.log_prefix();
+    match result {
         Ok(FetchOutcome::Chapter(fetched)) => {
-            println!("[fetch] persisted story id={} chapter {}", fetched.story_id, fetched.chapter_num);
+            println!("{prefix} persisted story id={} chapter {}", fetched.story_id, fetched.chapter_num);
             let _ = app.emit("chapter-fetched", fetched);
-            // Left open (still hidden) rather than closed on success — it's
-            // reused via `navigate()` by the next `fetch_page` call (see its
-            // doc comment). Closing here used to force every single fetch
-            // back through `WebviewWindowBuilder::build()`, which is what
-            // was actually causing the app to steal OS focus on every
-            // chapter of a bulk download, not window creation being
-            // unavoidable in general.
         }
         Ok(FetchOutcome::Browse(fetched)) => {
             let _ = app.emit("browse-fetched", fetched);
         }
         Ok(FetchOutcome::FandomIndex(fetched)) => {
+            if matches!(source, FetchSource::Ao3) {
+                unreachable!("AO3 never produces a FandomIndex outcome");
+            }
             let _ = app.emit("fandom-index-fetched", fetched);
         }
         Err(e) => {
-            eprintln!("[fetch] failed: {e}");
+            eprintln!("{prefix} failed: {e}");
             let _ = app.emit("chapter-fetch-error", e.clone());
             let _ = app.emit("browse-fetch-error", e.clone());
-            let _ = app.emit("fandom-index-fetch-error", e);
+            if matches!(source, FetchSource::Ffn) {
+                let _ = app.emit("fandom-index-fetch-error", e);
+            }
         }
     }
+}
+
+#[tauri::command]
+fn report_fetch_result(app: tauri::AppHandle, db: tauri::State<db::Db>, html: String, page_url: String, title: String) {
+    // The webview window is left open (still hidden) rather than closed on
+    // success — reused via `navigate()` by the next `fetch_page` call (see
+    // its doc comment); closing here used to force every fetch back through
+    // `WebviewWindowBuilder::build()`, which was what stole OS focus on
+    // every chapter of a bulk download.
+    let result = try_persist_ffn_fetch(&app, &db, &html, &page_url, &title);
+    emit_fetch_outcome(&app, result, FetchSource::Ffn);
 }
 
 // ---- AO3 fetch path (SPEC.md §8) ----
@@ -420,21 +450,7 @@ async fn fetch_ao3_page(
         }
         Err(e) => Err(e),
     };
-    match result {
-        Ok(FetchOutcome::Chapter(fetched)) => {
-            println!("[ao3-fetch] persisted story id={} chapter {}", fetched.story_id, fetched.chapter_num);
-            let _ = app.emit("chapter-fetched", fetched);
-        }
-        Ok(FetchOutcome::Browse(fetched)) => {
-            let _ = app.emit("browse-fetched", fetched);
-        }
-        Ok(FetchOutcome::FandomIndex(_)) => unreachable!("AO3 never produces a FandomIndex outcome"),
-        Err(e) => {
-            eprintln!("[ao3-fetch] failed: {e}");
-            let _ = app.emit("chapter-fetch-error", e.clone());
-            let _ = app.emit("browse-fetch-error", e);
-        }
-    }
+    emit_fetch_outcome(&app, result, FetchSource::Ao3);
     Ok(())
 }
 
