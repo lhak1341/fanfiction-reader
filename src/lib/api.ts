@@ -2,8 +2,7 @@
 // Keeps `invoke()` string command names in one place.
 
 import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { awaitCorrelatedEvent } from "./tauriEvents";
+import { awaitCorrelatedEvent, defineFetchEvent } from "./tauriEvents";
 import { runPacedBestEffort } from "./pacedLoop";
 import type {
   BrowseFetchedEvent,
@@ -93,13 +92,7 @@ export interface ChapterFetchedEvent {
   chapterNum: number;
 }
 
-export function onChapterFetched(handler: (e: ChapterFetchedEvent) => void): Promise<UnlistenFn> {
-  return listen<ChapterFetchedEvent>("chapter-fetched", (e) => handler(e.payload));
-}
-
-export function onChapterFetchError(handler: (message: string) => void): Promise<UnlistenFn> {
-  return listen<string>("chapter-fetch-error", (e) => handler(e.payload));
-}
+const chapterEvents = defineFetchEvent<ChapterFetchedEvent>("chapter-fetched", "chapter-fetch-error");
 
 /// Fetches one chapter and resolves once it's actually persisted (or rejects
 /// on a fetch error) — the awaitable version of `fetchPage`/`fetchAo3Page`,
@@ -110,8 +103,8 @@ export function fetchChapterAndWait(source: StorySource, url: string, storyId: n
   const fetchFn = source === "ao3" ? fetchAo3Page : fetchPage;
   return awaitCorrelatedEvent<ChapterFetchedEvent>(
     () => fetchFn(url),
-    onChapterFetched,
-    onChapterFetchError,
+    chapterEvents.on,
+    chapterEvents.onError,
     (e) => e.storyId === storyId && e.chapterNum === chapterNum
   ).then(() => {});
 }
@@ -131,13 +124,7 @@ export function searchFfn(
   return invoke("search_ffn", { category: category ?? null, fandom, minWordCount, status });
 }
 
-export function onBrowseFetched(handler: (e: BrowseFetchedEvent) => void): Promise<UnlistenFn> {
-  return listen<BrowseFetchedEvent>("browse-fetched", (e) => handler(e.payload));
-}
-
-export function onBrowseFetchError(handler: (message: string) => void): Promise<UnlistenFn> {
-  return listen<string>("browse-fetch-error", (e) => handler(e.payload));
-}
+const browseEvents = defineFetchEvent<BrowseFetchedEvent>("browse-fetched", "browse-fetch-error");
 
 /// Awaitable version of `searchFfn`, matching `fetchChapterAndWait`'s shape.
 export function searchFfnAndWait(
@@ -146,7 +133,7 @@ export function searchFfnAndWait(
   status: StoryStatus | "any",
   category?: string
 ): Promise<BrowseFetchedEvent> {
-  return awaitCorrelatedEvent<BrowseFetchedEvent>(() => searchFfn(fandom, minWordCount, status, category), onBrowseFetched, onBrowseFetchError);
+  return awaitCorrelatedEvent<BrowseFetchedEvent>(() => searchFfn(fandom, minWordCount, status, category), browseEvents.on, browseEvents.onError);
 }
 
 // ---- AO3 discovery (SPEC.md §8) ----
@@ -170,7 +157,7 @@ export function searchAo3AndWait(
   minWordCount: number,
   status: StoryStatus | "any"
 ): Promise<BrowseFetchedEvent> {
-  return awaitCorrelatedEvent<BrowseFetchedEvent>(() => searchAo3(tag, fandom, minWordCount, status), onBrowseFetched, onBrowseFetchError);
+  return awaitCorrelatedEvent<BrowseFetchedEvent>(() => searchAo3(tag, fandom, minWordCount, status), browseEvents.on, browseEvents.onError);
 }
 
 // ---- Fandom index (SPEC.md §6 — precise fandom picker) ----
@@ -185,16 +172,10 @@ export function listFandomIndex(category?: string): Promise<FandomIndexEntry[]> 
   return invoke("list_fandom_index", { category: category ?? null });
 }
 
-export function onFandomIndexFetched(handler: (e: FandomIndexFetchedEvent) => void): Promise<UnlistenFn> {
-  return listen<FandomIndexFetchedEvent>("fandom-index-fetched", (e) => handler(e.payload));
-}
-
-export function onFandomIndexFetchError(handler: (message: string) => void): Promise<UnlistenFn> {
-  return listen<string>("fandom-index-fetch-error", (e) => handler(e.payload));
-}
+const fandomIndexEvents = defineFetchEvent<FandomIndexFetchedEvent>("fandom-index-fetched", "fandom-index-fetch-error");
 
 export function indexFfnCategoryAndWait(category: string): Promise<FandomIndexFetchedEvent> {
-  return awaitCorrelatedEvent<FandomIndexFetchedEvent>(() => indexFfnCategory(category), onFandomIndexFetched, onFandomIndexFetchError);
+  return awaitCorrelatedEvent<FandomIndexFetchedEvent>(() => indexFfnCategory(category), fandomIndexEvents.on, fandomIndexEvents.onError);
 }
 
 /// Indexes every category sequentially (see `runPacedBestEffort`, pacedLoop.ts,

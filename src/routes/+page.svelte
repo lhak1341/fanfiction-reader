@@ -1,5 +1,4 @@
 <script lang="ts">
-  import * as api from "$lib/api";
   import { ChevronDown, LayoutGrid, List, RefreshCw } from "lucide-svelte";
   import FandomPicker from "$lib/components/FandomPicker.svelte";
   import Reader from "$lib/components/Reader.svelte";
@@ -8,6 +7,7 @@
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import { SearchScreen } from "$lib/searchScreen.svelte";
   import { BookmarksScreen } from "$lib/bookmarksScreen.svelte";
+  import { toggleStoryFlag } from "$lib/storyFlags";
   import { getViewMode, saveViewMode } from "$lib/viewMode";
   import { saveSearchFilterPrefs, getBookmarksHideRead, saveBookmarksHideRead } from "$lib/filterPrefs";
   import { savePinnedFandoms } from "$lib/pinnedFandoms";
@@ -79,7 +79,7 @@
 
   async function handleToggleRead(story: StoryRow) {
     try {
-      await api.toggleRead(story.id, !story.isRead);
+      await toggleStoryFlag(story, "isRead");
       await refreshAll();
     } catch (e) {
       errorMessage = `Could not update read state: ${e}`;
@@ -88,7 +88,7 @@
 
   async function handleToggleDismissed(story: StoryRow) {
     try {
-      await api.toggleDismissed(story.id, !story.dismissed);
+      await toggleStoryFlag(story, "dismissed");
       await refreshAll();
     } catch (e) {
       errorMessage = `Could not update dismissed state: ${e}`;
@@ -97,7 +97,7 @@
 
   async function handleToggleBookmarked(story: StoryRow) {
     try {
-      await api.toggleBookmarked(story.id, !story.bookmarked);
+      await toggleStoryFlag(story, "bookmarked");
       await refreshAll();
     } catch (e) {
       errorMessage = `Could not update bookmark: ${e}`;

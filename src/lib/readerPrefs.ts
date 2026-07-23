@@ -1,3 +1,5 @@
+import { definePersistedPref } from "./persistedPref";
+
 export interface ReaderPrefs {
   fontFamily: "serif" | "sans";
   /** Font family name typed by the user (e.g. "Bookerly") — takes priority
@@ -14,8 +16,6 @@ export interface ReaderPrefs {
   smartQuotes: boolean;
 }
 
-const STORAGE_KEY = "ffn-reader-typography";
-
 const DEFAULTS: ReaderPrefs = {
   fontFamily: "serif",
   customFont: "",
@@ -28,18 +28,12 @@ const DEFAULTS: ReaderPrefs = {
   smartQuotes: true
 };
 
-export function getReaderPrefs(): ReaderPrefs {
-  if (typeof localStorage === "undefined") return DEFAULTS;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULTS;
-    return { ...DEFAULTS, ...JSON.parse(raw) };
-  } catch {
-    return DEFAULTS;
-  }
-}
+// Merges over DEFAULTS on every read (not just when nothing's stored) — a
+// blob saved by an older app version missing a newer field still gets that
+// field's default, rather than `undefined`.
+const pref = definePersistedPref<ReaderPrefs>("ffn-reader-typography", DEFAULTS, {
+  deserialize: (raw) => ({ ...DEFAULTS, ...JSON.parse(raw) })
+});
 
-export function saveReaderPrefs(prefs: ReaderPrefs) {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
-}
+export const getReaderPrefs = pref.get;
+export const saveReaderPrefs = pref.save;

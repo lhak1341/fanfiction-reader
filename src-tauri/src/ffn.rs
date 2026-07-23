@@ -49,6 +49,32 @@ fn extract_labeled(haystack: &str, label: &str) -> Option<String> {
     Some(rest[..end].trim().to_string())
 }
 
+/// The "Rated: <value> - <language> - <genre> - ..." portion of the
+/// metadata line, split into trimmed, non-empty segments — shared by a
+/// story page and a browse-listing row (architecture review candidate 5,
+/// 2026-07-23): FFN doesn't label language/genre, so both are read
+/// positionally, and this was duplicated verbatim in both parsers.
+/// `segments[0]` is the rating value itself (e.g. "Fiction  T"), `[1]`
+/// language, `[2]` genre; a story page's tags sit at `[3..]`, a
+/// browse-listing row's tags sit elsewhere on the line entirely (see
+/// `extract_trailing_tags`) so it doesn't read past `[2]` here. Bounded by
+/// whichever of "Chapters:"/"Words:" appears first — whichever label the
+/// page actually has — this boundary rule already drifted once (see
+/// `extract_trailing_tags`'s "- Complete" regression note).
+fn parse_meta_segments(meta_text: &str) -> Vec<&str> {
+    let after_rated = meta_text.splitn(2, "Rated:").nth(1).unwrap_or("");
+    let before_keyed_end = ["Chapters:", "Words:"]
+        .iter()
+        .filter_map(|label| after_rated.find(label))
+        .min()
+        .unwrap_or(after_rated.len());
+    after_rated[..before_keyed_end]
+        .split(" - ")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 /// FFN story URLs look like `/s/8067258/1/Worth-Dying-For` — the story id is
 /// the second path segment, the chapter number the third. Mirrors
 /// FanFicFare's `set_story_idurl`.
@@ -114,32 +140,16 @@ pub fn parse_story_page(html: &str, ffn_story_id: i64) -> Result<(StoryMetadata,
     let fandom_sel = Selector::parse("#pre_story_links a").unwrap();
     let fandom = doc.select(&fandom_sel).last().map(|e| text_of(&e)).unwrap_or_default();
 
-    let rating = extract_labeled(&meta_text, "Rated:")
-        .and_then(|s| s.split_whitespace().last().map(|s| s.to_string()))
-        .unwrap_or_default();
-
     let word_count = extract_labeled(&meta_text, "Words:").map(|s| parse_int(&s)).unwrap_or(0);
     let favorite_count = extract_labeled(&meta_text, "Favs:").map(|s| parse_int(&s)).unwrap_or(0);
     let status = if meta_text.contains("Complete") { "complete" } else { "in_progress" }.to_string();
     let updated_at = extract_labeled(&meta_text, "Updated:").filter(|s| !s.is_empty());
 
-    // Language/genre/tags: FFN doesn't label these, so read them
-    // positionally between "Rated: <value>" and the first keyed label
-    // (Chapters:/Words:). Anything past genre is character/pairing tag
-    // segments (e.g. "Naruto U.", or "[Naruto U., Hinata H.]" for a
-    // pairing) — joined verbatim rather than parsed further.
-    let after_rated = meta_text.splitn(2, "Rated:").nth(1).unwrap_or("");
-    let before_keyed_end = ["Chapters:", "Words:"]
-        .iter()
-        .filter_map(|label| after_rated.find(label))
-        .min()
-        .unwrap_or(after_rated.len());
-    let segments: Vec<&str> = after_rated[..before_keyed_end]
-        .split(" - ")
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-    // segments[0] is the rating value itself (e.g. "Fiction  T").
+    // Anything past genre is character/pairing tag segments (e.g.
+    // "Naruto U.", or "[Naruto U., Hinata H.]" for a pairing) — joined
+    // verbatim rather than parsed further.
+    let segments = parse_meta_segments(&meta_text);
+    let rating = segments.first().and_then(|s| s.split_whitespace().last()).unwrap_or_default().to_string();
     let language = segments.get(1).map(|s| s.to_string());
     let genre = segments.get(2).map(|s| s.to_string());
     let tags = if segments.len() > 3 {
@@ -364,26 +374,14 @@ pub fn parse_browse_page(html: &str, fandom: &str) -> Result<Vec<StoryMetadata>,
 
         let meta_text = row.select(&meta_sel).next().map(|e| text_of(&e)).unwrap_or_default();
 
-        let rating = extract_labeled(&meta_text, "Rated:")
-            .and_then(|s| s.split_whitespace().last().map(|s| s.to_string()))
-            .unwrap_or_default();
         let word_count = extract_labeled(&meta_text, "Words:").map(|s| parse_int(&s)).unwrap_or(0);
         let favorite_count = extract_labeled(&meta_text, "Favs:").map(|s| parse_int(&s)).unwrap_or(0);
         let chapter_count = extract_labeled(&meta_text, "Chapters:").map(|s| parse_int(&s)).unwrap_or(1);
         let status = if meta_text.contains("Complete") { "complete" } else { "in_progress" }.to_string();
         let updated_at = extract_labeled(&meta_text, "Updated:").filter(|s| !s.is_empty());
 
-        let after_rated = meta_text.splitn(2, "Rated:").nth(1).unwrap_or("");
-        let before_keyed_end = ["Chapters:", "Words:"]
-            .iter()
-            .filter_map(|label| after_rated.find(label))
-            .min()
-            .unwrap_or(after_rated.len());
-        let segments: Vec<&str> = after_rated[..before_keyed_end]
-            .split(" - ")
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let segments = parse_meta_segments(&meta_text);
+        let rating = segments.first().and_then(|s| s.split_whitespace().last()).unwrap_or_default().to_string();
         let language = segments.get(1).map(|s| s.to_string());
         let genre = segments.get(2).map(|s| s.to_string());
         let tags = extract_trailing_tags(&meta_text);

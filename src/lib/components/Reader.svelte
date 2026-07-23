@@ -7,14 +7,11 @@
   // `chapter-fetched` event before rendering.
   import { tick } from "svelte";
   import { ChevronLeft, ChevronRight, Check, Menu, Star, Type, X } from "lucide-svelte";
-  import * as api from "$lib/api";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import Stepper from "$lib/components/Stepper.svelte";
   import { getReaderPrefs, saveReaderPrefs, type ReaderPrefs } from "$lib/readerPrefs";
   import { smartenQuotesHtml } from "$lib/typography";
-  import { ensureChapterCached } from "$lib/chapterCache";
-  import { jitterDelay, sleep } from "$lib/pacedLoop";
-  import type { ChapterContent, ChapterListItem, StoryRow } from "$lib/types";
+  import { ReaderScreen } from "$lib/readerScreen.svelte";
 
   let {
     storyId,
@@ -28,12 +25,12 @@
     onChanged?: () => void;
   } = $props();
 
-  let story = $state<StoryRow | undefined>(undefined);
-  let chapters = $state<ChapterListItem[]>([]);
-  let currentChapterNum = $state(initialChapterNum);
-  let content = $state<ChapterContent | undefined>(undefined);
-  let loading = $state(true);
-  let fetchError = $state("");
+  // Captured once, deliberately: Reader always fully remounts per story
+  // (+page.svelte's `{#if screen === "reader"}` toggles from a list screen),
+  // so storyId/onChanged never change during one mount's lifetime.
+  // svelte-ignore state_referenced_locally
+  const screen = new ReaderScreen(storyId, onChanged);
+
   let drawerOpen = $state(false);
   let scrollEl = $state<HTMLDivElement | undefined>(undefined);
   let scrollPct = $state(0);
@@ -62,8 +59,8 @@
   let titleStyle = $derived(`font-family: ${fontFamilyCss}; letter-spacing: ${readerPrefs.letterSpacing}em;`);
 
   let displayedHtml = $derived.by(() => {
-    if (!content) return "";
-    return readerPrefs.smartQuotes ? smartenQuotesHtml(content.content) : content.content;
+    if (!screen.content) return "";
+    return readerPrefs.smartQuotes ? smartenQuotesHtml(screen.content.content) : screen.content.content;
   });
 
   function handleScroll() {
@@ -72,98 +69,36 @@
     scrollPct = max <= 0 ? 100 : Math.round((scrollEl.scrollTop / max) * 100);
   }
 
-  // Remembers scroll position per chapter for this reading session (not
-  // persisted) — so paging back to a chapter you were partway through
-  // resumes where you left off, instead of always landing at the top.
-  const scrollPositions = new Map<number, number>();
-
-  // Bumped on every loadChapter call; a running prefetch chain checks it
-  // before each step and bails the moment a real navigation supersedes it.
-  let prefetchGen = 0;
-
-  // Quietly warms the two chapters on either side of wherever you land, so
-  // paging back and forth feels instant most of the time. Best-effort and
-  // low-priority: skips chapters already cached, bails on the generation
-  // check if you navigate again mid-chain, and paces itself the same way
-  // the debug tool's bulk prefetch does (a fetch burst with no gaps reads
-  // as bot traffic to Cloudflare in a way a single manual fetch doesn't).
-  async function prefetchNeighbors(gen: number, centerNum: number) {
-    if (!story) return;
-    const targets = [centerNum - 2, centerNum - 1, centerNum + 1, centerNum + 2].filter(
-      (n) => n >= 1 && n <= story!.chapterCount
-    );
-    for (const n of targets) {
-      if (gen !== prefetchGen) return;
-      let wasFetched = true;
-      try {
-        const result = await ensureChapterCached(story, chapters, storyId, n);
-        chapters = result.chapters;
-        wasFetched = result.wasFetched;
-      } catch {
-        // Best-effort — a failed prefetch just means that chapter fetches
-        // normally (foreground) whenever it's actually opened. Treated as
-        // an attempt (paces before the next target), not a clean skip.
-      }
-      if (!wasFetched) continue;
-      if (gen !== prefetchGen) return;
-      await sleep(jitterDelay());
-    }
+  // ReaderScreen owns the generation-token/prefetch/scroll-position-map
+  // logic; this component only ever hands it a plain scrollTop number and,
+  // once it resolves, applies the restore to the real DOM node.
+  async function restoreScrollAndFocus(num: number) {
+    await tick();
+    // rAF, not just tick(): tick() only guarantees Svelte's own DOM
+    // updates flushed, not that the browser has finished laying out the
+    // newly-inserted chapter HTML — setting scrollTop before that can
+    // get silently clamped back to whatever height was measured yet.
+    requestAnimationFrame(() => {
+      if (!scrollEl) return;
+      scrollEl.scrollTop = screen.scrollPositions.get(num) ?? 0;
+      scrollEl.focus({ preventScroll: true });
+      handleScroll();
+    });
   }
 
-  async function loadChapter(num: number) {
-    const myGen = ++prefetchGen;
-    if (scrollEl && content) scrollPositions.set(currentChapterNum, scrollEl.scrollTop);
-    loading = true;
-    fetchError = "";
-    if (!story) {
-      fetchError = "story metadata not loaded yet";
-      loading = false;
-      return;
-    }
-    try {
-      const result = await ensureChapterCached(story, chapters, storyId, num);
-      chapters = result.chapters;
-      content = result.content ?? undefined;
-      currentChapterNum = num;
-      await tick();
-      // rAF, not just tick(): tick() only guarantees Svelte's own DOM
-      // updates flushed, not that the browser has finished laying out the
-      // newly-inserted chapter HTML — setting scrollTop before that can
-      // get silently clamped back to whatever height was measured yet.
-      requestAnimationFrame(() => {
-        if (!scrollEl) return;
-        scrollEl.scrollTop = scrollPositions.get(num) ?? 0;
-        scrollEl.focus({ preventScroll: true });
-        handleScroll();
-      });
-      await api.setResumeChapter(storyId, num);
-      onChanged?.();
-      void prefetchNeighbors(myGen, num);
-    } catch (e) {
-      fetchError = e instanceof Error ? e.message : String(e);
-    } finally {
-      loading = false;
-    }
-  }
+  // svelte-ignore state_referenced_locally
+  screen.init(initialChapterNum).then(() => restoreScrollAndFocus(screen.currentChapterNum));
 
-  async function init() {
-    story = (await api.getStory(storyId)) ?? undefined;
-    chapters = await api.listChapters(storyId);
-    await loadChapter(initialChapterNum);
-  }
-
-  init();
-
-  function goToChapter(num: number) {
-    if (num < 1 || num > (story?.chapterCount ?? 1)) return;
+  async function goToChapter(num: number) {
     drawerOpen = false;
-    loadChapter(num);
+    await screen.goToChapter(num, scrollEl?.scrollTop);
+    await restoreScrollAndFocus(screen.currentChapterNum);
   }
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === "ArrowLeft") goToChapter(currentChapterNum - 1);
-    if (e.key === "ArrowRight") goToChapter(currentChapterNum + 1);
+    if (e.key === "ArrowLeft") goToChapter(screen.currentChapterNum - 1);
+    if (e.key === "ArrowRight") goToChapter(screen.currentChapterNum + 1);
   }
 
   // Carousel window for the hover-reveal chapter strip: current chapter
@@ -179,40 +114,18 @@
     return Math.max(2, Math.floor((maxRows - 1) / 2));
   });
   let navHover = $state(false);
-  let navCenterIdx = $derived(chapters.findIndex((c) => c.chapterNum === currentChapterNum));
+  let navCenterIdx = $derived(screen.chapters.findIndex((c) => c.chapterNum === screen.currentChapterNum));
   let navWindow = $derived.by(() => {
     if (navCenterIdx === -1) return [];
-    return chapters.slice(Math.max(0, navCenterIdx - navRadius), Math.min(chapters.length, navCenterIdx + navRadius + 1));
+    return screen.chapters.slice(Math.max(0, navCenterIdx - navRadius), Math.min(screen.chapters.length, navCenterIdx + navRadius + 1));
   });
   // Fades dots out the further they sit from the active chapter — full
   // opacity is restored per-dot on individual hover via CSS (:hover beats
   // this custom property in the cascade, see .nav-row rules below).
   function navDotOpacity(chapterNum: number): number {
-    const dist = Math.abs(chapterNum - currentChapterNum);
+    const dist = Math.abs(chapterNum - screen.currentChapterNum);
     return Math.max(0.25, 1 - dist * 0.16);
   }
-
-  async function toggleRead() {
-    if (!story) return;
-    await api.toggleRead(story.id, !story.isRead);
-    story = { ...story, isRead: !story.isRead };
-    onChanged?.();
-  }
-
-  async function toggleBookmark() {
-    if (!story) return;
-    await api.toggleBookmarked(story.id, !story.bookmarked);
-    story = { ...story, bookmarked: !story.bookmarked };
-    onChanged?.();
-  }
-
-  async function toggleDismiss() {
-    if (!story) return;
-    await api.toggleDismissed(story.id, !story.dismissed);
-    story = { ...story, dismissed: !story.dismissed };
-    onChanged?.();
-  }
-
 </script>
 
 <svelte:window
@@ -237,7 +150,7 @@
     {#each navWindow as c (c.chapterNum)}
       <button
         class="nav-row"
-        class:current={c.chapterNum === currentChapterNum}
+        class:current={c.chapterNum === screen.currentChapterNum}
         style="--dist-opacity: {navDotOpacity(c.chapterNum)}"
         onclick={() => goToChapter(c.chapterNum)}
       >
@@ -342,20 +255,20 @@
     <ThemeToggle />
   </div>
 
-  <button class="edge-zone left" aria-label="Previous chapter" disabled={currentChapterNum <= 1} onclick={() => goToChapter(currentChapterNum - 1)}><ChevronLeft size={22} /></button>
-  <button class="edge-zone right" aria-label="Next chapter" disabled={!story || currentChapterNum >= story.chapterCount} onclick={() => goToChapter(currentChapterNum + 1)}><ChevronRight size={22} /></button>
+  <button class="edge-zone left" aria-label="Previous chapter" disabled={screen.currentChapterNum <= 1} onclick={() => goToChapter(screen.currentChapterNum - 1)}><ChevronLeft size={22} /></button>
+  <button class="edge-zone right" aria-label="Next chapter" disabled={!screen.story || screen.currentChapterNum >= screen.story.chapterCount} onclick={() => goToChapter(screen.currentChapterNum + 1)}><ChevronRight size={22} /></button>
 
   <div class="readerC-scroll" bind:this={scrollEl} onscroll={handleScroll} tabindex="-1">
     <div class="readerC-inner" style="max-width: {readerPrefs.pageWidth}ch">
-      {#if story}
-        <span class="readerC-chip">Chapter {currentChapterNum} of {story.chapterCount}</span>
+      {#if screen.story}
+        <span class="readerC-chip">Chapter {screen.currentChapterNum} of {screen.story.chapterCount}</span>
       {/if}
-      {#if loading}
+      {#if screen.loading}
         <p class="status">Loading…</p>
-      {:else if fetchError}
-        <p class="status error">{fetchError}</p>
-      {:else if content}
-        <h1 class="chapter-title" style={titleStyle}>{content.title}</h1>
+      {:else if screen.fetchError}
+        <p class="status error">{screen.fetchError}</p>
+      {:else if screen.content}
+        <h1 class="chapter-title" style={titleStyle}>{screen.content.title}</h1>
         <div class="prose" style={proseStyle}>
           {@html displayedHtml}
         </div>
@@ -363,15 +276,18 @@
     </div>
   </div>
 
-  {#if story}
+  {#if screen.story}
     <div class="fab-cluster">
-      <button class="fab" class:bookmarked={story.bookmarked} onclick={toggleBookmark} aria-pressed={story.bookmarked} title={story.bookmarked ? "Bookmarked" : "Bookmark"}>
-        <Star size={17} fill={story.bookmarked ? "currentColor" : "none"} />
+      {#if screen.toggleError}
+        <p class="status error fab-error">{screen.toggleError}</p>
+      {/if}
+      <button class="fab" class:bookmarked={screen.story.bookmarked} onclick={() => screen.toggleBookmark()} aria-pressed={screen.story.bookmarked} title={screen.story.bookmarked ? "Bookmarked" : "Bookmark"}>
+        <Star size={17} fill={screen.story.bookmarked ? "currentColor" : "none"} />
       </button>
-      <button class="fab" class:dismissed={story.dismissed} onclick={toggleDismiss} aria-pressed={story.dismissed} title={story.dismissed ? "Dismissed" : "Dismiss"}>
+      <button class="fab" class:dismissed={screen.story.dismissed} onclick={() => screen.toggleDismiss()} aria-pressed={screen.story.dismissed} title={screen.story.dismissed ? "Dismissed" : "Dismiss"}>
         <X size={17} />
       </button>
-      <button class="fab fab-primary" class:on={story.isRead} onclick={toggleRead} aria-pressed={story.isRead} title="Mark as read"><Check size={20} /></button>
+      <button class="fab fab-primary" class:on={screen.story.isRead} onclick={() => screen.toggleRead()} aria-pressed={screen.story.isRead} title="Mark as read"><Check size={20} /></button>
     </div>
   {/if}
 </div>
@@ -381,15 +297,15 @@
   <aside class="chapter-drawer">
     <div class="storyhead">
       <div>
-        <h2>{story?.title ?? ""}</h2>
-        <div class="author">by {story?.author ?? ""}</div>
+        <h2>{screen.story?.title ?? ""}</h2>
+        <div class="author">by {screen.story?.author ?? ""}</div>
       </div>
       <button class="close" onclick={() => (drawerOpen = false)} aria-label="Close"><X size={15} /></button>
     </div>
     <ul class="chapter-ul">
-      {#each chapters as c (c.chapterNum)}
+      {#each screen.chapters as c (c.chapterNum)}
         <li>
-          <button aria-current={c.chapterNum === currentChapterNum} onclick={() => goToChapter(c.chapterNum)}>
+          <button aria-current={c.chapterNum === screen.currentChapterNum} onclick={() => goToChapter(c.chapterNum)}>
             <span class="n tnum">{c.chapterNum}</span>
             <span>{c.title}</span>
             {#if !c.isCached}<span class="uncached" title="Not fetched yet">○</span>{/if}
@@ -570,6 +486,15 @@
     align-items: center;
     gap: 0.65rem;
     z-index: 10;
+  }
+  .fab-error {
+    max-width: 160px;
+    text-align: right;
+    font-size: 0.7rem;
+    background: var(--paper-raised);
+    border-radius: 8px;
+    padding: 0.35rem 0.55rem;
+    box-shadow: var(--shadow);
   }
   .fab {
     width: 44px;

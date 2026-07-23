@@ -14,27 +14,16 @@
 //   state that names the old fandom to follow (a pin, the current search
 //   selection) or the rename silently orphans them.
 
-const STORAGE_KEY = "ao3-tag-map";
+import { definePersistedPref } from "./persistedPref";
 
-function readMap(): Record<string, string> {
-  if (typeof localStorage === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
+const tagMapPref = definePersistedPref<Record<string, string>>("ao3-tag-map", {});
 
 export function getAo3Tag(fandom: string): string | undefined {
-  return readMap()[fandom];
+  return tagMapPref.get()[fandom];
 }
 
 export function saveAo3Tag(fandom: string, tag: string) {
-  if (typeof localStorage === "undefined") return;
-  const map = readMap();
-  map[fandom] = tag;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(map));
+  tagMapPref.save({ ...tagMapPref.get(), [fandom]: tag });
 }
 
 /// Carries a fandom rename/merge across the client state that names the old

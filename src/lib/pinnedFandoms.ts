@@ -1,17 +1,9 @@
-const STORAGE_KEY = "ffn-pinned-fandoms";
+import { definePersistedPref } from "./persistedPref";
 
-export function getPinnedFandoms(): Set<string> {
-  if (typeof localStorage === "undefined") return new Set();
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return new Set();
-    return new Set(JSON.parse(raw));
-  } catch {
-    return new Set();
-  }
-}
+const pref = definePersistedPref<Set<string>>("ffn-pinned-fandoms", new Set(), {
+  serialize: (fandoms) => JSON.stringify([...fandoms]),
+  deserialize: (raw) => new Set(JSON.parse(raw))
+});
 
-export function savePinnedFandoms(fandoms: Set<string>) {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify([...fandoms]));
-}
+export const getPinnedFandoms = pref.get;
+export const savePinnedFandoms = pref.save;

@@ -1,36 +1,24 @@
+import { definePersistedPref } from "./persistedPref";
+
 export interface SearchFilterPrefs {
   hideRead: boolean;
   hideDismissed: boolean;
   hideBookmarked: boolean;
 }
 
-const SEARCH_KEY = "ffn-search-filters";
 const SEARCH_DEFAULTS: SearchFilterPrefs = { hideRead: true, hideDismissed: true, hideBookmarked: false };
 
-export function getSearchFilterPrefs(): SearchFilterPrefs {
-  if (typeof localStorage === "undefined") return SEARCH_DEFAULTS;
-  try {
-    const raw = localStorage.getItem(SEARCH_KEY);
-    if (!raw) return SEARCH_DEFAULTS;
-    return { ...SEARCH_DEFAULTS, ...JSON.parse(raw) };
-  } catch {
-    return SEARCH_DEFAULTS;
-  }
-}
+// Merges over SEARCH_DEFAULTS on every read (not just when nothing's
+// stored) — a blob saved by an older app version missing a newer field
+// still gets that field's default, rather than `undefined`.
+const searchPref = definePersistedPref<SearchFilterPrefs>("ffn-search-filters", SEARCH_DEFAULTS, {
+  deserialize: (raw) => ({ ...SEARCH_DEFAULTS, ...JSON.parse(raw) })
+});
 
-export function saveSearchFilterPrefs(prefs: SearchFilterPrefs) {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(SEARCH_KEY, JSON.stringify(prefs));
-}
+export const getSearchFilterPrefs = searchPref.get;
+export const saveSearchFilterPrefs = searchPref.save;
 
-const BOOKMARKS_HIDE_READ_KEY = "ffn-bookmarks-hide-read";
+const bookmarksHideReadPref = definePersistedPref<boolean>("ffn-bookmarks-hide-read", false);
 
-export function getBookmarksHideRead(): boolean {
-  if (typeof localStorage === "undefined") return false;
-  return localStorage.getItem(BOOKMARKS_HIDE_READ_KEY) === "true";
-}
-
-export function saveBookmarksHideRead(value: boolean) {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(BOOKMARKS_HIDE_READ_KEY, String(value));
-}
+export const getBookmarksHideRead = bookmarksHideReadPref.get;
+export const saveBookmarksHideRead = bookmarksHideReadPref.save;

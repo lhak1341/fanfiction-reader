@@ -1,4 +1,18 @@
-import type { UnlistenFn } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+
+// The on<X>Fetched/on<X>FetchError listener pair behind every fetch kind in
+// api.ts (chapter/browse/fandom-index) — architecture review candidate 3,
+// 2026-07-23. Each fetch kind's own trigger-and-wait shape stays hand-written
+// in api.ts (`awaitCorrelatedEvent` below) rather than folded in here: chapter
+// fetch needs a `match` predicate and picks between two trigger commands by
+// source, browse/fandom-index need neither — real per-case variance, not
+// boilerplate.
+export function defineFetchEvent<T>(okEvent: string, errEvent: string) {
+  return {
+    on: (handler: (e: T) => void): Promise<UnlistenFn> => listen<T>(okEvent, (e) => handler(e.payload)),
+    onError: (handler: (message: string) => void): Promise<UnlistenFn> => listen<string>(errEvent, (e) => handler(e.payload))
+  };
+}
 
 // Fires `trigger`, then waits for whichever of `listenOk`/`listenErr` fires
 // first (filtered through `match`, when given — otherwise the very next
