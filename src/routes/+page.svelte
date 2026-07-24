@@ -7,7 +7,7 @@
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import { SearchScreen } from "$lib/searchScreen.svelte";
   import { BookmarksScreen } from "$lib/bookmarksScreen.svelte";
-  import { toggleStoryFlag } from "$lib/storyFlags";
+  import { toggleReadAndRefresh, toggleDismissedAndRefresh, toggleBookmarkedAndRefresh } from "$lib/storyFlagActions";
   import { getViewMode, saveViewMode } from "$lib/viewMode";
   import { saveSearchFilterPrefs, getBookmarksHideRead, saveBookmarksHideRead } from "$lib/filterPrefs";
   import { savePinnedFandoms } from "$lib/pinnedFandoms";
@@ -77,32 +77,13 @@
     return story.lastChapterNum ? `Ch. ${story.lastChapterNum} of ${story.chapterCount}` : "Not started";
   }
 
-  async function handleToggleRead(story: StoryRow) {
-    try {
-      await toggleStoryFlag(story, "isRead");
-      await refreshAll();
-    } catch (e) {
-      errorMessage = `Could not update read state: ${e}`;
-    }
+  function setError(msg: string) {
+    errorMessage = msg;
   }
 
-  async function handleToggleDismissed(story: StoryRow) {
-    try {
-      await toggleStoryFlag(story, "dismissed");
-      await refreshAll();
-    } catch (e) {
-      errorMessage = `Could not update dismissed state: ${e}`;
-    }
-  }
-
-  async function handleToggleBookmarked(story: StoryRow) {
-    try {
-      await toggleStoryFlag(story, "bookmarked");
-      await refreshAll();
-    } catch (e) {
-      errorMessage = `Could not update bookmark: ${e}`;
-    }
-  }
+  const handleToggleRead = (story: StoryRow) => toggleReadAndRefresh(story, setError, refreshAll);
+  const handleToggleDismissed = (story: StoryRow) => toggleDismissedAndRefresh(story, setError, refreshAll);
+  const handleToggleBookmarked = (story: StoryRow) => toggleBookmarkedAndRefresh(story, setError, refreshAll);
 </script>
 
 {#if screen === "reader" && readerStoryId !== undefined && readerChapterNum !== undefined}
