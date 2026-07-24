@@ -8,11 +8,11 @@
   // deliberately the *only* thing that differs; word-count/status filters
   // and the submit flow are shared.
   import { X } from "lucide-svelte";
-  import * as api from "$lib/api";
   import { fold } from "$lib/normalize";
-  import { getAo3Tag, saveAo3Tag } from "$lib/fandom";
+  import { getAo3Tag } from "$lib/fandom";
+  import { ALL, SearchModalScreen } from "$lib/searchModalScreen.svelte";
   import { FFN_CATEGORIES } from "$lib/types";
-  import type { FandomIndexEntry, StorySource, StoryStatus } from "$lib/types";
+  import type { FandomIndexEntry, StorySource } from "$lib/types";
 
   let {
     onClose,
@@ -22,43 +22,28 @@
     onImported: (fandom: string, source: StorySource) => void;
   } = $props();
 
-  let source = $state<StorySource>("ffn");
+  // +page.svelte mounts this behind `{#if search.modalOpen}`, so it always
+  // fully remounts per open — onImported never changes during one mount's
+  // lifetime.
+  // svelte-ignore state_referenced_locally
+  const screen = new SearchModalScreen(onImported);
 
-  // ---- FFN fields ----
-  const ALL = "all";
-  let category = $state<string>(ALL); // "all" = search/browse across every indexed category
-  let fandomOptions = $state<FandomIndexEntry[]>([]);
   let fandomQuery = $state("");
-  let selectedFandom = $state<FandomIndexEntry | undefined>(undefined);
   let dropdownOpen = $state(false);
   let dropdownEl = $state<HTMLDivElement | undefined>(undefined);
-  let indexing = $state(false);
-  let indexError = $state("");
-  let indexProgress = $state("");
 
-  // ---- AO3 fields ----
   // No cached tag index exists (unlike FFN's fandom_index) — the fandom
   // name is typed free text, and its AO3 tag is looked up from a small
   // user-maintained map (fandom.ts), auto-filled once saved. A typo here
   // fails the same way typing it into AO3's own search would (empty/wrong
   // results), not a silent 404.
-  let ao3FandomName = $state("");
-  let ao3Tag = $state("");
   $effect(() => {
-    const saved = getAo3Tag(ao3FandomName);
-    if (saved && !ao3Tag) ao3Tag = saved;
+    const saved = getAo3Tag(screen.ao3FandomName);
+    if (saved && !screen.ao3Tag) screen.ao3Tag = saved;
   });
 
-  // ---- Shared fields ----
-  let minWordCount = $state<number | undefined>(undefined);
-  let status = $state<StoryStatus | undefined>(undefined);
-  let status_: StoryStatus | "any" = $derived(status ?? "any");
-
-  let searching = $state(false);
-  let error = $state("");
-
   let filteredOptions = $derived(
-    fandomOptions.filter((f) => fold(f.fandom).includes(fold(fandomQuery)))
+    screen.fandomOptions.filter((f) => fold(f.fandom).includes(fold(fandomQuery)))
   );
 
   function fmtCount(n: number) {
@@ -69,80 +54,19 @@
     return FFN_CATEGORIES.find((c) => c.value === value)?.label ?? value;
   }
 
-  async function loadFandomOptions() {
-    try {
-      fandomOptions = await api.listFandomIndex(category === ALL ? undefined : category);
-    } catch (e) {
-      indexError = e instanceof Error ? e.message : String(e);
-    }
-  }
-
-  async function refreshIndex(event: Event) {
-    event.preventDefault();
-    indexing = true;
-    indexError = "";
-    indexProgress = "";
-    try {
-      if (category === ALL) {
-        await api.indexAllCategoriesAndWait(
-          FFN_CATEGORIES.map((c) => c.value),
-          (cat, result) => {
-            indexProgress = result instanceof Error ? `${categoryLabel(cat)} failed — continuing…` : `Indexed ${categoryLabel(cat)}…`;
-          }
-        );
-      } else {
-        await api.indexFfnCategoryAndWait(category);
-      }
-      await loadFandomOptions();
-      indexProgress = "";
-    } catch (e) {
-      indexError = e instanceof Error ? e.message : String(e);
-    } finally {
-      indexing = false;
-    }
-  }
-
   function selectFandom(f: FandomIndexEntry) {
-    selectedFandom = f;
+    screen.selectedFandom = f;
     fandomQuery = f.fandom;
     dropdownOpen = false;
   }
 
   $effect(() => {
-    void category;
-    selectedFandom = undefined;
+    void screen.category;
+    screen.selectedFandom = undefined;
     fandomQuery = "";
-    fandomOptions = [];
-    loadFandomOptions();
+    screen.fandomOptions = [];
+    screen.loadFandomOptions();
   });
-
-  async function runSearch(event: Event) {
-    event.preventDefault();
-    searching = true;
-    error = "";
-    try {
-      if (source === "ffn") {
-        if (!selectedFandom) return;
-        const result = await api.searchFfnAndWait(selectedFandom.fandom, minWordCount ?? 0, status_, selectedFandom.category);
-        onImported(result.fandom, "ffn");
-      } else {
-        if (!ao3FandomName.trim() || !ao3Tag.trim()) return;
-        const fandom = ao3FandomName.trim();
-        // `fandom` is force-applied to every imported row (searchAo3), so
-        // it's already the same label used to unify with FFN's side —
-        // unlike a raw AO3 canonical tag name, which could be anything.
-        await api.searchAo3AndWait(ao3Tag.trim(), fandom, minWordCount ?? 0, status_);
-        saveAo3Tag(fandom, ao3Tag.trim());
-        onImported(fandom, "ao3");
-      }
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-    } finally {
-      searching = false;
-    }
-  }
-
-  let canSubmit = $derived(source === "ffn" ? !!selectedFandom : !!ao3FandomName.trim() && !!ao3Tag.trim());
 </script>
 
 <svelte:window
@@ -159,15 +83,15 @@
   </div>
 
   <div class="seg source-toggle">
-    <button type="button" class:active={source === "ffn"} onclick={() => (source = "ffn")}>FanFiction.net</button>
-    <button type="button" class:active={source === "ao3"} onclick={() => (source = "ao3")}>Archive of Our Own</button>
+    <button type="button" class:active={screen.source === "ffn"} onclick={() => (screen.source = "ffn")}>FanFiction.net</button>
+    <button type="button" class:active={screen.source === "ao3"} onclick={() => (screen.source = "ao3")}>Archive of Our Own</button>
   </div>
 
-  <form onsubmit={runSearch}>
-    {#if source === "ffn"}
+  <form onsubmit={(e) => { e.preventDefault(); screen.runSearch(); }}>
+    {#if screen.source === "ffn"}
       <label class="field">
         <span>Category</span>
-        <select bind:value={category}>
+        <select bind:value={screen.category}>
           <option value={ALL}>All categories (search everything indexed)</option>
           {#each FFN_CATEGORIES as c (c.value)}
             <option value={c.value}>{c.label}</option>
@@ -177,11 +101,11 @@
 
       <div class="field">
         <span>Fandom</span>
-        {#if fandomOptions.length === 0}
-          <button class="index-btn" onclick={refreshIndex} disabled={indexing}>
-            {indexing ? indexProgress || "Fetching…" : category === ALL ? "Index all categories (one-time, ~9 fetches)" : "Fetch fandom list for this category"}
+        {#if screen.fandomOptions.length === 0}
+          <button class="index-btn" onclick={(e) => { e.preventDefault(); screen.refreshIndex(); }} disabled={screen.indexing}>
+            {screen.indexing ? screen.indexProgress || "Fetching…" : screen.category === ALL ? "Index all categories (one-time, ~9 fetches)" : "Fetch fandom list for this category"}
           </button>
-          {#if indexError}<p class="error">{indexError}</p>{/if}
+          {#if screen.indexError}<p class="error">{screen.indexError}</p>{/if}
         {:else}
           <div class="fandom-dd" bind:this={dropdownEl}>
             <input
@@ -196,10 +120,10 @@
                   <li>
                     <button
                       type="button"
-                      class:current={selectedFandom?.fandom === f.fandom && selectedFandom?.category === f.category}
+                      class:current={screen.selectedFandom?.fandom === f.fandom && screen.selectedFandom?.category === f.category}
                       onclick={() => selectFandom(f)}
                     >
-                      <span>{f.fandom}{#if category === ALL}<span class="cat-tag">{categoryLabel(f.category)}</span>{/if}</span>
+                      <span>{f.fandom}{#if screen.category === ALL}<span class="cat-tag">{categoryLabel(f.category)}</span>{/if}</span>
                       <span class="count tnum">{fmtCount(f.ffnCount)}</span>
                     </button>
                   </li>
@@ -210,20 +134,20 @@
               </ul>
             {/if}
           </div>
-          <button type="button" class="refresh-link" onclick={refreshIndex} disabled={indexing}>
-            {indexing ? indexProgress || "Refreshing…" : category === ALL ? "Re-index all categories" : "Refresh this category"}
+          <button type="button" class="refresh-link" onclick={() => screen.refreshIndex()} disabled={screen.indexing}>
+            {screen.indexing ? screen.indexProgress || "Refreshing…" : screen.category === ALL ? "Re-index all categories" : "Refresh this category"}
           </button>
         {/if}
       </div>
     {:else}
       <label class="field">
         <span>Fandom</span>
-        <input placeholder="e.g. Naruto" bind:value={ao3FandomName} />
+        <input placeholder="e.g. Naruto" bind:value={screen.ao3FandomName} />
       </label>
 
       <label class="field">
         <span>AO3 tag</span>
-        <input placeholder="e.g. Naruto (Anime & Manga)" bind:value={ao3Tag} />
+        <input placeholder="e.g. Naruto (Anime & Manga)" bind:value={screen.ao3Tag} />
       </label>
       <p class="note">
         AO3's exact tag string, not a search term — same as pasting it into AO3's own search
@@ -235,25 +159,25 @@
     <label class="field">
       <span>Minimum length</span>
       <div class="seg">
-        <button type="button" class:active={minWordCount === undefined} onclick={() => (minWordCount = undefined)}>Any</button>
-        <button type="button" class:active={minWordCount === 40000} onclick={() => (minWordCount = 40000)}>40K+</button>
-        <button type="button" class:active={minWordCount === 100000} onclick={() => (minWordCount = 100000)}>100K+</button>
+        <button type="button" class:active={screen.minWordCount === undefined} onclick={() => (screen.minWordCount = undefined)}>Any</button>
+        <button type="button" class:active={screen.minWordCount === 40000} onclick={() => (screen.minWordCount = 40000)}>40K+</button>
+        <button type="button" class:active={screen.minWordCount === 100000} onclick={() => (screen.minWordCount = 100000)}>100K+</button>
       </div>
     </label>
 
     <label class="field">
       <span>Status</span>
       <div class="seg">
-        <button type="button" class:active={status === undefined} onclick={() => (status = undefined)}>Any</button>
-        <button type="button" class:active={status === "complete"} onclick={() => (status = "complete")}>Done</button>
-        {#if source === "ao3"}
-          <button type="button" class:active={status === "in_progress"} onclick={() => (status = "in_progress")}>Ongoing</button>
+        <button type="button" class:active={screen.status === undefined} onclick={() => (screen.status = undefined)}>Any</button>
+        <button type="button" class:active={screen.status === "complete"} onclick={() => (screen.status = "complete")}>Done</button>
+        {#if screen.source === "ao3"}
+          <button type="button" class:active={screen.status === "in_progress"} onclick={() => (screen.status = "in_progress")}>Ongoing</button>
         {/if}
       </div>
     </label>
 
     <p class="note">
-      {#if source === "ffn"}
+      {#if screen.source === "ffn"}
         Pulls the first page, sorted by favorites — FFN's own ranking, not ours.
       {:else}
         Pulls the first page, sorted by bookmarks — AO3's closest analog to FFN's favorites.
@@ -261,12 +185,12 @@
       Use "Load more" afterward for deeper results.
     </p>
 
-    {#if error}
-      <p class="error">{error}</p>
+    {#if screen.error}
+      <p class="error">{screen.error}</p>
     {/if}
 
-    <button type="submit" class="submit" disabled={searching || !canSubmit}>
-      {searching ? "Searching…" : "Search"}
+    <button type="submit" class="submit" disabled={screen.searching || !screen.canSubmit}>
+      {screen.searching ? "Searching…" : "Search"}
     </button>
   </form>
 </div>

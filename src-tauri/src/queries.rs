@@ -177,26 +177,16 @@ pub fn list_stories(conn: &Connection, filters: &StoryFilters) -> rusqlite::Resu
     Ok(stories)
 }
 
-/// Lowercases and strips common Latin diacritics so search is
-/// accent-insensitive (e.g. "poke" matches "Poké"). Not a full Unicode
-/// normalization (no NFD decomposition) — a direct char table covering the
-/// accented Latin letters FFN content actually uses, which avoids pulling
-/// in a dependency for it.
+/// Lowercases and strips diacritics so search is accent-insensitive (e.g.
+/// "poke" matches "Poké") — NFD-decomposes then drops combining marks
+/// (architecture review candidate 7, 2026-07-24), matching
+/// `src/lib/normalize.ts`'s `fold()` exactly (fixture-tested in tandem via
+/// `tests/fixtures/accent-fold.json`) instead of the hand-coded Latin table
+/// this used to be, which covered fewer accents than the TS side and could
+/// silently drift further as either side changed.
 fn fold(s: &str) -> String {
-    s.to_lowercase()
-        .chars()
-        .map(|c| match c {
-            'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' => 'a',
-            'ç' | 'ć' | 'č' => 'c',
-            'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => 'e',
-            'ì' | 'í' | 'î' | 'ï' | 'ī' | 'ĭ' | 'į' => 'i',
-            'ñ' | 'ń' | 'ň' => 'n',
-            'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ŏ' | 'ő' => 'o',
-            'ù' | 'ú' | 'û' | 'ü' | 'ū' | 'ŭ' | 'ů' | 'ű' => 'u',
-            'ý' | 'ÿ' => 'y',
-            other => other,
-        })
-        .collect()
+    use unicode_normalization::UnicodeNormalization;
+    s.to_lowercase().nfd().filter(|c| !unicode_normalization::char::is_combining_mark(*c)).collect()
 }
 
 /// Single story by internal id — the Reader needs this (title, fandom,
@@ -493,5 +483,17 @@ mod tests {
 
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM stories WHERE fandom = 'Harry Potter'", [], |r| r.get(0)).unwrap();
         assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn fold_matches_shared_accent_fixture() {
+        // Architecture review candidate 7: this fixture is also read by
+        // src/lib/normalize.test.ts — both `fold()` adapters must agree on
+        // every case, not just their own.
+        let fixture = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/accent-fold.json"));
+        let cases: Vec<(String, String)> = serde_json::from_str(fixture).unwrap();
+        for (input, expected) in cases {
+            assert_eq!(fold(&input), expected, "fold({input:?})");
+        }
     }
 }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import * as api from "$lib/api";
+  import { jitterDelay, sleep } from "$lib/pacedLoop";
   import type { StoryRow } from "$lib/types";
 
   // Fetch spike (SPEC.md §3): confirm the webview-navigation strategy clears
@@ -75,10 +76,6 @@
   let prefetchTo = $state(5);
   let prefetchStatus = $state("");
 
-  function sleep(ms: number) {
-    return new Promise((r) => setTimeout(r, ms));
-  }
-
   async function runPrefetch(event: Event) {
     event.preventDefault();
     try {
@@ -97,10 +94,10 @@
           prefetchStatus = `Chapter ${num} failed (${e instanceof Error ? e.message : e}) — re-run with "from: ${num}" to resume.`;
           return;
         }
-        // Small human-ish gap between requests — fetching several chapters
-        // back-to-back with no pause reads as bot traffic to Cloudflare in a
-        // way a single manual fetch doesn't.
-        if (num < prefetchTo) await sleep(1500 + Math.random() * 1500);
+        // Small human-ish gap between requests — same pacing every other
+        // bulk fetch in the app uses (pacedLoop.ts, architecture review
+        // candidate 9, 2026-07-24).
+        if (num < prefetchTo) await sleep(jitterDelay());
       }
       prefetchStatus = `Done — chapters ${prefetchFrom}–${prefetchTo} cached.`;
     } catch (e) {

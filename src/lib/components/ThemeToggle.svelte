@@ -1,16 +1,18 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { Moon, Monitor, Sun } from "lucide-svelte";
-  import { applyTheme, getStoredTheme, type ThemePref } from "$lib/theme";
+  import { applyTheme, getTheme, saveTheme, type ThemePref } from "$lib/theme";
 
   let pref = $state<ThemePref>("system");
 
   onMount(() => {
-    pref = getStoredTheme();
+    pref = getTheme();
+    applyTheme(pref);
   });
 
   function setPref(p: ThemePref) {
     pref = p;
+    saveTheme(p);
     applyTheme(p);
   }
 </script>
