@@ -65,7 +65,10 @@ pub struct StoryFilters {
     pub hide_dismissed: bool,
     #[serde(default)]
     pub hide_bookmarked: bool,
-    /// Bookmarks screen sets this; Search never does.
+    /// Internal-only — `list_bookmarks` (`lib.rs`) force-sets this to `true`
+    /// server-side after deserializing; the frontend never sets it itself
+    /// (confirmed dead as a TS-settable field, architecture review
+    /// 2026-07-29 — `types.ts` doesn't declare it at all).
     #[serde(default)]
     pub bookmarked_only: bool,
 }

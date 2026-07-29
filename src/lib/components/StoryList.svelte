@@ -85,6 +85,7 @@
           {onDownloadAll}
           {downloadingStoryId}
           {downloadProgress}
+          fullyDownloaded={isFullyDownloaded(story)}
         />
       </div>
     {/each}
@@ -131,6 +132,7 @@
             {onDownloadAll}
             {downloadingStoryId}
             {downloadProgress}
+            fullyDownloaded={isFullyDownloaded(story)}
           />
         </div>
       </div>

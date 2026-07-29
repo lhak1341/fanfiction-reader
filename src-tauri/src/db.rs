@@ -1,4 +1,4 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::sync::Mutex;
 use tauri::Manager;
 
@@ -220,6 +220,21 @@ pub fn upsert_ao3_story(conn: &Connection, meta: &crate::ao3::Ao3StoryMetadata) 
         ],
         |row| row.get(0),
     )
+}
+
+/// Resolves a story's internal `stories.id` from its natural (source,
+/// source_story_id) key — a plain lookup, not an upsert. Used to identify a
+/// chapter fetch that's failing (`lib.rs`'s `classify_fetch_target`): the
+/// story already exists (a chapter refetch always targets an already-
+/// imported story), but a failure before `upsert_story`/`upsert_ao3_story`
+/// runs means the DB id isn't otherwise in hand.
+pub fn find_story_id(conn: &Connection, source: &str, source_story_id: i64) -> rusqlite::Result<Option<i64>> {
+    conn.query_row(
+        "SELECT id FROM stories WHERE source = ?1 AND source_story_id = ?2",
+        rusqlite::params![source, source_story_id],
+        |row| row.get(0),
+    )
+    .optional()
 }
 
 /// Creates the read_state row for a story if it doesn't already have one.

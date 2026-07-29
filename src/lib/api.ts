@@ -5,11 +5,15 @@ import { invoke } from "@tauri-apps/api/core";
 import { awaitCorrelatedEvent, defineFetchEvent } from "./tauriEvents";
 import { runPacedBestEffort } from "./pacedLoop";
 import type {
-  BrowseFetchedEvent,
+  BrowseFetched,
+  BrowseFetchError,
   ChapterContent,
+  ChapterFetched,
+  ChapterFetchError,
   ChapterListItem,
   FandomIndexEntry,
-  FandomIndexFetchedEvent,
+  FandomIndexFetched,
+  FandomIndexFetchError,
   StoryFilters,
   StoryRow,
   StorySource,
@@ -87,12 +91,7 @@ export function fetchAo3Page(url: string, fandomOverride?: string): Promise<void
   return invoke("fetch_ao3_page", { url, fandomOverride: fandomOverride ?? null });
 }
 
-export interface ChapterFetchedEvent {
-  storyId: number;
-  chapterNum: number;
-}
-
-const chapterEvents = defineFetchEvent<ChapterFetchedEvent>("chapter-fetched", "chapter-fetch-error");
+const chapterEvents = defineFetchEvent<ChapterFetched, ChapterFetchError>("chapter-fetched", "chapter-fetch-error");
 
 /// Fetches one chapter and resolves once it's actually persisted (or rejects
 /// on a fetch error) — the awaitable version of `fetchPage`/`fetchAo3Page`,
@@ -101,7 +100,7 @@ const chapterEvents = defineFetchEvent<ChapterFetchedEvent>("chapter-fetched", "
 /// both emit the same events so the waiting logic here is source-agnostic.
 export function fetchChapterAndWait(source: StorySource, url: string, storyId: number, chapterNum: number): Promise<void> {
   const fetchFn = source === "ao3" ? fetchAo3Page : fetchPage;
-  return awaitCorrelatedEvent<ChapterFetchedEvent>(
+  return awaitCorrelatedEvent<ChapterFetched, ChapterFetchError>(
     () => fetchFn(url),
     chapterEvents.on,
     chapterEvents.onError,
@@ -124,16 +123,24 @@ export function searchFfn(
   return invoke("search_ffn", { category: category ?? null, fandom, minWordCount, status });
 }
 
-const browseEvents = defineFetchEvent<BrowseFetchedEvent>("browse-fetched", "browse-fetch-error");
+const browseEvents = defineFetchEvent<BrowseFetched, BrowseFetchError>("browse-fetched", "browse-fetch-error");
 
 /// Awaitable version of `searchFfn`, matching `fetchChapterAndWait`'s shape.
+/// Matched on `fandom` — without it, a concurrent "load more"/modal search
+/// for a *different* fandom could resolve/reject this call with the wrong
+/// result (architecture review candidate, 2026-07-29).
 export function searchFfnAndWait(
   fandom: string,
   minWordCount: number,
   status: StoryStatus | "any",
   category?: string
-): Promise<BrowseFetchedEvent> {
-  return awaitCorrelatedEvent<BrowseFetchedEvent>(() => searchFfn(fandom, minWordCount, status, category), browseEvents.on, browseEvents.onError);
+): Promise<BrowseFetched> {
+  return awaitCorrelatedEvent<BrowseFetched, BrowseFetchError>(
+    () => searchFfn(fandom, minWordCount, status, category),
+    browseEvents.on,
+    browseEvents.onError,
+    (e) => e.fandom === fandom
+  );
 }
 
 // ---- AO3 discovery (SPEC.md §8) ----
@@ -151,13 +158,19 @@ export function searchAo3(tag: string, fandom: string, minWordCount: number, sta
 }
 
 /// Awaitable version of `searchAo3`, matching `searchFfnAndWait`'s shape.
+/// Matched on `fandom`, same reasoning as `searchFfnAndWait`.
 export function searchAo3AndWait(
   tag: string,
   fandom: string,
   minWordCount: number,
   status: StoryStatus | "any"
-): Promise<BrowseFetchedEvent> {
-  return awaitCorrelatedEvent<BrowseFetchedEvent>(() => searchAo3(tag, fandom, minWordCount, status), browseEvents.on, browseEvents.onError);
+): Promise<BrowseFetched> {
+  return awaitCorrelatedEvent<BrowseFetched, BrowseFetchError>(
+    () => searchAo3(tag, fandom, minWordCount, status),
+    browseEvents.on,
+    browseEvents.onError,
+    (e) => e.fandom === fandom
+  );
 }
 
 // ---- Fandom index (SPEC.md §6 — precise fandom picker) ----
@@ -172,10 +185,19 @@ export function listFandomIndex(category?: string): Promise<FandomIndexEntry[]> 
   return invoke("list_fandom_index", { category: category ?? null });
 }
 
-const fandomIndexEvents = defineFetchEvent<FandomIndexFetchedEvent>("fandom-index-fetched", "fandom-index-fetch-error");
+const fandomIndexEvents = defineFetchEvent<FandomIndexFetched, FandomIndexFetchError>(
+  "fandom-index-fetched",
+  "fandom-index-fetch-error"
+);
 
-export function indexFfnCategoryAndWait(category: string): Promise<FandomIndexFetchedEvent> {
-  return awaitCorrelatedEvent<FandomIndexFetchedEvent>(() => indexFfnCategory(category), fandomIndexEvents.on, fandomIndexEvents.onError);
+/// Matched on `category`, same reasoning as `searchFfnAndWait`.
+export function indexFfnCategoryAndWait(category: string): Promise<FandomIndexFetched> {
+  return awaitCorrelatedEvent<FandomIndexFetched, FandomIndexFetchError>(
+    () => indexFfnCategory(category),
+    fandomIndexEvents.on,
+    fandomIndexEvents.onError,
+    (e) => e.category === category
+  );
 }
 
 /// Indexes every category sequentially (see `runPacedBestEffort`, pacedLoop.ts,
@@ -183,7 +205,7 @@ export function indexFfnCategoryAndWait(category: string): Promise<FandomIndexFe
 /// failure) so the caller can show a running status.
 export async function indexAllCategoriesAndWait(
   categories: readonly string[],
-  onProgress?: (category: string, result: FandomIndexFetchedEvent | Error) => void
+  onProgress?: (category: string, result: FandomIndexFetched | Error) => void
 ): Promise<void> {
   await runPacedBestEffort(categories, indexFfnCategoryAndWait, (_i, _total, category, result) =>
     onProgress?.(category, result)

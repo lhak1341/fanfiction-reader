@@ -1,5 +1,9 @@
-// Mirrors the Rust structs in app/src-tauri/src/queries.rs (SPEC.md §5/§6).
-// Field casing matches serde's `rename_all = "camelCase"` output.
+// Mirrors the Rust structs Tauri serializes back to the frontend
+// (queries.rs/db.rs/lib.rs, SPEC.md §5/§6) — field casing matches serde's
+// `rename_all = "camelCase"` output, and interface names match their Rust
+// struct name exactly. `src-tauri/tests/type_mirror.rs` (architecture
+// review, 2026-07-29) fails `cargo test` if the two sides' field sets drift
+// — see its own doc comment for exactly which structs it covers and why.
 
 export type StoryStatus = "complete" | "in_progress";
 export type SortBy = "favorites" | "updated" | "words";
@@ -46,7 +50,6 @@ export interface StoryFilters {
   hideRead?: boolean;
   hideDismissed?: boolean;
   hideBookmarked?: boolean;
-  bookmarkedOnly?: boolean;
 }
 
 export interface ChapterListItem {
@@ -77,7 +80,17 @@ export const FFN_CATEGORIES = [
   { value: "tv", label: "TV" }
 ] as const;
 
-export interface BrowseFetchedEvent {
+// Names below match their Rust struct one-for-one (lib.rs/queries.rs) on
+// purpose — a drift-detecting test (queries.rs/db.rs/lib.rs's Serialize
+// structs vs this file) pairs the two sides by identical name, no
+// hand-maintained Rust-name-to-TS-name mapping to itself drift out of sync.
+
+export interface ChapterFetched {
+  storyId: number;
+  chapterNum: number;
+}
+
+export interface BrowseFetched {
   fandom: string;
   count: number;
 }
@@ -88,7 +101,30 @@ export interface FandomIndexEntry {
   ffnCount: number;
 }
 
-export interface FandomIndexFetchedEvent {
+export interface FandomIndexFetched {
   category: string;
   count: number;
+}
+
+// Error twins of the three *Fetched shapes above — carry the same
+// identifying fields as their success counterpart so `awaitCorrelatedEvent`
+// can apply one `match` predicate across both listeners. The one exception
+// (a URL matching none of the three known fetch shapes, `lib.rs`'s
+// `FetchTarget::Unknown`) still broadcasts a bare `message` with no id
+// fields — every real caller now supplies a match predicate, so that
+// broadcast simply matches nobody rather than misfiring one.
+export interface ChapterFetchError {
+  storyId: number;
+  chapterNum: number;
+  message: string;
+}
+
+export interface BrowseFetchError {
+  fandom: string;
+  message: string;
+}
+
+export interface FandomIndexFetchError {
+  category: string;
+  message: string;
 }

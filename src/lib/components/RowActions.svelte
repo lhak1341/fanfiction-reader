@@ -10,7 +10,8 @@
     onToggleBookmarked,
     onDownloadAll,
     downloadingStoryId,
-    downloadProgress
+    downloadProgress,
+    fullyDownloaded
   }: {
     story: StoryRow;
     includeDismiss: boolean;
@@ -20,11 +21,8 @@
     onDownloadAll?: (s: StoryRow) => void;
     downloadingStoryId: number | null;
     downloadProgress: string;
+    fullyDownloaded: boolean;
   } = $props();
-
-  function isFullyDownloaded(s: StoryRow): boolean {
-    return s.chapterCount > 0 && s.cachedChapterCount >= s.chapterCount;
-  }
 </script>
 
 <div class="row-actions">
@@ -35,7 +33,7 @@
   <button class="icon-btn" class:on-bookmark={story.bookmarked} onclick={() => onToggleBookmarked(story)} title="Bookmark">
     <Star size={13} fill={story.bookmarked ? "currentColor" : "none"} />
   </button>
-  {#if onDownloadAll && (downloadingStoryId === story.id || !isFullyDownloaded(story))}
+  {#if onDownloadAll && (downloadingStoryId === story.id || !fullyDownloaded)}
     <button
       class="icon-btn"
       class:spinning={downloadingStoryId === story.id}

@@ -37,8 +37,14 @@ fn db_health_check(db: tauri::State<db::Db>) -> Result<Vec<String>, String> {
 /// navigation fetch, and without this two concurrent `fetch_page` calls can
 /// both see the old window, both try to tear it down and rebuild it under
 /// the same label, and one loses with "a webview with label `fetch-page`
-/// already exists".
-pub struct FetchLock(pub tokio::sync::Mutex<()>);
+/// already exists". Also tracks *which* URL is currently loading: a
+/// `navigate()` that interrupts a still-pending one would otherwise leave
+/// that pending fetch's `report_fetch_result` never invoked — its awaiter
+/// just hangs forever, silently, since the interrupted page's own
+/// `DOMContentLoaded`/timeout listeners die with the navigation. `fetch_page`
+/// checks this before overwriting it, so the interrupted fetch gets a real
+/// error the instant it's actually interrupted, not a silent hang.
+pub struct FetchLock(pub tokio::sync::Mutex<Option<String>>);
 
 /// The Cloudflare/fetch strategy locked in SPEC.md §3: open a real webview
 /// pointed at fanfiction.net (not a bare HTTP client) and let
@@ -55,11 +61,16 @@ pub struct FetchLock(pub tokio::sync::Mutex<()>);
 /// webview doesn't create a window, so it doesn't activate anything; the
 /// window is only ever *built* once (first fetch of the app session).
 #[tauri::command]
-async fn fetch_page(app: tauri::AppHandle, url: String) -> Result<(), String> {
+async fn fetch_page(app: tauri::AppHandle, db: tauri::State<'_, db::Db>, url: String) -> Result<(), String> {
     let lock = app.state::<FetchLock>();
-    let _guard = lock.0.lock().await;
+    let mut pending = lock.0.lock().await;
 
     let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
+
+    if let Some(interrupted_url) = pending.replace(url.clone()) {
+        let target = classify_fetch_target(&db, &interrupted_url, FetchSource::Ffn, None);
+        emit_targeted_error(&app, target, "interrupted by a newer fetch".to_string());
+    }
 
     if let Some(existing) = app.get_webview_window("fetch-page") {
         println!("[fetch] navigating existing window to {parsed}");
@@ -145,6 +156,42 @@ struct BrowseFetched {
 struct FandomIndexFetched {
     category: String,
     count: i64,
+}
+
+/// Error twins of the three `*Fetched` structs above, carrying the same
+/// identifying fields as their success counterpart plus `message` — lets
+/// `awaitCorrelatedEvent` (`tauriEvents.ts`) use one `match` predicate across
+/// both its success and error listener, instead of an error resolving
+/// whichever call happens to be waiting regardless of which fetch it was.
+#[derive(Debug, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ChapterFetchError {
+    story_id: i64,
+    chapter_num: i64,
+    message: String,
+}
+
+#[derive(Debug, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct BrowseFetchError {
+    fandom: String,
+    message: String,
+}
+
+#[derive(Debug, serde::Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct FandomIndexFetchError {
+    category: String,
+    message: String,
+}
+
+/// `FetchTarget::Unknown`'s payload shape (`emit_targeted_error`) — same
+/// `{ message }` wire shape as the three typed errors above, just without
+/// their identifying fields, so the TS side never has to branch on "is this
+/// payload a bare string or an object" to read `.message` back out.
+#[derive(Debug, serde::Serialize, Clone)]
+struct UnmatchedFetchError {
+    message: String,
 }
 
 /// `FandomIndex` is FFN-only (no AO3 equivalent, SPEC.md §8) — `fetch_ao3_page`'s
@@ -298,11 +345,114 @@ impl FetchSource {
     }
 }
 
+/// Which of the three fetch shapes a URL identifies, and that shape's
+/// identifying fields — the same fields each `*Fetched`/`*FetchError` struct
+/// carries. Recovered from the URL alone wherever the URL encodes it
+/// (browse/fandom-index: request-native, baked in by `build_browse_url`/the
+/// category path); a chapter's DB `story_id` doesn't live in the URL (only
+/// the source's own site id does), so that case needs `find_story_id` — safe
+/// because a chapter fetch always targets an already-imported story.
+/// `Unknown` covers a URL matching none of the three shapes — see
+/// `emit_targeted_error`.
+enum FetchTarget {
+    Chapter { story_id: i64, chapter_num: i64 },
+    Browse { fandom: String },
+    FandomIndex { category: String },
+    Unknown,
+}
+
+/// Classifies a fetch's own request URL into its `FetchTarget` identity.
+/// Used both to target a typed error at the right channel
+/// (`emit_fetch_outcome`'s `Err` arm) and to identify a fetch a newer one is
+/// about to interrupt (`fetch_page`'s supersede check, `FetchSource::Ffn`
+/// only — AO3 never shares the webview). `fandom_hint` is AO3's own
+/// `fandom_override` (`fetch_ao3_page`): AO3's listing URL only encodes its
+/// `tag`, not the force-applied fandom label the caller actually cares
+/// about, so the hint short-circuits the AO3 listing case instead of trying
+/// to derive it from the URL. FFN never needs the hint — its listing URL
+/// already encodes `fandom` directly.
+fn classify_fetch_target(db: &db::Db, url: &str, source: FetchSource, fandom_hint: Option<&str>) -> FetchTarget {
+    let (source_tag, chapter_locator) = match source {
+        FetchSource::Ffn => ("ffn", source::Ffn::chapter_locator_from_url(url).ok().flatten().map(|l| (l.story_id, l.chapter_num))),
+        FetchSource::Ao3 => (
+            "ao3",
+            source::Ao3::chapter_locator_from_url(url).ok().flatten().map(|l| (l.work_id, l.chapter_id.unwrap_or(0))),
+        ),
+    };
+    // A matched chapter locator is definitive — `parse_browse_url`/category
+    // parsing don't know to reject `/s/{id}/{chapter}/...` shapes (nothing
+    // needed them to, since `try_persist_fetch`'s own dispatch always checks
+    // the chapter shape first and short-circuits there). Falling through to
+    // the listing/category checks below on a DB-lookup miss would let a
+    // chapter URL misclassify as a browse URL (`/s/{id}/{chapter}/...` has
+    // the same two-path-segment shape `parse_browse_url` looks for).
+    if let Some((source_story_id, chapter_num)) = chapter_locator {
+        let story_id = db.0.lock().ok().and_then(|conn| db::find_story_id(&conn, source_tag, source_story_id).ok().flatten());
+        return match story_id {
+            Some(story_id) => FetchTarget::Chapter { story_id, chapter_num },
+            None => FetchTarget::Unknown,
+        };
+    }
+
+    let fandom = match source {
+        FetchSource::Ffn => source::Ffn::listing_locator_from_url(url).map(|l| l.fandom),
+        FetchSource::Ao3 => source::Ao3::listing_locator_from_url(url).and(fandom_hint.map(str::to_string)),
+    };
+    if let Some(fandom) = fandom {
+        return FetchTarget::Browse { fandom };
+    }
+
+    if matches!(source, FetchSource::Ffn) {
+        if let Some(category) = ffn::category_from_index_url(url) {
+            return FetchTarget::FandomIndex { category };
+        }
+    }
+
+    FetchTarget::Unknown
+}
+
+/// Emits one correctly-typed, correctly-targeted error event for a
+/// `FetchTarget` — the counterpart to each success arm in
+/// `emit_fetch_outcome`. `Unknown` (a URL matching none of the three known
+/// shapes — should only happen for a genuinely malformed/unexpected URL, not
+/// anything the app itself builds) falls back to the old broadcast-to-all
+/// behavior with no identifying fields; every real caller now supplies a
+/// `match` predicate keyed on those fields, so an `Unknown` broadcast simply
+/// matches none of them rather than misfiring one.
+fn emit_targeted_error(app: &tauri::AppHandle, target: FetchTarget, message: String) {
+    match target {
+        FetchTarget::Chapter { story_id, chapter_num } => {
+            let _ = app.emit("chapter-fetch-error", ChapterFetchError { story_id, chapter_num, message });
+        }
+        FetchTarget::Browse { fandom } => {
+            let _ = app.emit("browse-fetch-error", BrowseFetchError { fandom, message });
+        }
+        FetchTarget::FandomIndex { category } => {
+            let _ = app.emit("fandom-index-fetch-error", FandomIndexFetchError { category, message });
+        }
+        FetchTarget::Unknown => {
+            let payload = UnmatchedFetchError { message };
+            let _ = app.emit("chapter-fetch-error", payload.clone());
+            let _ = app.emit("browse-fetch-error", payload.clone());
+            let _ = app.emit("fandom-index-fetch-error", payload);
+        }
+    }
+}
+
 /// Shared outcome-to-events mapping behind both fetch paths
 /// (`report_fetch_result`'s window round-trip, `fetch_ao3_page`'s direct
 /// HTTP call): same three success events, same error fan-out, differing
 /// only in log prefix and whether `FandomIndex` applies (`FetchSource`).
-fn emit_fetch_outcome(app: &tauri::AppHandle, result: Result<FetchOutcome, String>, source: FetchSource) {
+/// `page_url`/`fandom_hint` feed `classify_fetch_target` on the `Err` arm —
+/// see its doc comment.
+fn emit_fetch_outcome(
+    app: &tauri::AppHandle,
+    db: &db::Db,
+    page_url: &str,
+    fandom_hint: Option<&str>,
+    result: Result<FetchOutcome, String>,
+    source: FetchSource,
+) {
     let prefix = source.log_prefix();
     match result {
         Ok(FetchOutcome::Chapter(fetched)) => {
@@ -320,24 +470,34 @@ fn emit_fetch_outcome(app: &tauri::AppHandle, result: Result<FetchOutcome, Strin
         }
         Err(e) => {
             eprintln!("{prefix} failed: {e}");
-            let _ = app.emit("chapter-fetch-error", e.clone());
-            let _ = app.emit("browse-fetch-error", e.clone());
-            if matches!(source, FetchSource::Ffn) {
-                let _ = app.emit("fandom-index-fetch-error", e);
-            }
+            let target = classify_fetch_target(db, page_url, source, fandom_hint);
+            emit_targeted_error(app, target, e);
         }
     }
 }
 
 #[tauri::command]
-fn report_fetch_result(app: tauri::AppHandle, db: tauri::State<db::Db>, html: String, page_url: String, title: String) {
+async fn report_fetch_result(app: tauri::AppHandle, db: tauri::State<'_, db::Db>, html: String, page_url: String, title: String) -> Result<(), ()> {
     // The webview window is left open (still hidden) rather than closed on
     // success — reused via `navigate()` by the next `fetch_page` call (see
     // its doc comment); closing here used to force every fetch back through
     // `WebviewWindowBuilder::build()`, which was what stole OS focus on
     // every chapter of a bulk download.
     let result = try_persist_ffn_fetch(&app, &db, &html, &page_url, &title);
-    emit_fetch_outcome(&app, result, FetchSource::Ffn);
+
+    // Only clear the pending slot if it's still *this* fetch — if a newer
+    // `fetch_page` call already superseded it (and already emitted this
+    // fetch's error via the check in `fetch_page`), don't clobber the new
+    // one's URL.
+    let lock = app.state::<FetchLock>();
+    let mut pending = lock.0.lock().await;
+    if pending.as_deref() == Some(page_url.as_str()) {
+        *pending = None;
+    }
+    drop(pending);
+
+    emit_fetch_outcome(&app, &db, &page_url, None, result, FetchSource::Ffn);
+    Ok(())
 }
 
 // ---- AO3 fetch path (SPEC.md §8) ----
@@ -440,17 +600,22 @@ async fn fetch_ao3_page(
     url: String,
     fandom_override: Option<String>,
 ) -> Result<(), String> {
+    // Classification target: the post-redirect URL once known (AO3 redirects
+    // a bare `/works/{id}` to its first chapter), else the originally
+    // requested one — a pre-redirect network failure never learns final_url.
+    let mut classify_url = url.clone();
     let result = match fetch_ao3_html(&url).await {
         Ok((html, final_url)) => {
             // Dumped unconditionally, same posture as the FFN path's own
             // debug-last-fetch.html — a failed parse should still be inspectable.
             let dump_path = app.path().app_data_dir().expect("resolve app data dir").join("debug-last-ao3-fetch.html");
             let _ = std::fs::write(&dump_path, &html);
+            classify_url = final_url.clone();
             try_persist_fetch::<source::Ao3>(&db, &html, &final_url, fandom_override.as_deref())
         }
         Err(e) => Err(e),
     };
-    emit_fetch_outcome(&app, result, FetchSource::Ao3);
+    emit_fetch_outcome(&app, &db, &classify_url, fandom_override.as_deref(), result, FetchSource::Ao3);
     Ok(())
 }
 
@@ -541,7 +706,7 @@ async fn search_ffn(
     let (resolved_category, page) =
         db.run(|conn| db::next_browse_page(conn, category.as_deref(), &fandom, min_word_count, &status))?;
     let url = ffn::build_browse_url(&resolved_category, &fandom, min_word_count, &status, page);
-    fetch_page(app, url).await
+    fetch_page(app, db, url).await
 }
 
 /// AO3 counterpart to `search_ffn` — no category to resolve (AO3 has none),
@@ -573,8 +738,8 @@ async fn search_ao3(
 /// category (FFN doesn't paginate the index), so this always replaces the
 /// cached list wholesale rather than needing "load more" semantics.
 #[tauri::command]
-async fn index_ffn_category(app: tauri::AppHandle, category: String) -> Result<(), String> {
-    fetch_page(app, format!("https://www.fanfiction.net/{category}/")).await
+async fn index_ffn_category(app: tauri::AppHandle, db: tauri::State<'_, db::Db>, category: String) -> Result<(), String> {
+    fetch_page(app, db, format!("https://www.fanfiction.net/{category}/")).await
 }
 
 #[tauri::command]
@@ -589,7 +754,7 @@ pub fn run() {
         .setup(|app| {
             let conn = db::init(&app.handle())?;
             app.manage(db::Db(std::sync::Mutex::new(conn)));
-            app.manage(FetchLock(tokio::sync::Mutex::new(())));
+            app.manage(FetchLock(tokio::sync::Mutex::new(None)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -735,6 +900,95 @@ mod tests {
                 assert_eq!(fandom, "Original Work, Naruto (Anime & Manga)");
             }
             _ => panic!("expected a Chapter outcome for a work/chapter URL"),
+        }
+    }
+
+    #[test]
+    fn classify_chapter_url_resolves_the_db_story_id_once_imported() {
+        let dbh = test_db();
+        let url = "https://www.fanfiction.net/s/13493099/34/Welcome-to-the-insane-world-of-Pok-mon";
+        let outcome = try_persist_fetch::<source::Ffn>(&dbh, FFN_STORY_PAGE, url, None).unwrap();
+        let db_story_id = match outcome {
+            FetchOutcome::Chapter(fetched) => fetched.story_id,
+            _ => panic!("expected a Chapter outcome"),
+        };
+
+        let target = classify_fetch_target(&dbh, url, FetchSource::Ffn, None);
+
+        match target {
+            FetchTarget::Chapter { story_id, chapter_num } => {
+                assert_eq!(story_id, db_story_id, "must be the DB id, not FFN's own site id (13493099)");
+                assert_eq!(chapter_num, 34);
+            }
+            _ => panic!("expected FetchTarget::Chapter"),
+        }
+    }
+
+    #[test]
+    fn classify_chapter_url_for_an_unimported_story_falls_back_to_unknown() {
+        let dbh = test_db();
+        let url = "https://www.fanfiction.net/s/999999999/1/Never-Imported";
+
+        assert!(matches!(classify_fetch_target(&dbh, url, FetchSource::Ffn, None), FetchTarget::Unknown));
+    }
+
+    #[test]
+    fn classify_ffn_browse_url_recovers_fandom_with_no_db_lookup() {
+        let dbh = test_db();
+        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "any", 1);
+
+        match classify_fetch_target(&dbh, &url, FetchSource::Ffn, None) {
+            FetchTarget::Browse { fandom } => assert_eq!(fandom, "Fullmetal Alchemist"),
+            _ => panic!("expected FetchTarget::Browse"),
+        }
+    }
+
+    #[test]
+    fn classify_ffn_category_index_url_recovers_category() {
+        let dbh = test_db();
+        let url = "https://www.fanfiction.net/anime/";
+
+        match classify_fetch_target(&dbh, url, FetchSource::Ffn, None) {
+            FetchTarget::FandomIndex { category } => assert_eq!(category, "anime"),
+            _ => panic!("expected FetchTarget::FandomIndex"),
+        }
+    }
+
+    #[test]
+    fn classify_ao3_browse_url_uses_the_fandom_hint_not_the_url_tag() {
+        let dbh = test_db();
+        let url = ao3::build_tag_browse_url("Harry Potter", "bookmarks_count", 0, "any", 1);
+
+        match classify_fetch_target(&dbh, &url, FetchSource::Ao3, Some("Harry Potter - J. K. Rowling")) {
+            FetchTarget::Browse { fandom } => assert_eq!(fandom, "Harry Potter - J. K. Rowling"),
+            _ => panic!("expected FetchTarget::Browse"),
+        }
+    }
+
+    #[test]
+    fn classify_ao3_browse_url_without_a_hint_falls_back_to_unknown() {
+        // AO3's listing URL only encodes its search *tag*, not the
+        // force-applied fandom label — with no hint there's nothing to
+        // recover fandom from, so this is the accepted degenerate case.
+        let dbh = test_db();
+        let url = ao3::build_tag_browse_url("Harry Potter", "bookmarks_count", 0, "any", 1);
+
+        assert!(matches!(classify_fetch_target(&dbh, &url, FetchSource::Ao3, None), FetchTarget::Unknown));
+    }
+
+    #[test]
+    fn classify_ao3_chapter_url_resolves_the_db_story_id_once_imported() {
+        let dbh = test_db();
+        let url = "https://archiveofourown.org/works/85954646/chapters/227238471";
+        let outcome = try_persist_fetch::<source::Ao3>(&dbh, AO3_WORK_PAGE, url, None).unwrap();
+        let db_story_id = match outcome {
+            FetchOutcome::Chapter(fetched) => fetched.story_id,
+            _ => panic!("expected a Chapter outcome"),
+        };
+
+        match classify_fetch_target(&dbh, url, FetchSource::Ao3, None) {
+            FetchTarget::Chapter { story_id, .. } => assert_eq!(story_id, db_story_id),
+            _ => panic!("expected FetchTarget::Chapter"),
         }
     }
 }

@@ -9,7 +9,7 @@
 
 import * as api from "./api";
 import { getAo3Tag } from "./fandom";
-import type { BrowseFetchedEvent, StoryRow, StorySource, StoryStatus } from "./types";
+import type { BrowseFetched, StoryRow, StorySource, StoryStatus } from "./types";
 
 export interface FicSourceAdapter {
   /// Builds the fetch URL for a given chapter. AO3 chapters beyond the
@@ -19,7 +19,7 @@ export interface FicSourceAdapter {
   chapterUrl(story: StoryRow, chapterNum: number, sourceChapterId: number | null | undefined): string;
 
   /// Continues paging the current fandom search ("Load more").
-  loadMore(fandom: string, minWordCount: number, status: StoryStatus | "any"): Promise<BrowseFetchedEvent>;
+  loadMore(fandom: string, minWordCount: number, status: StoryStatus | "any"): Promise<BrowseFetched>;
 }
 
 const ffnAdapter: FicSourceAdapter = {
