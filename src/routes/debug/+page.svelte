@@ -14,7 +14,7 @@
     event.preventDefault();
     spikeStatus = "Opening webview — check the Rust terminal for the result…";
     try {
-      await invoke("fetch_page", { url: spikeUrl });
+      await invoke("fetch_page", { url: spikeUrl, listingLocator: null });
     } catch (e) {
       spikeStatus = `Failed to open spike window: ${e}`;
     }

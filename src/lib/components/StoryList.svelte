@@ -51,6 +51,20 @@
 </script>
 
 
+{#snippet rowActions(story: StoryRow)}
+  <RowActions
+    {story}
+    {includeDismiss}
+    {onToggleRead}
+    {onToggleDismissed}
+    {onToggleBookmarked}
+    {onDownloadAll}
+    {downloadingStoryId}
+    {downloadProgress}
+    fullyDownloaded={isFullyDownloaded(story)}
+  />
+{/snippet}
+
 {#if viewMode === "list"}
   <div class="list-body">
     {#each stories as story (story.id)}
@@ -76,17 +90,7 @@
           <span class="tnum stat-icon" title="Word count"><WholeWord size={12} /> {fmt(story.wordCount)}</span>
           <span class="tnum stat-icon" title="Favorites"><Heart size={12} /> {fmt(story.favoriteCount)}</span>
         </div>
-        <RowActions
-          {story}
-          {includeDismiss}
-          {onToggleRead}
-          {onToggleDismissed}
-          {onToggleBookmarked}
-          {onDownloadAll}
-          {downloadingStoryId}
-          {downloadProgress}
-          fullyDownloaded={isFullyDownloaded(story)}
-        />
+        {@render rowActions(story)}
       </div>
     {/each}
   </div>
@@ -123,17 +127,7 @@
           <div class="cardfoot-status">
             <StatusBadges status={story.status} ffnUpdatedAt={story.ffnUpdatedAt} />
           </div>
-          <RowActions
-            {story}
-            {includeDismiss}
-            {onToggleRead}
-            {onToggleDismissed}
-            {onToggleBookmarked}
-            {onDownloadAll}
-            {downloadingStoryId}
-            {downloadProgress}
-            fullyDownloaded={isFullyDownloaded(story)}
-          />
+          {@render rowActions(story)}
         </div>
       </div>
     {/each}

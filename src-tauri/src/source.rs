@@ -55,6 +55,11 @@ pub trait FicSource {
     type ChapterLocator;
     type ListingLocator;
 
+    /// Matches `stories.source` (`db.rs` schema) — lets `classify_fetch_target`
+    /// (`lib.rs`) resolve a source's own site id to Longform's internal DB id
+    /// generically instead of hand-matching a runtime `FetchSource` enum.
+    const SOURCE_TAG: &'static str;
+
     /// `Ok(None)` means "not this kind of URL, try the next dispatch arm" —
     /// distinct from `Err`, which means "this *is* the shape, but it's
     /// malformed" and should be propagated rather than swallowed as a miss.
@@ -66,6 +71,16 @@ pub trait FicSource {
     fn parse_chapter_content(html: &str) -> Result<String, String>;
 
     fn resolve_chapter_num(chapters: &[Self::ChapterRef], locator: &Self::ChapterLocator) -> Result<i64, String>;
+
+    /// `(source_story_id, chapter_num)` — normalizes each source's own
+    /// `ChapterLocator` field names (`story_id`/`chapter_num` vs
+    /// `work_id`/`chapter_id`) so `classify_fetch_target` can read a chapter
+    /// locator generically. `chapter_num` is a display/DB value, not
+    /// necessarily what a URL encoded — AO3 locators without an explicit
+    /// chapter id (a bare `/works/{id}` URL) report `0`, matching
+    /// `classify_fetch_target`'s existing behavior of treating that as "no
+    /// specific chapter known yet" for lookup purposes.
+    fn chapter_locator_ids(locator: &Self::ChapterLocator) -> (i64, i64);
 
     fn metadata_title(meta: &Self::Metadata) -> &str;
     fn metadata_fandom(meta: &Self::Metadata) -> &str;
@@ -80,6 +95,30 @@ pub trait FicSource {
 
     fn listing_page(locator: &Self::ListingLocator) -> i64;
     fn record_listing_page(conn: &Connection, locator: &Self::ListingLocator, page: i64) -> rusqlite::Result<()>;
+
+    /// Which locator (if any) `record_listing_page` should persist under —
+    /// `decoded` came from re-parsing the fetched page's own URL, `external`
+    /// from whatever the caller stashed before the fetch began (`lib.rs`'s
+    /// `PendingFetch`, FFN-only). `Ffn` prefers `external` and returns `None`
+    /// (skip recording) when nothing was stashed — its own URL encoding
+    /// can't round-trip `status` losslessly (`build_browse_url`, architecture
+    /// review candidate, 2026-07-29), so a bare decode risks persisting a
+    /// wrong value; a debug harness's raw-URL fetch has no real search
+    /// session behind it worth bookkeeping anyway. `Ao3`'s encoding round-trips
+    /// cleanly and it never stashes anything, so it always keeps `decoded`.
+    fn resolve_listing_record_locator(decoded: Self::ListingLocator, external: Option<Self::ListingLocator>) -> Option<Self::ListingLocator>;
+
+    /// The fandom `classify_fetch_target` should report for a `Browse`
+    /// target, given the locator decoded from the URL and (`Ao3` only) the
+    /// caller's own fandom hint. `Ffn`'s listing URL encodes fandom directly,
+    /// so it ignores `fandom_hint` and always returns `decoded`'s. `Ao3`'s
+    /// listing URL only encodes its search *tag*, not the force-applied
+    /// fandom label callers actually care about (`apply_fandom_override`), so
+    /// it ignores `decoded` entirely and returns `fandom_hint` verbatim —
+    /// `None` (no hint given) means there's nothing to recover fandom from,
+    /// the accepted degenerate case (`classify_fetch_target` falls back to
+    /// `Unknown`).
+    fn resolve_target_fandom(decoded: Self::ListingLocator, fandom_hint: Option<&str>) -> Option<String>;
 }
 
 pub struct Ffn;
@@ -90,6 +129,12 @@ pub struct FfnChapterLocator {
     pub chapter_num: i64,
 }
 
+/// `Deserialize` so `lib.rs::fetch_page` (a `#[tauri::command]`) can accept
+/// this as a param — always `None` over the wire in practice (only
+/// `search_ffn`'s own in-process call ever supplies `Some`, see
+/// `PendingFetch`), but the IPC macro still needs the bound to compile.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FfnListingLocator {
     pub category: String,
     pub fandom: String,
@@ -103,6 +148,8 @@ impl FicSource for Ffn {
     type ChapterRef = ffn::ChapterRef;
     type ChapterLocator = FfnChapterLocator;
     type ListingLocator = FfnListingLocator;
+
+    const SOURCE_TAG: &'static str = "ffn";
 
     fn chapter_locator_from_url(url: &str) -> Result<Option<Self::ChapterLocator>, String> {
         Ok(ffn::ffn_locator_from_url(url)?.map(|(story_id, chapter_num)| FfnChapterLocator { story_id, chapter_num }))
@@ -142,6 +189,10 @@ impl FicSource for Ffn {
         Ok(locator.chapter_num)
     }
 
+    fn chapter_locator_ids(locator: &Self::ChapterLocator) -> (i64, i64) {
+        (locator.story_id, locator.chapter_num)
+    }
+
     fn metadata_title(meta: &Self::Metadata) -> &str {
         &meta.title
     }
@@ -160,6 +211,14 @@ impl FicSource for Ffn {
 
     fn record_listing_page(conn: &Connection, locator: &Self::ListingLocator, page: i64) -> rusqlite::Result<()> {
         db::record_browse_page(conn, &locator.category, &locator.fandom, locator.min_word_count, &locator.status, page)
+    }
+
+    fn resolve_listing_record_locator(_decoded: Self::ListingLocator, external: Option<Self::ListingLocator>) -> Option<Self::ListingLocator> {
+        external
+    }
+
+    fn resolve_target_fandom(decoded: Self::ListingLocator, _fandom_hint: Option<&str>) -> Option<String> {
+        Some(decoded.fandom)
     }
 }
 
@@ -183,6 +242,8 @@ impl FicSource for Ao3 {
     type ChapterRef = ao3::Ao3ChapterRef;
     type ChapterLocator = Ao3ChapterLocator;
     type ListingLocator = Ao3ListingLocator;
+
+    const SOURCE_TAG: &'static str = "ao3";
 
     fn chapter_locator_from_url(url: &str) -> Result<Option<Self::ChapterLocator>, String> {
         Ok(ao3::ao3_locator_from_url(url)?.map(|(work_id, chapter_id)| Ao3ChapterLocator { work_id, chapter_id }))
@@ -230,6 +291,10 @@ impl FicSource for Ao3 {
         }
     }
 
+    fn chapter_locator_ids(locator: &Self::ChapterLocator) -> (i64, i64) {
+        (locator.work_id, locator.chapter_id.unwrap_or(0))
+    }
+
     fn metadata_title(meta: &Self::Metadata) -> &str {
         &meta.title
     }
@@ -252,6 +317,14 @@ impl FicSource for Ao3 {
 
     fn record_listing_page(conn: &Connection, locator: &Self::ListingLocator, page: i64) -> rusqlite::Result<()> {
         db::record_ao3_browse_page(conn, &locator.tag, locator.min_word_count, &locator.status, page)
+    }
+
+    fn resolve_listing_record_locator(decoded: Self::ListingLocator, _external: Option<Self::ListingLocator>) -> Option<Self::ListingLocator> {
+        Some(decoded)
+    }
+
+    fn resolve_target_fandom(_decoded: Self::ListingLocator, fandom_hint: Option<&str>) -> Option<String> {
+        fandom_hint.map(str::to_string)
     }
 }
 

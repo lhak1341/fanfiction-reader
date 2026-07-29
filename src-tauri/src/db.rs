@@ -629,6 +629,15 @@ fn fix_ao3_landmark_heading_in_chapters(conn: &Connection) -> rusqlite::Result<(
 // schema_version table is needed at this scope. This list exists so
 // `migrate` can't grow another hardcoded call that's easy to forget; add a
 // new migration by adding an entry here.
+//
+// Architecture review candidate 4 (2026-07-29, declined): each entry here is
+// permanent — nothing ever removes an old one-off repair once satisfied,
+// since `db::init` has no record of which repairs a given database has
+// already absorbed. Reopened the no-`schema_version` decision above and
+// declined to change it: 8 entries, each a one-liner plus a cheap
+// self-guarding function, isn't unbounded growth in practice yet, and
+// nothing here is broken or untested. Revisit only if this list itself
+// becomes the pain point — not before.
 const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
     |c| add_column_if_missing(c, "read_state", "last_opened_at", "TEXT"),
     |c| add_column_if_missing(c, "stories", "tags", "TEXT"),
@@ -975,6 +984,32 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ffn_source_chapter_id, None);
+    }
+
+    #[test]
+    fn ffn_browse_page_resume_starts_at_one_and_advances() {
+        let conn = schema_conn("ffn_browse_page");
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 100_000, "complete").unwrap(), ("anime".to_string(), 1));
+
+        record_browse_page(&conn, "anime", "Naruto", 100_000, "complete", 1).unwrap();
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 100_000, "complete").unwrap(), ("anime".to_string(), 2));
+
+        record_browse_page(&conn, "anime", "Naruto", 100_000, "complete", 2).unwrap();
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 100_000, "complete").unwrap(), ("anime".to_string(), 3));
+
+        // A different status for the same fandom/word-count tracks its own
+        // page independently — the case that used to break (architecture
+        // review, 2026-07-29): "in_progress" and "complete" share the same
+        // browse URL shape but must not share pagination state.
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 100_000, "in_progress").unwrap(), ("anime".to_string(), 1));
+    }
+
+    #[test]
+    fn record_browse_page_never_regresses_on_out_of_order_calls() {
+        let conn = schema_conn("ffn_browse_page_regress");
+        record_browse_page(&conn, "anime", "Naruto", 0, "any", 5).unwrap();
+        record_browse_page(&conn, "anime", "Naruto", 0, "any", 2).unwrap();
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 0, "any").unwrap(), ("anime".to_string(), 6));
     }
 
     #[test]

@@ -75,6 +75,19 @@ fn parse_meta_segments(meta_text: &str) -> Vec<&str> {
         .collect()
 }
 
+/// `(rating, language, genre)` — `segments[0..3]`, shared by both parsers
+/// (architecture review candidate 5, 2026-07-29; finishes the extraction
+/// `parse_meta_segments` above started). Doesn't cover `segments[3..]`
+/// (tags) — that's genuinely per-caller, see `parse_meta_segments`'s own
+/// doc comment on why a story page and a browse row disagree on where tags
+/// sit.
+fn rating_language_genre(segments: &[&str]) -> (String, Option<String>, Option<String>) {
+    let rating = segments.first().and_then(|s| s.split_whitespace().last()).unwrap_or_default().to_string();
+    let language = segments.get(1).map(|s| s.to_string());
+    let genre = segments.get(2).map(|s| s.to_string());
+    (rating, language, genre)
+}
+
 /// FFN story URLs look like `/s/8067258/1/Worth-Dying-For` — the story id is
 /// the second path segment, the chapter number the third. Mirrors
 /// FanFicFare's `set_story_idurl`.
@@ -149,9 +162,7 @@ pub fn parse_story_page(html: &str, ffn_story_id: i64) -> Result<(StoryMetadata,
     // "Naruto U.", or "[Naruto U., Hinata H.]" for a pairing) — joined
     // verbatim rather than parsed further.
     let segments = parse_meta_segments(&meta_text);
-    let rating = segments.first().and_then(|s| s.split_whitespace().last()).unwrap_or_default().to_string();
-    let language = segments.get(1).map(|s| s.to_string());
-    let genre = segments.get(2).map(|s| s.to_string());
+    let (rating, language, genre) = rating_language_genre(&segments);
     let tags = if segments.len() > 3 {
         Some(segments[3..].join(", "))
     } else {
@@ -381,9 +392,7 @@ pub fn parse_browse_page(html: &str, fandom: &str) -> Result<Vec<StoryMetadata>,
         let updated_at = extract_labeled(&meta_text, "Updated:").filter(|s| !s.is_empty());
 
         let segments = parse_meta_segments(&meta_text);
-        let rating = segments.first().and_then(|s| s.split_whitespace().last()).unwrap_or_default().to_string();
-        let language = segments.get(1).map(|s| s.to_string());
-        let genre = segments.get(2).map(|s| s.to_string());
+        let (rating, language, genre) = rating_language_genre(&segments);
         let tags = extract_trailing_tags(&meta_text);
 
         out.push(StoryMetadata {

@@ -82,7 +82,10 @@ export function getContinueReading(limit: number): Promise<StoryRow[]> {
 // callers await one of those either way, not the fetch call's own promise.
 
 export function fetchPage(url: string): Promise<void> {
-  return invoke("fetch_page", { url });
+  // `listingLocator` is only ever supplied by `search_ffn`'s own Rust-internal
+  // call to `fetch_page` — every fetch through this TS wrapper (chapter
+  // fetches) has nothing to stash, so it's always explicitly `null`.
+  return invoke("fetch_page", { url, listingLocator: null });
 }
 
 /// `fandomOverride`, when given, force-applies that label to every row of a
