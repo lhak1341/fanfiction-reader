@@ -1,6 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import * as api from "$lib/api";
+  import { ficSourceAdapter } from "$lib/ficSource";
   import { jitterDelay, sleep } from "$lib/pacedLoop";
   import type { StoryRow } from "$lib/types";
 
@@ -87,7 +88,7 @@
       }
       for (let num = prefetchFrom; num <= prefetchTo; num++) {
         prefetchStatus = `Fetching chapter ${num} of ${prefetchTo}…`;
-        const url = `https://www.fanfiction.net/s/${prefetchFfnStoryId}/${num}/`;
+        const url = ficSourceAdapter("ffn").chapterUrl(target, num, null);
         try {
           await api.fetchChapterAndWait("ffn", url, target.id, num);
         } catch (e) {

@@ -28,7 +28,7 @@ use std::path::Path;
 
 /// (Rust source file relative to `src/`, struct name) for every `Serialize`
 /// struct whose shape the frontend actually reads. Deliberately excludes
-/// `UnmatchedFetchError` (`lib.rs`) — the `FetchTarget::Unknown` fallback has
+/// `UnmatchedFetchError` (`fetch.rs`) — the `FetchTarget::Unknown` fallback has
 /// no identity fields by design (see its doc comment) and no TS-side
 /// counterpart to pair it with.
 const MIRRORED_STRUCTS: &[(&str, &str)] = &[
@@ -36,12 +36,12 @@ const MIRRORED_STRUCTS: &[(&str, &str)] = &[
     ("queries.rs", "ChapterListItem"),
     ("queries.rs", "ChapterContent"),
     ("db.rs", "FandomIndexEntry"),
-    ("lib.rs", "ChapterFetched"),
-    ("lib.rs", "BrowseFetched"),
-    ("lib.rs", "FandomIndexFetched"),
-    ("lib.rs", "ChapterFetchError"),
-    ("lib.rs", "BrowseFetchError"),
-    ("lib.rs", "FandomIndexFetchError"),
+    ("fetch.rs", "ChapterFetched"),
+    ("fetch.rs", "BrowseFetched"),
+    ("fetch.rs", "FandomIndexFetched"),
+    ("fetch.rs", "ChapterFetchError"),
+    ("fetch.rs", "BrowseFetchError"),
+    ("fetch.rs", "FandomIndexFetchError"),
 ];
 
 /// Extracts `struct {name} { ... }`'s field names from Rust source text.

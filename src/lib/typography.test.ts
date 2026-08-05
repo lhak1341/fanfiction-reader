@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { smartenQuotesText } from "./typography";
+import { smartenQuotesHtml, smartenQuotesText } from "./typography";
 
 describe("smartenQuotesText", () => {
   it("curls opening and closing double quotes", () => {
@@ -26,5 +26,16 @@ describe("smartenQuotesText", () => {
 
   it("curls a possessive apostrophe at the end of a word", () => {
     expect(smartenQuotesText("the dogs' bones")).toBe("the dogs’ bones");
+  });
+});
+
+describe("smartenQuotesHtml (SSR guard)", () => {
+  it("returns the html unchanged when DOMParser isn't available", () => {
+    // This file runs under vitest's default node environment (no DOM) —
+    // real DOM-walking behavior is covered separately in
+    // typography.dom.test.ts, which opts into jsdom per-file.
+    expect(typeof DOMParser).toBe("undefined");
+    const html = `<p>She said "hello."</p>`;
+    expect(smartenQuotesHtml(html)).toBe(html);
   });
 });

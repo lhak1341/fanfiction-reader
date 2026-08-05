@@ -5,6 +5,12 @@ use tauri::Manager;
 /// Schema locked in SPEC.md §5. `IF NOT EXISTS` makes this safe to run on
 /// every launch rather than needing a separate migration-tracking system —
 /// fine for v1's single-schema-version scope.
+///
+/// Architecture review candidate (2026-08-05): extracting this to its own
+/// `.sql` file was considered alongside pulling `fetch_page`'s injected JS
+/// out to `fetch_page_init.js` (same "raw string embedded in Rust" shape),
+/// and rejected — SCHEMA is declarative DDL with no control flow to trip
+/// over, unlike the JS script's dedup guard/event-listener/timeout race.
 pub(crate) const SCHEMA: &str = r#"
 -- `source` + `source_story_id` (composite-unique) replace the old
 -- FFN-only `ffn_story_id UNIQUE` so a second source (AO3, SPEC.md §8) can
