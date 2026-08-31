@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Runs every gate this repo has before a push leaves the machine. There is no
+# CI here, so this hook is the only thing that ever runs `command_registration`
+# / `type_mirror` (the two guard tests whose whole job is to convert a silent
+# runtime failure into a test-time one) without someone remembering to.
+#
+# Installed by `bun run hooks:install` (sets `core.hooksPath`), which a fresh
+# clone has to run once. `git push --no-verify` skips it.
+set -uo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root" || exit 1
+
+failed=()
+
+run_gate() {
+  local name="$1"
+  shift
+  printf '\n=== pre-push: %s ===\n' "$name"
+  if ! "$@"; then
+    failed+=("$name")
+  fi
+}
+
+run_gate "svelte-check" bun run check
+run_gate "vitest" bun run test
+run_gate "cargo test" cargo test --manifest-path src-tauri/Cargo.toml
+
+if [ ${#failed[@]} -gt 0 ]; then
+  printf '\npre-push blocked — failing gate(s): %s\n' "${failed[*]}" >&2
+  printf 'Fix them, or push with --no-verify if you know why this is fine.\n' >&2
+  exit 1
+fi
+
+printf '\npre-push: all gates green\n'

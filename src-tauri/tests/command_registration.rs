@@ -33,7 +33,21 @@ fn invoke_handler_commands() -> BTreeSet<String> {
     let close = lib_rs[open..].find(']').expect("generate_handler! call has no closing ]") + open;
     let inner = &lib_rs[open + 1..close];
 
-    inner.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect()
+    let names: Vec<&str> = inner.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+
+    // A path-qualified entry (`fetch::report_fetch_result`) compiles and
+    // registers fine, but `commands.allow` names commands bare, so it could
+    // never match one — without this it surfaces as a confusing "missing
+    // from permissions" for a command that is right there in the file.
+    let qualified: Vec<&&str> = names.iter().filter(|n| n.contains("::")).collect();
+    assert!(
+        qualified.is_empty(),
+        "generate_handler! lists path-qualified command(s) {qualified:?} — permissions/*.toml names commands bare, \
+         so these can never match. `use module::fn_name;` at the top of src/lib.rs and list the bare name here."
+    );
+    assert!(!names.is_empty(), "generate_handler! parsed to an empty command list — the scan broke, not the code");
+
+    names.into_iter().map(str::to_string).collect()
 }
 
 /// Pulls every `commands.allow = [...]` array out of every

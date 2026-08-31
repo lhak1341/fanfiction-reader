@@ -22,28 +22,83 @@
 //! so pairing them up here needs no separate Rust-name-to-TS-name mapping —
 //! one more hand-maintained list that could itself drift.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
-/// (Rust source file relative to `src/`, struct name) for every `Serialize`
-/// struct whose shape the frontend actually reads. Deliberately excludes
-/// `UnmatchedFetchError` (`fetch.rs`) — the `FetchTarget::Unknown` fallback has
-/// no identity fields by design (see its doc comment) and no TS-side
-/// counterpart to pair it with.
-const MIRRORED_STRUCTS: &[(&str, &str)] = &[
-    ("queries.rs", "StoryRow"),
-    ("queries.rs", "ChapterListItem"),
-    ("queries.rs", "ChapterContent"),
-    ("db.rs", "FandomIndexEntry"),
-    ("fetch.rs", "ChapterFetched"),
-    ("fetch.rs", "BrowseFetched"),
-    ("fetch.rs", "FandomIndexFetched"),
-    ("fetch.rs", "ChapterFetchError"),
-    ("fetch.rs", "BrowseFetchError"),
-    ("fetch.rs", "FandomIndexFetchError"),
+/// Struct names whose shape the frontend reads, each paired 1:1 with a
+/// same-named `interface` in `types.ts`. The file a struct lives in is
+/// discovered by scanning `src/*.rs` (see `serialize_types`) rather than
+/// recorded here — moving one between files is not a reason for this test
+/// to fail.
+const MIRRORED_STRUCTS: &[&str] = &[
+    "StoryRow",
+    "ChapterListItem",
+    "ChapterContent",
+    "FandomIndexEntry",
+    "ChapterFetched",
+    "BrowseFetched",
+    "FandomIndexFetched",
+    "ChapterFetchError",
+    "BrowseFetchError",
+    "FandomIndexFetchError",
 ];
 
+/// `Serialize`-deriving types deliberately outside the mirror, each with the
+/// reason it never crosses to TS. Every `Serialize` type in `src/` has to
+/// appear in exactly one of these two tables — `every_serialize_type_is_...`
+/// below fails on one that appears in neither, so a type that starts
+/// crossing the wire can't reach the frontend unmirrored.
+const UNMIRRORED_TYPES: &[(&str, &str)] = &[
+    (
+        "UnmatchedFetchError",
+        "fetch.rs: the `FetchTarget::Unknown` fallback has no identity fields by design (see its doc comment) — no TS-side counterpart to pair it with",
+    ),
+    (
+        "StoryMetadata",
+        "ffn.rs: parser output, persisted into SQLite by `try_persist_fetch`; no command hands it to the frontend (every fetch command returns `Result<(), String>`)",
+    ),
+    ("ChapterRef", "ffn.rs: parser output, same as `StoryMetadata`"),
+    ("Ao3StoryMetadata", "ao3.rs: parser output, same as `StoryMetadata`"),
+    ("Ao3ChapterRef", "ao3.rs: parser output, same as `StoryMetadata`"),
+];
+
+/// Every `#[derive(.., Serialize, ..)]` type in `src/*.rs`, mapped to the
+/// file it lives in. Attribute and doc-comment lines between the derive and
+/// the item are skipped, so an intervening `#[serde(rename_all = ..)]` is
+/// fine. Enums are collected too: one deriving `Serialize` crosses the wire
+/// the same way a struct does, and has to be classified rather than
+/// silently escaping both tables above.
+fn serialize_types() -> BTreeMap<String, String> {
+    let src_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut found = BTreeMap::new();
+
+    for entry in fs::read_dir(&src_dir).expect("read src/ dir") {
+        let path = entry.expect("read dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let file = path.file_name().and_then(|f| f.to_str()).expect("file name").to_string();
+        let source = fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+
+        let lines: Vec<&str> = source.lines().map(str::trim).collect();
+        for (i, line) in lines.iter().enumerate() {
+            if !line.starts_with("#[derive") || !line.contains("Serialize") {
+                continue;
+            }
+            let item = lines[i + 1..]
+                .iter()
+                .find(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with("//"))
+                .unwrap_or_else(|| panic!("{file}: `{line}` with no item after it"));
+            let Some(rest) = item.split_once("struct ").or_else(|| item.split_once("enum ")).map(|(_, rest)| rest) else {
+                continue;
+            };
+            let name = rest.trim().split(['{', '<', '(', ';', ' ']).next().unwrap_or_default();
+            found.insert(name.to_string(), file.clone());
+        }
+    }
+    found
+}
 /// Extracts `struct {name} { ... }`'s field names from Rust source text.
 /// None of these structs nest braces inside a field's type (no inline
 /// structs/closures), so naive first-`{`-to-matching-`}` extraction is safe.
@@ -135,7 +190,12 @@ fn every_mirrored_struct_field_has_a_matching_ts_field() {
 
     let mut failures = Vec::new();
 
-    for &(file, struct_name) in MIRRORED_STRUCTS {
+    let types = serialize_types();
+
+    for &struct_name in MIRRORED_STRUCTS {
+        let file = types.get(struct_name).unwrap_or_else(|| {
+            panic!("no `Serialize`-deriving `{struct_name}` found anywhere in src/ — renamed, removed, or its derive dropped")
+        });
         let rust_source = fs::read_to_string(Path::new(manifest_dir).join("src").join(file))
             .unwrap_or_else(|e| panic!("read src/{file}: {e}"));
 
@@ -158,4 +218,36 @@ fn every_mirrored_struct_field_has_a_matching_ts_field() {
     }
 
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
+}
+
+
+#[test]
+fn every_serialize_type_is_either_mirrored_or_explicitly_unmirrored() {
+    let found = serialize_types();
+    assert!(
+        !found.is_empty(),
+        "found no `#[derive(.., Serialize, ..)]` type at all in src/ — the scan broke, not the code"
+    );
+
+    let found_names: BTreeSet<String> = found.keys().cloned().collect();
+    let classified: BTreeSet<String> = MIRRORED_STRUCTS
+        .iter()
+        .map(|s| (*s).to_string())
+        .chain(UNMIRRORED_TYPES.iter().map(|(name, _)| (*name).to_string()))
+        .collect();
+
+    let unclassified: Vec<_> = found_names.difference(&classified).collect();
+    assert!(
+        unclassified.is_empty(),
+        "Serialize-deriving type(s) {unclassified:?} in src/ are in neither table: add to MIRRORED_STRUCTS \
+         (plus a matching `interface` in src/lib/types.ts) if the frontend reads them, or to UNMIRRORED_TYPES \
+         with the reason they never cross to TS"
+    );
+
+    let stale: Vec<_> = classified.difference(&found_names).collect();
+    assert!(
+        stale.is_empty(),
+        "MIRRORED_STRUCTS/UNMIRRORED_TYPES name(s) {stale:?} no longer exist as Serialize-deriving types in src/ \
+         — renamed, removed, or derive dropped; drop or update the entry"
+    );
 }
