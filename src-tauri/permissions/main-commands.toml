@@ -23,4 +23,5 @@ commands.allow = [
     "list_fandom_index",
     "fetch_ao3_page",
     "search_ao3",
+    "add_story_by_url",
 ]

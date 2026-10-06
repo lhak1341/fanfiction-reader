@@ -56,11 +56,26 @@
   bookmarks.loadFandoms();
   bookmarks.loadContinueReading();
 
+  // Architecture review candidate 2 (2026-10-07), rejected: extracting
+  // navigation + the reconcile sequences below into an AppShell module fails
+  // the deletion test — ~30 lines, one caller, and the `$effect` wiring above
+  // (the hard-to-test part) can't leave a component anyway. Navigation state
+  // hasn't changed since the initial commit; reopen only if the reconcile
+  // sequences start growing.
+  //
   // Any toggle can affect both lists (a story visible in Search may be the
   // one just bookmarked/unbookmarked) plus the bookmarked-fandoms scope and
   // the Continue Reading surface — dataset is tiny, so just refresh everything.
   async function refreshAll() {
     await Promise.all([search.loadStories(), bookmarks.reloadAll()]);
+  }
+
+  // "Add by URL" (SearchModal) bookmarks the new story — close the modal and
+  // show it where it now lives.
+  async function handleStoryAdded() {
+    search.modalOpen = false;
+    screen = "bookmarks";
+    await refreshAll();
   }
 
   async function handleRefreshBookmarks() {
@@ -286,7 +301,12 @@
   {/if}
 </div>
 {#if search.modalOpen}
-  <SearchModal onClose={() => (search.modalOpen = false)} onImported={(fandom, source) => search.handleImported(fandom, source)} />
+  <SearchModal
+    onClose={() => (search.modalOpen = false)}
+    onImported={(fandom, source) => search.handleImported(fandom, source)}
+    onStoryAdded={handleStoryAdded}
+    urlImportBlocked={bookmarks.refreshing || bookmarks.downloadingStoryId !== null}
+  />
 {/if}
 {/if}
 

@@ -130,5 +130,10 @@
   "128": "Original 4-table schema (stories/chapters/read_state/filter_presets)",
   "129": "FanFicFare (github.com/JimmXinu/FanFicFare)",
   "130": "Port target: adapter_fanfictionnet.py (FanFictionNetSiteAdapter)",
-  "131": "Locked UI layout: Search/Bookmarks tabs + immersive Reader"
+  "131": "Locked UI layout: Search/Bookmarks tabs + immersive Reader",
+  "132": "FETCH_TESTING.md",
+  "133": "TESTING.md",
+  "134": "deploy-local.sh",
+  "135": "CLAUDE.md",
+  "136": "CLAUDE.md"
 }

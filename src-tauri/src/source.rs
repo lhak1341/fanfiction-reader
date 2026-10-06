@@ -3,20 +3,30 @@
 //! fetching a chapter, and fetching a browse/listing page. Parsing itself
 //! stays fully source-specific (`ffn.rs`/`ao3.rs` untouched, only called
 //! into from here); this only removes the duplication in *how*
-//! `lib.rs::try_persist_fetch` dispatched to each one. FFN's category-index
-//! fetch has no AO3 equivalent and deliberately stays outside this trait,
-//! handled directly in `lib.rs` (SPEC.md §8). The DB upsert layer
+//! `dispatch::persist_page` dispatches to each one. FFN's category-index
+//! shape has no AO3 equivalent, so it enters the trait only as two
+//! default-`None`/empty hooks (`category_from_index_url`/`parse_category_index`),
+//! never overridden by `Ao3` (SPEC.md §8). The DB upsert layer
 //! (`db::upsert_story` / `db::upsert_ao3_story`) and pagination bookkeeping
 //! (`db::record_browse_page` / `db::record_ao3_browse_page`) also stay as
 //! two functions each, per SPEC.md §8's existing call that the two
 //! metadata shapes don't overlap enough to share a schema-facing signature
 //! — `persist_story`/`record_listing_page` below just wrap them.
+//!
+//! Architecture review candidate 4 (2026-10-07), twin-cursor half rejected:
+//! `db::next_browse_page`/`next_ao3_browse_page` (the "Load more" cursor
+//! reads, called only from `search_ffn`/`search_ao3` in `fetch.rs`) stay
+//! outside this trait too. Their signatures differ for real reasons — FFN
+//! resolves a category from an optional hint and returns `(category, page)`,
+//! AO3 has no category and returns just `page` — so a shared method would
+//! need an associated request type wider than either twin, for two call
+//! sites. Reopen if a third source appears.
 
 use rusqlite::Connection;
 
 use crate::{ao3, db, ffn};
 
-/// Minimal chapter-shape accessor so the generic dispatch in `lib.rs` can
+/// Minimal chapter-shape accessor so the generic dispatch in `dispatch.rs` can
 /// walk a `Vec<S::ChapterRef>` without knowing which concrete struct it holds.
 pub trait ChapterInfo {
     fn chapter_num(&self) -> i64;
@@ -55,10 +65,30 @@ pub trait FicSource {
     type ChapterLocator;
     type ListingLocator;
 
-    /// Matches `stories.source` (`db.rs` schema) — lets `classify_fetch_target`
-    /// (`lib.rs`) resolve a source's own site id to Longform's internal DB id
+    /// Matches `stories.source` (`db.rs` schema) — lets `dispatch::resolve_target`
+    /// (`dispatch.rs`) resolve a source's own site id to Longform's internal DB id
     /// generically instead of hand-matching a runtime `FetchSource` enum.
     const SOURCE_TAG: &'static str;
+
+    /// Prefix for this source's `println!`/`eprintln!` lines in `dispatch.rs`/
+    /// `fetch.rs` — replaces the runtime `FetchSource` enum that existed only
+    /// to pick between these two strings.
+    const LOG_PREFIX: &'static str;
+
+    /// `Some(category)` when `url` is this source's category-index page — FFN
+    /// only (SPEC.md §8), so the default is `None` and `Ao3` never overrides
+    /// it. Checked *first* by `dispatch::classify_page`, ahead of chapter and
+    /// listing, so no other shape's check can swallow it.
+    fn category_from_index_url(_url: &str) -> Option<String> {
+        None
+    }
+
+    /// Parses a category-index page into `(fandom, count)` rows. Only called
+    /// for a URL `category_from_index_url` matched, so the empty default is
+    /// unreachable for `Ao3`.
+    fn parse_category_index(_html: &str) -> Vec<(String, i64)> {
+        Vec::new()
+    }
 
     /// `Ok(None)` means "not this kind of URL, try the next dispatch arm" —
     /// distinct from `Err`, which means "this *is* the shape, but it's
@@ -74,11 +104,11 @@ pub trait FicSource {
 
     /// `(source_story_id, chapter_num)` — normalizes each source's own
     /// `ChapterLocator` field names (`story_id`/`chapter_num` vs
-    /// `work_id`/`chapter_id`) so `classify_fetch_target` can read a chapter
+    /// `work_id`/`chapter_id`) so `dispatch::resolve_target` can read a chapter
     /// locator generically. `chapter_num` is a display/DB value, not
     /// necessarily what a URL encoded — AO3 locators without an explicit
     /// chapter id (a bare `/works/{id}` URL) report `0`, matching
-    /// `classify_fetch_target`'s existing behavior of treating that as "no
+    /// `dispatch::resolve_target`'s existing behavior of treating that as "no
     /// specific chapter known yet" for lookup purposes.
     fn chapter_locator_ids(locator: &Self::ChapterLocator) -> (i64, i64);
 
@@ -98,7 +128,7 @@ pub trait FicSource {
 
     /// Which locator (if any) `record_listing_page` should persist under —
     /// `decoded` came from re-parsing the fetched page's own URL, `external`
-    /// from whatever the caller stashed before the fetch began (`lib.rs`'s
+    /// from whatever the caller stashed before the fetch began (`fetch.rs`'s
     /// `PendingFetch`, FFN-only). `Ffn` prefers `external` and returns `None`
     /// (skip recording) when nothing was stashed — its own URL encoding
     /// can't round-trip `status` losslessly (`build_browse_url`, architecture
@@ -108,7 +138,7 @@ pub trait FicSource {
     /// cleanly and it never stashes anything, so it always keeps `decoded`.
     fn resolve_listing_record_locator(decoded: Self::ListingLocator, external: Option<Self::ListingLocator>) -> Option<Self::ListingLocator>;
 
-    /// The fandom `classify_fetch_target` should report for a `Browse`
+    /// The fandom `dispatch::resolve_target` should report for a `Browse`
     /// target, given the locator decoded from the URL and (`Ao3` only) the
     /// caller's own fandom hint. `Ffn`'s listing URL encodes fandom directly,
     /// so it ignores `fandom_hint` and always returns `decoded`'s. `Ao3`'s
@@ -116,7 +146,7 @@ pub trait FicSource {
     /// fandom label callers actually care about (`apply_fandom_override`), so
     /// it ignores `decoded` entirely and returns `fandom_hint` verbatim —
     /// `None` (no hint given) means there's nothing to recover fandom from,
-    /// the accepted degenerate case (`classify_fetch_target` falls back to
+    /// the accepted degenerate case (`dispatch::resolve_target` falls back to
     /// `Unknown`).
     fn resolve_target_fandom(decoded: Self::ListingLocator, fandom_hint: Option<&str>) -> Option<String>;
 }
@@ -150,6 +180,15 @@ impl FicSource for Ffn {
     type ListingLocator = FfnListingLocator;
 
     const SOURCE_TAG: &'static str = "ffn";
+    const LOG_PREFIX: &'static str = "[fetch]";
+
+    fn category_from_index_url(url: &str) -> Option<String> {
+        ffn::category_from_index_url(url)
+    }
+
+    fn parse_category_index(html: &str) -> Vec<(String, i64)> {
+        ffn::parse_fandom_index(html, 1000)
+    }
 
     fn chapter_locator_from_url(url: &str) -> Result<Option<Self::ChapterLocator>, String> {
         Ok(ffn::ffn_locator_from_url(url)?.map(|(story_id, chapter_num)| FfnChapterLocator { story_id, chapter_num }))
@@ -244,6 +283,7 @@ impl FicSource for Ao3 {
     type ListingLocator = Ao3ListingLocator;
 
     const SOURCE_TAG: &'static str = "ao3";
+    const LOG_PREFIX: &'static str = "[ao3-fetch]";
 
     fn chapter_locator_from_url(url: &str) -> Result<Option<Self::ChapterLocator>, String> {
         Ok(ao3::ao3_locator_from_url(url)?.map(|(work_id, chapter_id)| Ao3ChapterLocator { work_id, chapter_id }))

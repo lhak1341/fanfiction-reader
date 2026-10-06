@@ -8,7 +8,8 @@
 //! review candidate, 2026-08-05) so command registration in `lib.rs` stays
 //! a thin list instead of interleaving with ~750 lines of fetch machinery.
 
-use crate::source::{self, ChapterInfo, FicSource};
+use crate::dispatch::{self, FetchOutcome, FetchTarget};
+use crate::source::{self, FicSource};
 use crate::{ao3, db, ffn};
 use tauri::{Emitter, Manager};
 
@@ -109,27 +110,6 @@ pub async fn fetch_page(
     Ok(())
 }
 
-#[derive(Debug, serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct ChapterFetched {
-    story_id: i64,
-    chapter_num: i64,
-}
-
-#[derive(Debug, serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct BrowseFetched {
-    fandom: String,
-    count: i64,
-}
-
-#[derive(Debug, serde::Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct FandomIndexFetched {
-    category: String,
-    count: i64,
-}
-
 /// Error twins of the three `*Fetched` structs above, carrying the same
 /// identifying fields as their success counterpart plus `message` — lets
 /// `awaitCorrelatedEvent` (`tauriEvents.ts`) use one `match` predicate across
@@ -166,93 +146,6 @@ struct UnmatchedFetchError {
     message: String,
 }
 
-/// `FandomIndex` is FFN-only (no AO3 equivalent, SPEC.md §8) — `fetch_ao3_page`'s
-/// dispatch only ever calls `try_persist_fetch::<source::Ao3>`, which structurally
-/// never produces it, so that match arm is `unreachable!()` rather than handled.
-enum FetchOutcome {
-    Chapter(ChapterFetched),
-    Browse(BrowseFetched),
-    FandomIndex(FandomIndexFetched),
-}
-
-/// Generic parse+persist dispatch shared by every `FicSource` (`source.rs`):
-/// tries the chapter shape first, then the listing shape, else errors.
-/// `report_fetch_result`/`fetch_ao3_page` below turn the `Result` into
-/// `chapter-fetched`/`browse-fetched`/`*-error` events, since the command
-/// that kicked off the fetch already returned by the time this runs.
-fn try_persist_fetch<S: FicSource>(
-    db: &db::Db,
-    html: &str,
-    page_url: &str,
-    fandom_override: Option<&str>,
-    external_listing_locator: Option<S::ListingLocator>,
-) -> Result<FetchOutcome, String> {
-    let conn = db.0.lock().map_err(|e| e.to_string())?;
-
-    if let Some(locator) = S::chapter_locator_from_url(page_url)? {
-        let (meta, chapters) = S::parse_work(html, &locator)?;
-        let content = S::parse_chapter_content(html)?;
-        let chapter_num = S::resolve_chapter_num(&chapters, &locator)?;
-        let matched = chapters.iter().find(|c| c.chapter_num() == chapter_num);
-        let chapter_title = matched.map(|c| c.title()).unwrap_or_else(|| S::metadata_title(&meta));
-        let source_chapter_id = matched.and_then(|c| c.source_chapter_id());
-
-        println!(
-            "[fetch] {} — chapter {chapter_num} ({} bytes), {} chapters in TOC",
-            S::metadata_title(&meta),
-            content.len(),
-            chapters.len()
-        );
-
-        let story_id = S::persist_story(&conn, &meta).map_err(|e| e.to_string())?;
-        db::ensure_read_state(&conn, story_id).map_err(|e| e.to_string())?;
-        // Register the *full* TOC every time — any story page lists every
-        // chapter, so this keeps titles browsable even before their own
-        // pages have been fetched. Only the chapter we actually
-        // navigated to gets content.
-        for c in &chapters {
-            db::upsert_chapter_stub(&conn, story_id, c.chapter_num(), c.title(), c.source_chapter_id())
-                .map_err(|e| e.to_string())?;
-        }
-        db::upsert_chapter_content(&conn, story_id, chapter_num, chapter_title, &content, source_chapter_id)
-            .map_err(|e| e.to_string())?;
-
-        return Ok(FetchOutcome::Chapter(ChapterFetched { story_id, chapter_num }));
-    }
-
-    if let Some(locator) = S::listing_locator_from_url(page_url) {
-        let mut summaries = S::parse_listing(html, &locator)?;
-        if summaries.is_empty() {
-            return Err("no stories found on this page — not a listing, or the layout changed".to_string());
-        }
-        if let Some(label) = fandom_override {
-            for meta in &mut summaries {
-                S::apply_fandom_override(meta, label);
-            }
-        }
-        for meta in &summaries {
-            let story_id = S::persist_story(&conn, meta).map_err(|e| e.to_string())?;
-            db::ensure_read_state(&conn, story_id).map_err(|e| e.to_string())?;
-        }
-        // `resolve_listing_record_locator` picks which locator (if any) gets
-        // persisted — `Ffn` prefers the stashed pre-fetch request locator
-        // over `locator` (decoded from the fetched URL, lossy for status);
-        // `Ao3` always keeps `locator` (its own URL round-trips cleanly).
-        // See `PendingFetch`'s doc comment for why the decode alone isn't enough.
-        let fandom = S::metadata_fandom(&summaries[0]).to_string();
-        if let Some(record_locator) = S::resolve_listing_record_locator(locator, external_listing_locator) {
-            let page = S::listing_page(&record_locator);
-            S::record_listing_page(&conn, &record_locator, page).map_err(|e| e.to_string())?;
-            println!("[fetch] imported {} stories into fandom {fandom:?}, page {page}", summaries.len());
-        } else {
-            println!("[fetch] imported {} stories into fandom {fandom:?} (no search session to bookkeep)", summaries.len());
-        }
-        return Ok(FetchOutcome::Browse(BrowseFetched { fandom, count: summaries.len() as i64 }));
-    }
-
-    Err("could not determine what kind of page this is (chapter, or listing)".to_string())
-}
-
 /// Scoped to the `<title>` (never full page text) — story prose is free-form
 /// English and can innocently contain phrases like "just a moment"; a
 /// Cloudflare block page's *title* is one of a small fixed set that a real
@@ -273,9 +166,9 @@ fn looks_blocked(html: &str, title: &str) -> bool {
         || html.contains("cf-browser-verification")
 }
 
-/// FFN-specific pre-checks (debug dump, Cloudflare-block detection) plus the
-/// FFN-only category-index shape (no AO3 equivalent, SPEC.md §8), then falls
-/// through to the shared `try_persist_fetch::<source::Ffn>` dispatch.
+/// FFN-specific pre-checks (debug dump, Cloudflare-block detection), then the
+/// shared `dispatch::persist_page::<source::Ffn>` — which also owns FFN's
+/// category-index shape, so there is no FFN-only branch left here.
 fn try_persist_ffn_fetch(
     app: &tauri::AppHandle,
     db: &tauri::State<db::Db>,
@@ -293,105 +186,7 @@ fn try_persist_ffn_fetch(
         return Err("Cloudflare challenge page, not the story — try again".to_string());
     }
 
-    if let Some(category) = ffn::category_from_index_url(page_url) {
-        let mut conn = db.0.lock().map_err(|e| e.to_string())?;
-        let entries = ffn::parse_fandom_index(html, 1000);
-        if entries.is_empty() {
-            return Err("no fandoms found on this page — not a category index, or the layout changed".to_string());
-        }
-        db::replace_fandom_index(&mut conn, &category, &entries).map_err(|e| e.to_string())?;
-        println!("[fetch] indexed {} fandoms (1000+ fics) for category {category}", entries.len());
-        return Ok(FetchOutcome::FandomIndex(FandomIndexFetched { category, count: entries.len() as i64 }));
-    }
-
-    try_persist_fetch::<source::Ffn>(db, html, page_url, None, listing_locator)
-}
-
-/// Which caller is turning a `FetchOutcome` into events — only distinction
-/// that matters is `FandomIndex` (FFN-only, SPEC.md §8): AO3 structurally
-/// never produces that variant, so it also never emits its error event.
-enum FetchSource {
-    Ffn,
-    Ao3,
-}
-
-impl FetchSource {
-    fn log_prefix(&self) -> &'static str {
-        match self {
-            FetchSource::Ffn => "[fetch]",
-            FetchSource::Ao3 => "[ao3-fetch]",
-        }
-    }
-}
-
-/// Which of the three fetch shapes a URL identifies, and that shape's
-/// identifying fields — the same fields each `*Fetched`/`*FetchError` struct
-/// carries. Recovered from the URL alone wherever the URL encodes it
-/// (browse/fandom-index: request-native, baked in by `build_browse_url`/the
-/// category path); a chapter's DB `story_id` doesn't live in the URL (only
-/// the source's own site id does), so that case needs `find_story_id` — safe
-/// because a chapter fetch always targets an already-imported story.
-/// `Unknown` covers a URL matching none of the three shapes — see
-/// `emit_targeted_error`.
-enum FetchTarget {
-    Chapter { story_id: i64, chapter_num: i64 },
-    Browse { fandom: String },
-    FandomIndex { category: String },
-    Unknown,
-}
-
-/// Classifies a fetch's own request URL into its `FetchTarget` identity —
-/// generic over `FicSource` so this shares one literal dispatch order
-/// (chapter, then listing) with `try_persist_fetch`'s own success-path
-/// dispatch instead of hand-matching a runtime `FetchSource` enum and
-/// risking the two drifting apart (architecture review, 2026-07-29). FFN's
-/// additional `FandomIndex` shape (no AO3 equivalent) isn't handled here —
-/// see `classify_ffn_fetch_target`, which layers it on top the same way
-/// `try_persist_ffn_fetch` layers its own category-index check on top of
-/// generic `try_persist_fetch`.
-///
-/// Used both to target a typed error at the right channel
-/// (`emit_fetch_outcome`'s `Err` arm) and, via `classify_ffn_fetch_target`,
-/// by `resolve_interrupted_target` (`fetch_page`'s supersede check — FFN
-/// only, AO3 never shares the webview). `fandom_hint` is AO3's own
-/// `fandom_override` (`fetch_ao3_page`) — see `FicSource::resolve_target_fandom`.
-fn classify_fetch_target<S: FicSource>(db: &db::Db, url: &str, fandom_hint: Option<&str>) -> FetchTarget {
-    // A matched chapter locator is definitive — `parse_browse_url`/category
-    // parsing don't know to reject `/s/{id}/{chapter}/...` shapes (nothing
-    // needed them to, since `try_persist_fetch`'s own dispatch always checks
-    // the chapter shape first and short-circuits there). Falling through to
-    // the listing/category checks below on a DB-lookup miss would let a
-    // chapter URL misclassify as a browse URL (`/s/{id}/{chapter}/...` has
-    // the same two-path-segment shape `parse_browse_url` looks for).
-    if let Some(locator) = S::chapter_locator_from_url(url).ok().flatten() {
-        let (source_story_id, chapter_num) = S::chapter_locator_ids(&locator);
-        let story_id = db.0.lock().ok().and_then(|conn| db::find_story_id(&conn, S::SOURCE_TAG, source_story_id).ok().flatten());
-        return match story_id {
-            Some(story_id) => FetchTarget::Chapter { story_id, chapter_num },
-            None => FetchTarget::Unknown,
-        };
-    }
-
-    if let Some(locator) = S::listing_locator_from_url(url) {
-        if let Some(fandom) = S::resolve_target_fandom(locator, fandom_hint) {
-            return FetchTarget::Browse { fandom };
-        }
-    }
-
-    FetchTarget::Unknown
-}
-
-/// FFN's `classify_fetch_target` — layers the category-index shape (no AO3
-/// equivalent) on top of the generic classifier, checked *first* to mirror
-/// `try_persist_ffn_fetch`'s own order (its category check runs before it
-/// ever calls generic `try_persist_fetch`); the two paths used to check
-/// shapes in different orders, which is exactly the drift this exists to
-/// prevent (architecture review, 2026-07-29).
-fn classify_ffn_fetch_target(db: &db::Db, url: &str, fandom_hint: Option<&str>) -> FetchTarget {
-    if let Some(category) = ffn::category_from_index_url(url) {
-        return FetchTarget::FandomIndex { category };
-    }
-    classify_fetch_target::<source::Ffn>(db, url, fandom_hint)
+    dispatch::persist_page::<source::Ffn>(db, html, page_url, None, listing_locator)
 }
 
 /// `fetch_page`'s supersede check: which `FetchTarget` an interrupted fetch
@@ -400,12 +195,12 @@ fn classify_ffn_fetch_target(db: &db::Db, url: &str, fandom_hint: Option<&str>) 
 /// the full running app — has direct unit test coverage. Prefers the
 /// interrupted fetch's own stashed `listing_locator` over decoding its URL
 /// when one was stashed (a browse fetch's exact fandom, no decode needed);
-/// falls back to `classify_ffn_fetch_target` otherwise (a chapter fetch, or
+/// falls back to `dispatch::resolve_target` otherwise (a chapter fetch, or
 /// the debug harness's raw-URL fetch, which never stashes one).
 fn resolve_interrupted_target(interrupted: &PendingFetch, db: &db::Db) -> FetchTarget {
     match &interrupted.listing_locator {
         Some(locator) => FetchTarget::Browse { fandom: locator.fandom.clone() },
-        None => classify_ffn_fetch_target(db, &interrupted.url, None),
+        None => dispatch::resolve_target::<source::Ffn>(db, &interrupted.url, None),
     }
 }
 
@@ -440,18 +235,16 @@ fn emit_targeted_error(app: &tauri::AppHandle, target: FetchTarget, message: Str
 /// Shared outcome-to-events mapping behind both fetch paths
 /// (`report_fetch_result`'s window round-trip, `fetch_ao3_page`'s direct
 /// HTTP call): same three success events, same error fan-out, differing
-/// only in log prefix and whether `FandomIndex` applies (`FetchSource`).
-/// `page_url`/`fandom_hint` feed `classify_fetch_target` on the `Err` arm —
-/// see its doc comment.
-fn emit_fetch_outcome(
+/// only in log prefix (`S::LOG_PREFIX`). `page_url`/`fandom_hint` feed
+/// `dispatch::resolve_target` on the `Err` arm — see its doc comment.
+fn emit_fetch_outcome<S: FicSource>(
     app: &tauri::AppHandle,
     db: &db::Db,
     page_url: &str,
     fandom_hint: Option<&str>,
     result: Result<FetchOutcome, String>,
-    source: FetchSource,
 ) {
-    let prefix = source.log_prefix();
+    let prefix = S::LOG_PREFIX;
     match result {
         Ok(FetchOutcome::Chapter(fetched)) => {
             println!("{prefix} persisted story id={} chapter {}", fetched.story_id, fetched.chapter_num);
@@ -461,17 +254,11 @@ fn emit_fetch_outcome(
             let _ = app.emit("browse-fetched", fetched);
         }
         Ok(FetchOutcome::FandomIndex(fetched)) => {
-            if matches!(source, FetchSource::Ao3) {
-                unreachable!("AO3 never produces a FandomIndex outcome");
-            }
             let _ = app.emit("fandom-index-fetched", fetched);
         }
         Err(e) => {
             eprintln!("{prefix} failed: {e}");
-            let target = match source {
-                FetchSource::Ffn => classify_ffn_fetch_target(db, page_url, fandom_hint),
-                FetchSource::Ao3 => classify_fetch_target::<source::Ao3>(db, page_url, fandom_hint),
-            };
+            let target = dispatch::resolve_target::<S>(db, page_url, fandom_hint);
             emit_targeted_error(app, target, e);
         }
     }
@@ -507,7 +294,7 @@ pub async fn report_fetch_result(app: tauri::AppHandle, db: tauri::State<'_, db:
     }
     drop(pending);
 
-    emit_fetch_outcome(&app, &db, &page_url, None, result, FetchSource::Ffn);
+    emit_fetch_outcome::<source::Ffn>(&app, &db, &page_url, None, result);
     Ok(())
 }
 
@@ -622,12 +409,27 @@ pub async fn fetch_ao3_page(
             let dump_path = app.path().app_data_dir().expect("resolve app data dir").join("debug-last-ao3-fetch.html");
             let _ = std::fs::write(&dump_path, &html);
             classify_url = final_url.clone();
-            try_persist_fetch::<source::Ao3>(&db, &html, &final_url, fandom_override.as_deref(), None)
+            dispatch::persist_page::<source::Ao3>(&db, &html, &final_url, fandom_override.as_deref(), None)
         }
         Err(e) => Err(e),
     };
-    emit_fetch_outcome(&app, &db, &classify_url, fandom_override.as_deref(), result, FetchSource::Ao3);
+    emit_fetch_outcome::<source::Ao3>(&app, &db, &classify_url, fandom_override.as_deref(), result);
     Ok(())
+}
+
+/// Adds one story by pasted URL (`StoryUrlSource`, `dispatch.rs`, validates it
+/// and picks the source). Routes to the same fetch path a chapter fetch
+/// already uses — `fetch_page` (FFN webview) or `fetch_ao3_page` (direct
+/// HTTP) — so the result arrives as the usual `chapter-fetched`/
+/// `chapter-fetch-error` event, not through this call's own return. A bad
+/// URL fails here, before any fetch starts.
+#[tauri::command]
+pub async fn add_story_by_url(app: tauri::AppHandle, db: tauri::State<'_, db::Db>, url: String) -> Result<(), String> {
+    let url = url.trim().to_string();
+    match dispatch::story_url_source(&url)? {
+        dispatch::StoryUrlSource::Ffn => fetch_page(app, db, url, None).await,
+        dispatch::StoryUrlSource::Ao3 => fetch_ao3_page(app, db, url, None).await,
+    }
 }
 
 /// FFN discovery (SPEC.md §6): fetches the next page of a browse/category
@@ -661,7 +463,7 @@ pub async fn search_ffn(
 /// closer analog to FFN's "always sort by Favorites for import relevance"
 /// (§8 locked: AO3's bookmarks, not kudos, is the comparable deliberate
 /// save/track signal to FFN's Favorites). `fandom` is force-applied to every
-/// imported row (see `try_persist_fetch`'s `fandom_override` param) so it
+/// imported row (see `dispatch::persist_page`'s `fandom_override` param) so it
 /// lands in the same fandom bucket as however this fandom is already named
 /// on the FFN side — the whole point of searching both sources from one
 /// Search screen, not two separate fandom lists (user-confirmed 2026-07-19).
@@ -695,11 +497,6 @@ mod tests {
 
     const FFN_STORY_PAGE: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ffn_story_page.html"));
-    const FFN_BROWSE_LISTING: &str =
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ffn_browse_listing.html"));
-    const AO3_WORK_PAGE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ao3_work_page.html"));
-    const AO3_LISTING_PAGE: &str =
-        include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ao3_listing_page.html"));
 
     fn test_db() -> db::Db {
         let conn = Connection::open_in_memory().unwrap();
@@ -738,203 +535,6 @@ mod tests {
     }
 
     #[test]
-    fn ffn_chapter_url_dispatches_to_chapter_branch_and_resolves_chapter_num() {
-        let dbh = test_db();
-        let url = "https://www.fanfiction.net/s/13493099/34/Welcome-to-the-insane-world-of-Pok-mon";
-
-        let outcome = try_persist_fetch::<source::Ffn>(&dbh, FFN_STORY_PAGE, url, None, None).unwrap();
-
-        match outcome {
-            FetchOutcome::Chapter(fetched) => assert_eq!(fetched.chapter_num, 34),
-            _ => panic!("expected a Chapter outcome for a chapter URL"),
-        }
-    }
-
-    #[test]
-    fn ffn_listing_url_dispatches_to_browse_branch() {
-        let dbh = test_db();
-        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "any", 1);
-
-        let outcome = try_persist_fetch::<source::Ffn>(&dbh, FFN_BROWSE_LISTING, &url, None, None).unwrap();
-
-        match outcome {
-            FetchOutcome::Browse(fetched) => assert_eq!(fetched.count, 25),
-            _ => panic!("expected a Browse outcome for a listing URL"),
-        }
-    }
-
-    #[test]
-    fn ffn_in_progress_listing_records_the_real_requested_status_not_the_lossy_decoded_one() {
-        let dbh = test_db();
-        // build_browse_url can't distinguish "in_progress" from "any" in the
-        // URL itself (see FfnListingLocator's doc comment) — decoding this
-        // URL alone would always recover "any", which is the bug this test
-        // guards against.
-        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "in_progress", 1);
-        let requested = source::FfnListingLocator {
-            category: "anime".to_string(),
-            fandom: "Fullmetal Alchemist".to_string(),
-            min_word_count: 0,
-            status: "in_progress".to_string(),
-            page: 1,
-        };
-
-        try_persist_fetch::<source::Ffn>(&dbh, FFN_BROWSE_LISTING, &url, None, Some(requested)).unwrap();
-
-        let conn = dbh.0.lock().unwrap();
-        let recorded_status: String = conn
-            .query_row("SELECT status FROM browse_state WHERE fandom = ?1", ["Fullmetal Alchemist"], |row| row.get(0))
-            .unwrap();
-        assert_eq!(recorded_status, "in_progress", "must record under the real requested status, not the URL-decoded one");
-    }
-
-    #[test]
-    fn ffn_listing_fetch_with_no_external_locator_does_not_record_browse_state() {
-        // The debug harness's raw-URL fetch has no real search session behind
-        // it — see `FicSource::resolve_listing_record_locator`'s doc comment.
-        let dbh = test_db();
-        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "any", 1);
-
-        try_persist_fetch::<source::Ffn>(&dbh, FFN_BROWSE_LISTING, &url, None, None).unwrap();
-
-        let conn = dbh.0.lock().unwrap();
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM browse_state", [], |row| row.get(0)).unwrap();
-        assert_eq!(count, 0, "no locator stashed means no real search session to bookkeep");
-    }
-
-    #[test]
-    fn empty_listing_page_is_an_error_not_a_zero_count_browse_outcome() {
-        let dbh = test_db();
-        let url = ffn::build_browse_url("anime", "Nonexistent Fandom", 0, "any", 1);
-
-        // FFN_STORY_PAGE is a chapter page, not a listing — parse_browse_page
-        // against it should find zero story rows.
-        let result = try_persist_fetch::<source::Ffn>(&dbh, FFN_STORY_PAGE, &url, None, None);
-
-        assert!(result.is_err(), "expected an error for a listing page with zero story rows");
-    }
-
-    #[test]
-    fn ao3_fandom_override_applies_on_listing_rows() {
-        let dbh = test_db();
-        let url = ao3::build_tag_browse_url("Harry Potter", "bookmarks_count", 0, "any", 1);
-
-        try_persist_fetch::<source::Ao3>(&dbh, AO3_LISTING_PAGE, &url, Some("Overridden Fandom"), None).unwrap();
-
-        let conn = dbh.0.lock().unwrap();
-        let fandom: String = conn.query_row("SELECT fandom FROM stories LIMIT 1", [], |row| row.get(0)).unwrap();
-        assert_eq!(fandom, "Overridden Fandom");
-    }
-
-    #[test]
-    fn ao3_fandom_override_is_ignored_on_the_chapter_path() {
-        let dbh = test_db();
-        let url = "https://archiveofourown.org/works/85954646/chapters/227238471";
-
-        let outcome =
-            try_persist_fetch::<source::Ao3>(&dbh, AO3_WORK_PAGE, url, Some("Should Not Apply Here"), None).unwrap();
-
-        match outcome {
-            FetchOutcome::Chapter(fetched) => {
-                let conn = dbh.0.lock().unwrap();
-                let fandom: String =
-                    conn.query_row("SELECT fandom FROM stories WHERE id = ?1", [fetched.story_id], |row| row.get(0)).unwrap();
-                assert_eq!(fandom, "Original Work, Naruto (Anime & Manga)");
-            }
-            _ => panic!("expected a Chapter outcome for a work/chapter URL"),
-        }
-    }
-
-    #[test]
-    fn classify_chapter_url_resolves_the_db_story_id_once_imported() {
-        let dbh = test_db();
-        let url = "https://www.fanfiction.net/s/13493099/34/Welcome-to-the-insane-world-of-Pok-mon";
-        let outcome = try_persist_fetch::<source::Ffn>(&dbh, FFN_STORY_PAGE, url, None, None).unwrap();
-        let db_story_id = match outcome {
-            FetchOutcome::Chapter(fetched) => fetched.story_id,
-            _ => panic!("expected a Chapter outcome"),
-        };
-
-        let target = classify_ffn_fetch_target(&dbh, url, None);
-
-        match target {
-            FetchTarget::Chapter { story_id, chapter_num } => {
-                assert_eq!(story_id, db_story_id, "must be the DB id, not FFN's own site id (13493099)");
-                assert_eq!(chapter_num, 34);
-            }
-            _ => panic!("expected FetchTarget::Chapter"),
-        }
-    }
-
-    #[test]
-    fn classify_chapter_url_for_an_unimported_story_falls_back_to_unknown() {
-        let dbh = test_db();
-        let url = "https://www.fanfiction.net/s/999999999/1/Never-Imported";
-
-        assert!(matches!(classify_ffn_fetch_target(&dbh, url, None), FetchTarget::Unknown));
-    }
-
-    #[test]
-    fn classify_ffn_browse_url_recovers_fandom_with_no_db_lookup() {
-        let dbh = test_db();
-        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "any", 1);
-
-        match classify_ffn_fetch_target(&dbh, &url, None) {
-            FetchTarget::Browse { fandom } => assert_eq!(fandom, "Fullmetal Alchemist"),
-            _ => panic!("expected FetchTarget::Browse"),
-        }
-    }
-
-    #[test]
-    fn classify_ffn_category_index_url_recovers_category() {
-        let dbh = test_db();
-        let url = "https://www.fanfiction.net/anime/";
-
-        match classify_ffn_fetch_target(&dbh, url, None) {
-            FetchTarget::FandomIndex { category } => assert_eq!(category, "anime"),
-            _ => panic!("expected FetchTarget::FandomIndex"),
-        }
-    }
-
-    #[test]
-    fn classify_ao3_browse_url_uses_the_fandom_hint_not_the_url_tag() {
-        let dbh = test_db();
-        let url = ao3::build_tag_browse_url("Harry Potter", "bookmarks_count", 0, "any", 1);
-
-        match classify_fetch_target::<source::Ao3>(&dbh, &url, Some("Harry Potter - J. K. Rowling")) {
-            FetchTarget::Browse { fandom } => assert_eq!(fandom, "Harry Potter - J. K. Rowling"),
-            _ => panic!("expected FetchTarget::Browse"),
-        }
-    }
-
-    #[test]
-    fn classify_ao3_browse_url_without_a_hint_falls_back_to_unknown() {
-        // AO3's listing URL only encodes its search *tag*, not the
-        // force-applied fandom label — with no hint there's nothing to
-        // recover fandom from, so this is the accepted degenerate case.
-        let dbh = test_db();
-        let url = ao3::build_tag_browse_url("Harry Potter", "bookmarks_count", 0, "any", 1);
-
-        assert!(matches!(classify_fetch_target::<source::Ao3>(&dbh, &url, None), FetchTarget::Unknown));
-    }
-
-    #[test]
-    fn classify_ao3_chapter_url_resolves_the_db_story_id_once_imported() {
-        let dbh = test_db();
-        let url = "https://archiveofourown.org/works/85954646/chapters/227238471";
-        let outcome = try_persist_fetch::<source::Ao3>(&dbh, AO3_WORK_PAGE, url, None, None).unwrap();
-        let db_story_id = match outcome {
-            FetchOutcome::Chapter(fetched) => fetched.story_id,
-            _ => panic!("expected a Chapter outcome"),
-        };
-
-        match classify_fetch_target::<source::Ao3>(&dbh, url, None) {
-            FetchTarget::Chapter { story_id, .. } => assert_eq!(story_id, db_story_id),
-            _ => panic!("expected FetchTarget::Chapter"),
-        }
-    }
-
-    #[test]
     fn resolve_interrupted_target_prefers_the_stashed_locator_over_decoding_the_url() {
         let dbh = test_db();
         // Same lossy-status URL shape as candidate 1's fix — decoding it
@@ -962,7 +562,7 @@ mod tests {
     fn resolve_interrupted_target_falls_back_to_decoding_when_nothing_was_stashed() {
         let dbh = test_db();
         let url = "https://www.fanfiction.net/s/13493099/34/Welcome-to-the-insane-world-of-Pok-mon";
-        try_persist_fetch::<source::Ffn>(&dbh, FFN_STORY_PAGE, url, None, None).unwrap();
+        dispatch::persist_page::<source::Ffn>(&dbh, FFN_STORY_PAGE, url, None, None).unwrap();
         let interrupted = PendingFetch { url: url.to_string(), listing_locator: None };
 
         match resolve_interrupted_target(&interrupted, &dbh) {

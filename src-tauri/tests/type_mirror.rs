@@ -56,7 +56,7 @@ const UNMIRRORED_TYPES: &[(&str, &str)] = &[
     ),
     (
         "StoryMetadata",
-        "ffn.rs: parser output, persisted into SQLite by `try_persist_fetch`; no command hands it to the frontend (every fetch command returns `Result<(), String>`)",
+        "ffn.rs: parser output, persisted into SQLite by `dispatch::persist_page`; no command hands it to the frontend (every fetch command returns `Result<(), String>`)",
     ),
     ("ChapterRef", "ffn.rs: parser output, same as `StoryMetadata`"),
     ("Ao3StoryMetadata", "ao3.rs: parser output, same as `StoryMetadata`"),

@@ -1,12 +1,14 @@
 mod ao3;
 mod db;
+mod dispatch;
 mod fetch;
 mod ffn;
+mod migrations;
 mod queries;
 mod scrape;
 mod source;
 
-use fetch::{fetch_ao3_page, fetch_page, index_ffn_category, report_fetch_result, search_ao3, search_ffn, FetchLock};
+use fetch::{add_story_by_url, fetch_ao3_page, fetch_page, index_ffn_category, report_fetch_result, search_ao3, search_ffn, FetchLock};
 use tauri::Manager;
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -138,7 +140,8 @@ pub fn run() {
             index_ffn_category,
             list_fandom_index,
             fetch_ao3_page,
-            search_ao3
+            search_ao3,
+            add_story_by_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

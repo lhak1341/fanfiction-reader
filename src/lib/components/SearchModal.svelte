@@ -16,17 +16,25 @@
 
   let {
     onClose,
-    onImported
+    onImported,
+    onStoryAdded,
+    urlImportBlocked = false
   }: {
     onClose: () => void;
     onImported: (fandom: string, source: StorySource) => void;
+    // "By URL" bookmarks the story it adds, then calls this (not `onImported`).
+    onStoryAdded: () => void;
+    // True while a bookmark refresh/download is running: "By URL" waits for
+    // the next chapter event with no way to tell its own from theirs
+    // (`api.addStoryByUrl`), so submit stays disabled until they finish.
+    urlImportBlocked?: boolean;
   } = $props();
 
   // +page.svelte mounts this behind `{#if search.modalOpen}`, so it always
   // fully remounts per open — onImported never changes during one mount's
   // lifetime.
   // svelte-ignore state_referenced_locally
-  const screen = new SearchModalScreen(onImported);
+  const screen = new SearchModalScreen(onImported, onStoryAdded);
 
   let fandomQuery = $state("");
   let dropdownOpen = $state(false);
@@ -76,19 +84,20 @@
 />
 
 <div class="overlay" onclick={onClose} onkeydown={(e) => e.key === "Escape" && onClose()} role="button" tabindex="-1"></div>
-<div class="modal" role="dialog" aria-label="Search for a new fandom">
+<div class="modal" role="dialog" aria-label="Search for a new fandom or add a story by URL">
   <div class="modal-head">
     <h2>Search</h2>
     <button class="close" onclick={onClose} aria-label="Close"><X size={16} /></button>
   </div>
 
   <div class="seg source-toggle">
-    <button type="button" class:active={screen.source === "ffn"} onclick={() => (screen.source = "ffn")}>FanFiction.net</button>
-    <button type="button" class:active={screen.source === "ao3"} onclick={() => (screen.source = "ao3")}>Archive of Our Own</button>
+    <button type="button" class:active={screen.mode === "ffn"} onclick={() => (screen.mode = "ffn")}>FanFiction.net</button>
+    <button type="button" class:active={screen.mode === "ao3"} onclick={() => (screen.mode = "ao3")}>Archive of Our Own</button>
+    <button type="button" class:active={screen.mode === "url"} onclick={() => (screen.mode = "url")}>By URL</button>
   </div>
 
   <form onsubmit={(e) => { e.preventDefault(); screen.runSearch(); }}>
-    {#if screen.source === "ffn"}
+    {#if screen.mode === "ffn"}
       <label class="field">
         <span>Category</span>
         <select bind:value={screen.category}>
@@ -139,7 +148,7 @@
           </button>
         {/if}
       </div>
-    {:else}
+    {:else if screen.mode === "ao3"}
       <label class="field">
         <span>Fandom</span>
         <input placeholder="e.g. Naruto" bind:value={screen.ao3FandomName} />
@@ -154,8 +163,20 @@
         (e.g. "Harry Potter" is actually tagged "Harry Potter - J.K. Rowling"). Saved after a
         successful search, so you only type it once per fandom.
       </p>
+    {:else}
+      <label class="field">
+        <span>Story URL</span>
+        <input placeholder="https://www.fanfiction.net/s/14583034/1/…" bind:value={screen.url} />
+      </label>
+      <p class="note">
+        A FanFiction.net story/chapter link or an AO3 work link. Adds that one story, with its full
+        chapter list, to your Bookmarks.
+      </p>
+      {#if urlImportBlocked}
+        <p class="note">Wait for the bookmark refresh/download to finish first.</p>
+      {/if}
     {/if}
-
+    {#if screen.mode !== "url"}
     <label class="field">
       <span>Minimum length</span>
       <div class="seg">
@@ -170,14 +191,14 @@
       <div class="seg">
         <button type="button" class:active={screen.status === undefined} onclick={() => (screen.status = undefined)}>Any</button>
         <button type="button" class:active={screen.status === "complete"} onclick={() => (screen.status = "complete")}>Done</button>
-        {#if screen.source === "ao3"}
+        {#if screen.mode === "ao3"}
           <button type="button" class:active={screen.status === "in_progress"} onclick={() => (screen.status = "in_progress")}>Ongoing</button>
         {/if}
       </div>
     </label>
 
     <p class="note">
-      {#if screen.source === "ffn"}
+      {#if screen.mode === "ffn"}
         Pulls the first page, sorted by favorites — FFN's own ranking, not ours.
       {:else}
         Pulls the first page, sorted by bookmarks — AO3's closest analog to FFN's favorites.
@@ -185,12 +206,17 @@
       Use "Load more" afterward for deeper results.
     </p>
 
+    {/if}
     {#if screen.error}
       <p class="error">{screen.error}</p>
     {/if}
 
-    <button type="submit" class="submit" disabled={screen.searching || !screen.canSubmit}>
-      {screen.searching ? "Searching…" : "Search"}
+    <button
+      type="submit"
+      class="submit"
+      disabled={screen.searching || !screen.canSubmit || (screen.mode === "url" && urlImportBlocked)}
+    >
+      {screen.searching ? (screen.mode === "url" ? "Adding…" : "Searching…") : screen.mode === "url" ? "Add story" : "Search"}
     </button>
   </form>
 </div>

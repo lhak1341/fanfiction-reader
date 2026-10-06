@@ -111,6 +111,20 @@ export function fetchChapterAndWait(source: StorySource, url: string, storyId: n
   ).then(() => {});
 }
 
+/// Adds one story from a pasted URL (`add_story_by_url` validates it and picks
+/// the source). Resolves with the first chapter event — deliberately no
+/// `match` predicate, since a brand-new story has no `storyId` to correlate
+/// on yet; callers must not run another chapter fetch concurrently (the
+/// modal blocks submit during a bookmark refresh/download). A bad URL
+/// rejects immediately, before any fetch starts.
+export function addStoryByUrl(url: string): Promise<ChapterFetched> {
+  return awaitCorrelatedEvent<ChapterFetched, ChapterFetchError>(
+    () => invoke("add_story_by_url", { url }),
+    chapterEvents.on,
+    chapterEvents.onError
+  );
+}
+
 // ---- FFN discovery (SPEC.md §6) ----
 // Same fetch_page/report_fetch_result mechanism as chapters — a fetched
 // browse page is parsed and imported, then a browse-fetched/-error event

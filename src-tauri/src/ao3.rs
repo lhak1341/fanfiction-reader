@@ -5,7 +5,7 @@
 //!
 //! This module is the parsing layer only — the upsert path
 //! (`db::upsert_ao3_story`) and fetch path (`fetch_ao3_html`/
-//! `try_persist_fetch::<source::Ao3>` in `lib.rs`, plain `reqwest`, no webview needed)
+//! `dispatch::persist_page::<source::Ao3>`, plain `reqwest`, no webview needed)
 //! live elsewhere, same split `ffn.rs`'s own parsing/fetch layers have.
 
 use scraper::{ElementRef, Html, Selector};

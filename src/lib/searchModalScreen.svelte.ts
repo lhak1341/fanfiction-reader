@@ -18,8 +18,14 @@ import type { FandomIndexEntry, StorySource, StoryStatus } from "./types";
 
 export const ALL = "all";
 
+export type SearchMode = StorySource | "url";
+
 export class SearchModalScreen {
-  source = $state<StorySource>("ffn");
+  mode = $state<SearchMode>("ffn");
+
+  // "By URL" mode: one pasted story/chapter URL, source auto-detected
+  // server-side (`add_story_by_url`).
+  url = $state("");
 
   category = $state<string>(ALL);
   fandomOptions = $state<FandomIndexEntry[]>([]);
@@ -38,13 +44,19 @@ export class SearchModalScreen {
   error = $state("");
 
   private onImported: (fandom: string, source: StorySource) => void;
+  private onStoryAdded: () => void;
 
-  constructor(onImported: (fandom: string, source: StorySource) => void) {
+  /// `onStoryAdded` fires after a "By URL" import has bookmarked the story —
+  /// a pasted URL is deliberate intent to keep that one story, so it lands in
+  /// Bookmarks rather than at the bottom of its fandom's Search list.
+  constructor(onImported: (fandom: string, source: StorySource) => void, onStoryAdded: () => void = () => {}) {
     this.onImported = onImported;
+    this.onStoryAdded = onStoryAdded;
   }
 
   get canSubmit(): boolean {
-    return this.source === "ffn" ? !!this.selectedFandom : !!this.ao3FandomName.trim() && !!this.ao3Tag.trim();
+    if (this.mode === "url") return !!this.url.trim();
+    return this.mode === "ffn" ? !!this.selectedFandom : !!this.ao3FandomName.trim() && !!this.ao3Tag.trim();
   }
 
   async loadFandomOptions() {
@@ -80,11 +92,17 @@ export class SearchModalScreen {
     }
   }
 
+  /// Name kept from the search modes; also runs the "By URL" import.
   async runSearch() {
     this.searching = true;
     this.error = "";
     try {
-      if (this.source === "ffn") {
+      if (this.mode === "url") {
+        if (!this.url.trim()) return;
+        const { storyId } = await api.addStoryByUrl(this.url.trim());
+        await api.toggleBookmarked(storyId, true);
+        this.onStoryAdded();
+      } else if (this.mode === "ffn") {
         if (!this.selectedFandom) return;
         const result = await api.searchFfnAndWait(
           this.selectedFandom.fandom,

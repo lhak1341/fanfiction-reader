@@ -5,7 +5,9 @@ vi.mock("./api", () => ({
   indexFfnCategoryAndWait: vi.fn(),
   indexAllCategoriesAndWait: vi.fn(),
   searchFfnAndWait: vi.fn(),
-  searchAo3AndWait: vi.fn()
+  searchAo3AndWait: vi.fn(),
+  addStoryByUrl: vi.fn(),
+  toggleBookmarked: vi.fn()
 }));
 vi.mock("./fandom", () => ({
   saveAo3Tag: vi.fn()
@@ -77,7 +79,7 @@ describe("SearchModalScreen.runSearch (ffn)", () => {
     vi.mocked(api.searchFfnAndWait).mockResolvedValue({ fandom: "Naruto", count: 5 });
     const onImported = vi.fn();
     const screen = new SearchModalScreen(onImported);
-    screen.source = "ffn";
+    screen.mode = "ffn";
     screen.selectedFandom = fandomEntry();
     screen.minWordCount = 1000;
     screen.status = "complete";
@@ -92,7 +94,7 @@ describe("SearchModalScreen.runSearch (ffn)", () => {
   it("does nothing without a selected fandom", async () => {
     const onImported = vi.fn();
     const screen = new SearchModalScreen(onImported);
-    screen.source = "ffn";
+    screen.mode = "ffn";
     screen.selectedFandom = undefined;
 
     await screen.runSearch();
@@ -105,7 +107,7 @@ describe("SearchModalScreen.runSearch (ffn)", () => {
   it("sets error and clears searching on failure", async () => {
     vi.mocked(api.searchFfnAndWait).mockRejectedValue(new Error("cloudflare blocked"));
     const screen = makeScreen();
-    screen.source = "ffn";
+    screen.mode = "ffn";
     screen.selectedFandom = fandomEntry();
 
     await screen.runSearch();
@@ -120,7 +122,7 @@ describe("SearchModalScreen.runSearch (ao3)", () => {
     vi.mocked(api.searchAo3AndWait).mockResolvedValue({ fandom: "Naruto", count: 3 });
     const onImported = vi.fn();
     const screen = new SearchModalScreen(onImported);
-    screen.source = "ao3";
+    screen.mode = "ao3";
     screen.ao3FandomName = " Naruto ";
     screen.ao3Tag = " Naruto (Anime & Manga) ";
 
@@ -134,7 +136,7 @@ describe("SearchModalScreen.runSearch (ao3)", () => {
   it("does nothing without both fandom name and tag", async () => {
     const onImported = vi.fn();
     const screen = new SearchModalScreen(onImported);
-    screen.source = "ao3";
+    screen.mode = "ao3";
     screen.ao3FandomName = "Naruto";
     screen.ao3Tag = "";
 
@@ -148,7 +150,7 @@ describe("SearchModalScreen.runSearch (ao3)", () => {
 describe("SearchModalScreen.canSubmit", () => {
   it("requires a selected fandom for ffn", () => {
     const screen = makeScreen();
-    screen.source = "ffn";
+    screen.mode = "ffn";
     expect(screen.canSubmit).toBe(false);
     screen.selectedFandom = fandomEntry();
     expect(screen.canSubmit).toBe(true);
@@ -156,11 +158,78 @@ describe("SearchModalScreen.canSubmit", () => {
 
   it("requires both fandom name and tag for ao3", () => {
     const screen = makeScreen();
-    screen.source = "ao3";
+    screen.mode = "ao3";
     expect(screen.canSubmit).toBe(false);
     screen.ao3FandomName = "Naruto";
     expect(screen.canSubmit).toBe(false);
     screen.ao3Tag = "Naruto (Anime & Manga)";
     expect(screen.canSubmit).toBe(true);
+  });
+});
+
+describe("SearchModalScreen.runSearch (url)", () => {
+  it("adds the story by URL, bookmarks it, and reports it added", async () => {
+    vi.mocked(api.addStoryByUrl).mockResolvedValue({ storyId: 7, chapterNum: 1 });
+    vi.mocked(api.toggleBookmarked).mockResolvedValue(undefined);
+    const onImported = vi.fn();
+    const onStoryAdded = vi.fn();
+    const screen = new SearchModalScreen(onImported, onStoryAdded);
+    screen.mode = "url";
+    screen.url = "  https://www.fanfiction.net/s/14583034/1/Harry-Potter-The-Game  ";
+
+    await screen.runSearch();
+
+    expect(api.addStoryByUrl).toHaveBeenCalledWith("https://www.fanfiction.net/s/14583034/1/Harry-Potter-The-Game");
+    expect(api.toggleBookmarked).toHaveBeenCalledWith(7, true);
+    expect(onStoryAdded).toHaveBeenCalledTimes(1);
+    expect(onImported).not.toHaveBeenCalled();
+    expect(screen.searching).toBe(false);
+  });
+
+  it("canSubmit needs a non-blank URL in url mode", () => {
+    const screen = new SearchModalScreen(vi.fn());
+    screen.mode = "url";
+    expect(screen.canSubmit).toBe(false);
+    screen.url = "   ";
+    expect(screen.canSubmit).toBe(false);
+    screen.url = "https://archiveofourown.org/works/1";
+    expect(screen.canSubmit).toBe(true);
+  });
+
+  it("does nothing for a blank URL", async () => {
+    const screen = new SearchModalScreen(vi.fn());
+    screen.mode = "url";
+    screen.url = "  ";
+    await screen.runSearch();
+    expect(api.addStoryByUrl).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a fetch/validation error and does not report an add", async () => {
+    vi.mocked(api.addStoryByUrl).mockRejectedValue("not a valid URL");
+    const onStoryAdded = vi.fn();
+    const screen = new SearchModalScreen(vi.fn(), onStoryAdded);
+    screen.mode = "url";
+    screen.url = "nope";
+
+    await screen.runSearch();
+
+    expect(screen.error).toBe("not a valid URL");
+    expect(api.toggleBookmarked).not.toHaveBeenCalled();
+    expect(onStoryAdded).not.toHaveBeenCalled();
+    expect(screen.searching).toBe(false);
+  });
+
+  it("surfaces a bookmark failure and does not report an add", async () => {
+    vi.mocked(api.addStoryByUrl).mockResolvedValue({ storyId: 7, chapterNum: 1 });
+    vi.mocked(api.toggleBookmarked).mockRejectedValue(new Error("db locked"));
+    const onStoryAdded = vi.fn();
+    const screen = new SearchModalScreen(vi.fn(), onStoryAdded);
+    screen.mode = "url";
+    screen.url = "https://www.fanfiction.net/s/1/1/x";
+
+    await screen.runSearch();
+
+    expect(screen.error).toBe("db locked");
+    expect(onStoryAdded).not.toHaveBeenCalled();
   });
 });

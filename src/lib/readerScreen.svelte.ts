@@ -8,6 +8,12 @@
 // tick()+rAF+scrollTop DOM work. Typography prefs (font panel) and the
 // nav-carousel derived math stay in Reader.svelte too: both are thin
 // presentational concerns, not the tricky part this split is for.
+//
+// Architecture review candidate 5 (2026-10-07), rejected: extracting the nav
+// math / prose-style derivation into a pure module would be a shallow module
+// with one caller, and a jsdom mount test can't reproduce the one real edge
+// case (the rAF scroll-restore clamping — jsdom does no layout). Reopen if a
+// scroll or nav bug actually lands in Reader.svelte.
 
 import * as api from "./api";
 import { ensureChapterCached } from "./chapterCache";

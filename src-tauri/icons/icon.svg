@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- G1 · The typewriter's paper rises as a castle. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3b5a78"/><stop offset="1" stop-color="#22364a"/></linearGradient>
+    <radialGradient id="glow" cx="512" cy="450" r="280" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#f0e6cd" stop-opacity=".4"/><stop offset="1" stop-color="#f0e6cd" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="190" fill="url(#bg)"/>
+  <circle cx="512" cy="450" r="280" fill="url(#glow)"/>
+  <g fill="#f6f2e9">
+    <circle cx="250" cy="260" r="7" opacity=".8"/><circle cx="790" cy="240" r="6" opacity=".7"/>
+    <path d="M800 380l8 22 22 8-22 8-8 22-8-22-22-8 22-8z" opacity=".85"/>
+  </g>
+  <!-- paper-castle -->
+  <g fill="#f6f2e9">
+    <rect x="452" y="420" width="120" height="200"/>
+    <path d="M440 420L512 300L584 420Z"/>
+    <rect x="362" y="480" width="70" height="140"/>
+    <path d="M352 480L397 400L442 480Z"/>
+    <rect x="592" y="500" width="70" height="120"/>
+    <path d="M582 500L627 420L672 500Z"/>
+  </g>
+  <path d="M512 300V250" stroke="#f6f2e9" stroke-width="7"/>
+  <path d="M512 250L562 266L512 282Z" fill="#e3b955"/>
+  <g fill="#34506b">
+    <path d="M492 560v-34a20 20 0 0 1 40 0v34z"/>
+    <rect x="500" y="450" width="24" height="38" rx="12"/>
+    <rect x="384" y="520" width="26" height="40" rx="13"/>
+    <rect x="614" y="530" width="26" height="40" rx="13"/>
+  </g>
+  <!-- typewriter -->
+  <rect x="236" y="598" width="552" height="48" rx="24" fill="#4a4540"/>
+  <circle cx="226" cy="622" r="26" fill="#c8922c"/><circle cx="798" cy="622" r="26" fill="#c8922c"/>
+  <path d="M232 596L190 548" stroke="#c8922c" stroke-width="10" stroke-linecap="round"/><circle cx="186" cy="542" r="12" fill="#c8922c"/>
+  <path fill="#26231f" d="M236 650H788L852 804Q856 840 820 840H204Q168 840 172 804Z"/>
+  <g fill="#f0e6cd"><circle cx="300" cy="698" r="17"/><circle cx="348" cy="698" r="17"/><circle cx="396" cy="698" r="17"/><circle cx="444" cy="698" r="17"/><circle cx="492" cy="698" r="17"/><circle cx="540" cy="698" r="17"/><circle cx="588" cy="698" r="17"/><circle cx="636" cy="698" r="17"/><circle cx="684" cy="698" r="17"/><circle cx="732" cy="698" r="17"/><circle cx="324" cy="742" r="17"/><circle cx="372" cy="742" r="17"/><circle cx="420" cy="742" r="17"/><circle cx="468" cy="742" r="17"/><circle cx="516" cy="742" r="17"/><circle cx="564" cy="742" r="17"/><circle cx="612" cy="742" r="17"/><circle cx="660" cy="742" r="17"/><circle cx="708" cy="742" r="17"/></g>
+  <rect x="372" y="772" width="280" height="28" rx="14" fill="#f0e6cd"/>
+  <path d="M190 820H834" stroke="#c8922c" stroke-width="6" stroke-linecap="round" opacity=".8"/>
+</svg>
