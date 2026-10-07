@@ -2,7 +2,7 @@
 
 - DB lives at `~/Library/Application Support/com.lhak1341.longform/longform.db` — safe to inspect/edit directly with `sqlite3` while `bun run tauri dev` is running. The release app from `bun run deploy` shares this same DB (same bundle id), so test runs touch the real library.
 - `docs/SPEC.md` is the living spec — read the relevant section before touching scraping/fetch/data-model code, and update it when behavior changes.
-- No `docs/adr/` — architectural decisions live in `docs/wayfinder/map.md` + tickets (macro) and inline `// architecture review candidate N` comments (micro) — grep that phrase before proposing a refactor.
+- No `docs/adr/` — architectural decisions live in `docs/wayfinder/map.md` + tickets (macro) and inline `// architecture review candidate N` comments (micro) — grep that phrase before proposing a refactor, and read the code a survey-agent candidate cites before rating it (2026-10-07: 4 of 8 overstated).
 - `temp/` (repo root, gitignored) is this project's scratch/output dir, not OS tmp.
 - Background `bun run tauri dev`/vite processes are invisible to `ps aux` — use `lsof -i :1420` / `lsof +D src-tauri/target` instead. This shell has no `timeout` — use `run_in_background` + manual sleep/check.
 - `bun run tauri:build` runs `cargo sweep --time 7 src-tauri` after build to prune stale artifacts (`src-tauri/target` grows large fast). Requires `cargo install cargo-sweep` on the machine — not a repo dependency.

@@ -2,6 +2,13 @@ export function fmt(n: number): string {
   return n.toLocaleString("en-US");
 }
 
+/** Compact count for tight spots (fandom picker): "999", "1.2K", "12.3K", "1M". */
+export function fmtCompact(n: number): string {
+  // Switch to M once the K form would round up to "1000K".
+  if (Math.round(n / 100) >= 10_000) return `${Math.round(n / 100_000) / 10}M`;
+  return n >= 1000 ? `${Math.round(n / 100) / 10}K` : String(n);
+}
+
 function toShort(year: number, month: number, day: number): string {
   const yy = String(year).slice(-2);
   const mm = String(month).padStart(2, "0");

@@ -432,6 +432,26 @@ pub async fn add_story_by_url(app: tauri::AppHandle, db: tauri::State<'_, db::Db
     }
 }
 
+/// Fetches one chapter of an already-imported story — the source, URL and (AO3)
+/// chapter id all come from the DB (`dispatch::chapter_fetch_url`), so the
+/// frontend sends only `(story_id, chapter_num)`. Always fetches (no cache
+/// check — callers ask the DB first). Result arrives as the usual
+/// `chapter-fetched`/`chapter-fetch-error` event; an unknown story fails here,
+/// before any fetch starts.
+#[tauri::command]
+pub async fn fetch_chapter(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, db::Db>,
+    story_id: i64,
+    chapter_num: i64,
+) -> Result<(), String> {
+    let (source, url) = dispatch::chapter_fetch_url(&db, story_id, chapter_num)?;
+    match source {
+        dispatch::StoryUrlSource::Ffn => fetch_page(app, db, url, None).await,
+        dispatch::StoryUrlSource::Ao3 => fetch_ao3_page(app, db, url, None).await,
+    }
+}
+
 /// FFN discovery (SPEC.md §6): fetches the next page of a browse/category
 /// search. `category` is required for a brand-new fandom (the "Search FFN"
 /// modal always has it); omit it for "Load more" on an already-known

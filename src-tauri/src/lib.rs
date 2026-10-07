@@ -8,31 +8,14 @@ mod queries;
 mod scrape;
 mod source;
 
-use fetch::{add_story_by_url, fetch_ao3_page, fetch_page, index_ffn_category, report_fetch_result, search_ao3, search_ffn, FetchLock};
+use fetch::{add_story_by_url, fetch_ao3_page, fetch_chapter, fetch_page, index_ffn_category, report_fetch_result, search_ao3, search_ffn, FetchLock};
 use tauri::Manager;
-
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
 
 /// Sanity check for the SQLite schema (SPEC.md §5): confirms every table
 /// exists and reports each one's row count.
 #[tauri::command]
 fn db_health_check(db: tauri::State<db::Db>) -> Result<Vec<String>, String> {
-    db.run(|conn| {
-        let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")?;
-        let table_names: Vec<String> = stmt.query_map([], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
-
-        table_names
-            .into_iter()
-            .map(|name| {
-                let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {name}"), [], |row| row.get(0))?;
-                Ok(format!("{name}: {count} row(s)"))
-            })
-            .collect()
-    })
+    db.run(db::table_row_counts)
 }
 
 // ---- Query/toggle commands (SPEC.md §6) ----
@@ -119,7 +102,6 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            greet,
             fetch_page,
             report_fetch_result,
             db_health_check,
@@ -141,7 +123,8 @@ pub fn run() {
             list_fandom_index,
             fetch_ao3_page,
             search_ao3,
-            add_story_by_url
+            add_story_by_url,
+            fetch_chapter
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

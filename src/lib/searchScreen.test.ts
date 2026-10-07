@@ -83,7 +83,7 @@ describe("SearchScreen.renameFandom", () => {
 describe("SearchScreen.loadMore", () => {
   it("continues with the explicitly scoped source when one is set", async () => {
     const loadMore = vi.fn().mockResolvedValue({ fandom: "Naruto", count: 5 });
-    vi.mocked(ficSourceAdapter).mockReturnValue({ chapterUrl: vi.fn(), loadMore });
+    vi.mocked(ficSourceAdapter).mockReturnValue({ loadMore });
 
     const search = makeScreen();
     search.fandom = "Naruto";
@@ -97,7 +97,7 @@ describe("SearchScreen.loadMore", () => {
 
   it("falls back to the last modal-search source when scoped to All", async () => {
     const loadMore = vi.fn().mockResolvedValue({ fandom: "Naruto", count: 5 });
-    vi.mocked(ficSourceAdapter).mockReturnValue({ chapterUrl: vi.fn(), loadMore });
+    vi.mocked(ficSourceAdapter).mockReturnValue({ loadMore });
 
     const search = makeScreen();
     search.fandom = "Naruto";

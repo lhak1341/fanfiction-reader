@@ -112,6 +112,14 @@ pub trait FicSource {
     /// specific chapter known yet" for lookup purposes.
     fn chapter_locator_ids(locator: &Self::ChapterLocator) -> (i64, i64);
 
+    /// The URL that fetches chapter `chapter_num` of the story whose own-site
+    /// id is `source_story_id`. `source_chapter_id` is the per-chapter opaque
+    /// id a prior fetch recorded (`chapters.source_chapter_id`), when known —
+    /// AO3 chapters beyond the first need it (`/works/{id}/chapters/{id}`,
+    /// SPEC.md §8) and fall back to the bare `/works/{id}` page without one;
+    /// FFN ignores it.
+    fn chapter_url(source_story_id: i64, chapter_num: i64, source_chapter_id: Option<i64>) -> String;
+
     fn metadata_title(meta: &Self::Metadata) -> &str;
     fn metadata_fandom(meta: &Self::Metadata) -> &str;
 
@@ -232,6 +240,10 @@ impl FicSource for Ffn {
         (locator.story_id, locator.chapter_num)
     }
 
+    fn chapter_url(source_story_id: i64, chapter_num: i64, _source_chapter_id: Option<i64>) -> String {
+        format!("https://www.fanfiction.net/s/{source_story_id}/{chapter_num}/")
+    }
+
     fn metadata_title(meta: &Self::Metadata) -> &str {
         &meta.title
     }
@@ -333,6 +345,13 @@ impl FicSource for Ao3 {
 
     fn chapter_locator_ids(locator: &Self::ChapterLocator) -> (i64, i64) {
         (locator.work_id, locator.chapter_id.unwrap_or(0))
+    }
+
+    fn chapter_url(source_story_id: i64, _chapter_num: i64, source_chapter_id: Option<i64>) -> String {
+        match source_chapter_id {
+            Some(id) => format!("https://archiveofourown.org/works/{source_story_id}/chapters/{id}"),
+            None => format!("https://archiveofourown.org/works/{source_story_id}"),
+        }
     }
 
     fn metadata_title(meta: &Self::Metadata) -> &str {

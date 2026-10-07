@@ -2,7 +2,6 @@
 identifier = "allow-main-commands"
 description = "App commands invokable from the main window."
 commands.allow = [
-    "greet",
     "fetch_page",
     "db_health_check",
     "list_stories",
@@ -24,4 +23,5 @@ commands.allow = [
     "fetch_ao3_page",
     "search_ao3",
     "add_story_by_url",
+    "fetch_chapter",
 ]

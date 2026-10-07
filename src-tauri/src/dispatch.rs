@@ -109,6 +109,25 @@ pub fn story_url_source(url: &str) -> Result<StoryUrlSource, String> {
     }
 }
 
+/// Resolves a stored story's chapter to the source it belongs to and the URL
+/// that fetches it — the one place a chapter fetch learns its URL, so callers
+/// (`fetch::fetch_chapter`) need only `(story_id, chapter_num)`. Errors when
+/// the story isn't in the DB, before any fetch starts.
+pub fn chapter_fetch_url(db: &db::Db, story_id: i64, chapter_num: i64) -> Result<(StoryUrlSource, String), String> {
+    let (source, source_story_id, source_chapter_id) = db
+        .run(|conn| db::chapter_fetch_target(conn, story_id, chapter_num))?
+        .ok_or_else(|| format!("no story with id {story_id}"))?;
+    match source.as_str() {
+        source::Ffn::SOURCE_TAG => {
+            Ok((StoryUrlSource::Ffn, source::Ffn::chapter_url(source_story_id, chapter_num, source_chapter_id)))
+        }
+        source::Ao3::SOURCE_TAG => {
+            Ok((StoryUrlSource::Ao3, source::Ao3::chapter_url(source_story_id, chapter_num, source_chapter_id)))
+        }
+        other => Err(format!("unknown story source {other:?}")),
+    }
+}
+
 /// Parse + persist a fetched page for any `FicSource`. `report_fetch_result`
 /// (`fetch.rs`) / `fetch_ao3_page` turn the `Result` into
 /// `chapter-fetched`/`browse-fetched`/`fandom-index-fetched`/`*-error`
@@ -150,18 +169,22 @@ pub fn persist_page<S: FicSource>(
                 chapters.len()
             );
 
-            let story_id = S::persist_story(&conn, &meta).map_err(|e| e.to_string())?;
-            db::ensure_read_state(&conn, story_id).map_err(|e| e.to_string())?;
+            // One transaction: a failure mid-TOC leaves nothing behind, and a
+            // 300-chapter import is one commit instead of 300+.
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
+            let story_id = S::persist_story(&tx, &meta).map_err(|e| e.to_string())?;
+            db::ensure_read_state(&tx, story_id).map_err(|e| e.to_string())?;
             // Register the *full* TOC every time — any story page lists every
             // chapter, so this keeps titles browsable even before their own
             // pages have been fetched. Only the chapter we actually
             // navigated to gets content.
             for c in &chapters {
-                db::upsert_chapter_stub(&conn, story_id, c.chapter_num(), c.title(), c.source_chapter_id())
+                db::upsert_chapter_stub(&tx, story_id, c.chapter_num(), c.title(), c.source_chapter_id())
                     .map_err(|e| e.to_string())?;
             }
-            db::upsert_chapter_content(&conn, story_id, chapter_num, chapter_title, &content, source_chapter_id)
+            db::upsert_chapter_content(&tx, story_id, chapter_num, chapter_title, &content, source_chapter_id)
                 .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
 
             Ok(FetchOutcome::Chapter(ChapterFetched { story_id, chapter_num }))
         }
@@ -175,9 +198,10 @@ pub fn persist_page<S: FicSource>(
                     S::apply_fandom_override(meta, label);
                 }
             }
+            let tx = conn.transaction().map_err(|e| e.to_string())?;
             for meta in &summaries {
-                let story_id = S::persist_story(&conn, meta).map_err(|e| e.to_string())?;
-                db::ensure_read_state(&conn, story_id).map_err(|e| e.to_string())?;
+                let story_id = S::persist_story(&tx, meta).map_err(|e| e.to_string())?;
+                db::ensure_read_state(&tx, story_id).map_err(|e| e.to_string())?;
             }
             // `resolve_listing_record_locator` picks which locator (if any) gets
             // persisted — `Ffn` prefers the stashed pre-fetch request locator
@@ -189,9 +213,11 @@ pub fn persist_page<S: FicSource>(
             let prefix = S::LOG_PREFIX;
             if let Some(record_locator) = S::resolve_listing_record_locator(locator, external_listing_locator) {
                 let page = S::listing_page(&record_locator);
-                S::record_listing_page(&conn, &record_locator, page).map_err(|e| e.to_string())?;
+                S::record_listing_page(&tx, &record_locator, page).map_err(|e| e.to_string())?;
+                tx.commit().map_err(|e| e.to_string())?;
                 println!("{prefix} imported {} stories into fandom {fandom:?}, page {page}", summaries.len());
             } else {
+                tx.commit().map_err(|e| e.to_string())?;
                 println!("{prefix} imported {} stories into fandom {fandom:?} (no search session to bookkeep)", summaries.len());
             }
             Ok(FetchOutcome::Browse(BrowseFetched { fandom, count: summaries.len() as i64 }))
@@ -346,6 +372,52 @@ mod tests {
     }
 
 
+    fn count(dbh: &db::Db, table: &str) -> i64 {
+        let conn = dbh.0.lock().unwrap();
+        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn chapter_page_failing_mid_toc_leaves_no_story_behind() {
+        let dbh = test_db();
+        dbh.0
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER fail_chapter BEFORE INSERT ON chapters
+                 BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+            )
+            .unwrap();
+        let url = "https://www.fanfiction.net/s/13493099/34/Welcome-to-the-insane-world-of-Pok-mon";
+
+        let result = persist_page::<source::Ffn>(&dbh, FFN_STORY_PAGE, url, None, None);
+
+        assert!(result.is_err());
+        assert_eq!(count(&dbh, "stories"), 0, "story row must roll back with its chapters");
+        assert_eq!(count(&dbh, "read_state"), 0);
+    }
+
+    #[test]
+    fn listing_page_failing_mid_rows_leaves_no_rows_or_page_record() {
+        let dbh = test_db();
+        dbh.0
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER fail_third BEFORE INSERT ON read_state
+                 WHEN (SELECT COUNT(*) FROM read_state) >= 2
+                 BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+            )
+            .unwrap();
+        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "any", 1);
+
+        let result = persist_page::<source::Ffn>(&dbh, FFN_BROWSE_LISTING, &url, None, None);
+
+        assert!(result.is_err());
+        assert_eq!(count(&dbh, "stories"), 0);
+        assert_eq!(count(&dbh, "read_state"), 0);
+    }
+
     #[test]
     fn ao3_fandom_override_applies_on_listing_rows() {
         let dbh = test_db();
@@ -472,6 +544,51 @@ mod tests {
             FetchTarget::Chapter { story_id, .. } => assert_eq!(story_id, db_story_id),
             _ => panic!("expected FetchTarget::Chapter"),
         }
+    }
+
+    #[test]
+    fn chapter_fetch_url_builds_the_ffn_chapter_url_from_the_stored_story() {
+        let dbh = test_db();
+        let url = "https://www.fanfiction.net/s/13493099/34/Welcome-to-the-insane-world-of-Pok-mon";
+        let story_id = match persist_page::<source::Ffn>(&dbh, FFN_STORY_PAGE, url, None, None).unwrap() {
+            FetchOutcome::Chapter(f) => f.story_id,
+            _ => panic!("expected a Chapter outcome"),
+        };
+
+        let (src, fetch_url) = chapter_fetch_url(&dbh, story_id, 7).unwrap();
+
+        assert_eq!(src, StoryUrlSource::Ffn);
+        assert_eq!(fetch_url, "https://www.fanfiction.net/s/13493099/7/");
+    }
+
+    #[test]
+    fn chapter_fetch_url_uses_the_recorded_ao3_chapter_id_and_falls_back_to_the_bare_work() {
+        let dbh = test_db();
+        let url = "https://archiveofourown.org/works/85954646/chapters/227238471";
+        let story_id = match persist_page::<source::Ao3>(&dbh, AO3_WORK_PAGE, url, None, None).unwrap() {
+            FetchOutcome::Chapter(f) => f.story_id,
+            _ => panic!("expected a Chapter outcome"),
+        };
+        let known = dbh
+            .run(|c| c.query_row(
+                "SELECT chapter_num FROM chapters WHERE story_id = ?1 AND source_chapter_id = 227238471",
+                [story_id],
+                |r| r.get::<_, i64>(0),
+            ))
+            .unwrap();
+
+        let (src, with_id) = chapter_fetch_url(&dbh, story_id, known).unwrap();
+        let (_, without_id) = chapter_fetch_url(&dbh, story_id, 9999).unwrap();
+
+        assert_eq!(src, StoryUrlSource::Ao3);
+        assert_eq!(with_id, "https://archiveofourown.org/works/85954646/chapters/227238471");
+        assert_eq!(without_id, "https://archiveofourown.org/works/85954646");
+    }
+
+    #[test]
+    fn chapter_fetch_url_rejects_an_unknown_story_before_any_fetch() {
+        let dbh = test_db();
+        assert!(chapter_fetch_url(&dbh, 424242, 1).is_err());
     }
 
     #[test]

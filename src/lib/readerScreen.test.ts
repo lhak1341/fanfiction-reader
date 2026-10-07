@@ -90,10 +90,95 @@ describe("ReaderScreen.loadChapter", () => {
   });
 });
 
+// Holds the first `ensureChapterCached` call for each listed chapter until
+// its returned `release`/`fail` is called; every other call resolves at once.
+function gateFirstCall(nums: number[]) {
+  const gates = new Map<number, { release: () => void; fail: (e: Error) => void }>();
+  const pending = new Set(nums);
+  const fetchCalls: number[] = [];
+  vi.mocked(ensureChapterCached).mockImplementation(async (_storyId, num) => {
+    fetchCalls.push(num);
+    const result = { content: { title: `Ch ${num}`, content: "", isCached: true }, chapters: makeChapters(20), wasFetched: true };
+    if (!pending.delete(num)) return result;
+    await new Promise<void>((resolve, reject) => gates.set(num, { release: resolve, fail: (e) => reject(e) }));
+    return result;
+  });
+  return { gates, fetchCalls };
+}
+
+describe("ReaderScreen.loadChapter supersession", () => {
+  it("drops a slow load that resolves after a newer navigation", async () => {
+    const { gates } = gateFirstCall([10]);
+    const screen = makeScreen(20);
+    await screen.init(1);
+
+    const slow = screen.loadChapter(10); // blocked on the gate
+    await screen.loadChapter(12); // resolves at once
+    gates.get(10)!.release();
+    await slow;
+    await flush();
+
+    expect(screen.currentChapterNum).toBe(12);
+    expect(screen.content?.title).toBe("Ch 12");
+    expect(vi.mocked(api.setResumeChapter)).not.toHaveBeenCalledWith(story.id, 10);
+  });
+
+  it("ignores a superseded load's failure and keeps loading state for the newer one", async () => {
+    const { gates } = gateFirstCall([10, 12]);
+    const screen = makeScreen(20);
+    await screen.init(1);
+
+    const slow = screen.loadChapter(10);
+    const newer = screen.loadChapter(12); // also gated
+    gates.get(10)!.fail(new Error("stale boom"));
+    await slow;
+
+    expect(screen.fetchError).toBe("");
+    expect(screen.loading).toBe(true); // newer load is still running
+
+    gates.get(12)!.release();
+    await newer;
+    expect(screen.loading).toBe(false);
+    expect(screen.currentChapterNum).toBe(12);
+  });
+
+  it("coalesces a repeat load of the chapter already in flight", async () => {
+    const { gates, fetchCalls } = gateFirstCall([8]);
+    const screen = makeScreen(20);
+    await screen.init(1);
+
+    const first = screen.loadChapter(8);
+    const second = screen.loadChapter(8);
+    gates.get(8)!.release();
+    await Promise.all([first, second]);
+
+    expect(fetchCalls.filter((n) => n === 8)).toHaveLength(1);
+    expect(screen.currentChapterNum).toBe(8);
+  });
+});
+
+describe("ReaderScreen story metadata refresh", () => {
+  it("picks up a grown chapterCount after a fetch so goToChapter can reach the new chapter", async () => {
+    const screen = makeScreen(3);
+    await screen.init(1);
+    await flush();
+    await screen.goToChapter(4);
+    expect(screen.currentChapterNum).toBe(1);
+
+    vi.mocked(api.getStory).mockResolvedValue({ ...story, chapterCount: 4 });
+    await screen.loadChapter(2); // fetches (wasFetched) and re-reads the story row
+    await flush();
+    await screen.goToChapter(4);
+
+    expect(screen.currentChapterNum).toBe(4);
+  });
+});
+
 describe("ReaderScreen.goToChapter", () => {
   it("no-ops below chapter 1 or above chapterCount", async () => {
     const screen = makeScreen(3);
     await screen.init(2);
+    await flush(); // let init's prefetch chain settle so the call count is stable
     const callsBefore = vi.mocked(ensureChapterCached).mock.calls.length;
 
     await screen.goToChapter(0);
@@ -111,7 +196,7 @@ describe("ReaderScreen prefetch chain", () => {
     let releaseGate!: () => void;
     const gate = new Promise<void>((r) => (releaseGate = r));
 
-    vi.mocked(ensureChapterCached).mockImplementation(async (_story, _chapters, _storyId, num) => {
+    vi.mocked(ensureChapterCached).mockImplementation(async (_storyId, num) => {
       callCount++;
       calls.push(num);
       // Pauses exactly the second call — the first target (chapter 2) of
@@ -139,7 +224,7 @@ describe("ReaderScreen prefetch chain", () => {
   });
 
   it("skips pacing on an already-cached neighbor but paces on a real fetch", async () => {
-    vi.mocked(ensureChapterCached).mockImplementation(async (_story, _chapters, _storyId, num) => ({
+    vi.mocked(ensureChapterCached).mockImplementation(async (_storyId, num) => ({
       content: null,
       chapters: makeChapters(5),
       // Center chapter 3 in a 5-chapter story prefetches [1, 2, 4, 5];

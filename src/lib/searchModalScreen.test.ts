@@ -219,7 +219,7 @@ describe("SearchModalScreen.runSearch (url)", () => {
     expect(screen.searching).toBe(false);
   });
 
-  it("surfaces a bookmark failure and does not report an add", async () => {
+  it("says the import succeeded when only the bookmark step fails, and does not report an add", async () => {
     vi.mocked(api.addStoryByUrl).mockResolvedValue({ storyId: 7, chapterNum: 1 });
     vi.mocked(api.toggleBookmarked).mockRejectedValue(new Error("db locked"));
     const onStoryAdded = vi.fn();
@@ -229,7 +229,8 @@ describe("SearchModalScreen.runSearch (url)", () => {
 
     await screen.runSearch();
 
-    expect(screen.error).toBe("db locked");
+    expect(screen.error).toBe("Imported, but couldn't bookmark it: db locked");
     expect(onStoryAdded).not.toHaveBeenCalled();
+    expect(screen.searching).toBe(false);
   });
 });

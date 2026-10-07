@@ -130,17 +130,10 @@ impl Db {
     }
 }
 
-/// Upserts a story by its (source, source_story_id) natural key — FFN is the
-/// only source that feeds this today, hardcoded below; an AO3 parser will
-/// need its own insert path since its metadata shape differs (category,
-/// warnings, split relationship/character tags — SPEC.md §8). Re-fetching an
-/// existing story updates its cached metadata without touching `read_state`
-/// — that's the user's own manual flags, not fetched data, and must survive
-/// refetches. Returns the internal `stories.id` (the FK target used
-/// everywhere else).
-pub fn upsert_story(conn: &Connection, meta: &crate::ffn::StoryMetadata) -> rusqlite::Result<i64> {
-    conn.query_row(
-        "INSERT INTO stories
+/// The two `stories` upserts' SQL, named so `upsert_sql_columns_cover_the_schema`
+/// (below) can read their column lists — a column added to the schema and one
+/// upsert but not the other would otherwise be silently NULL for that source.
+const UPSERT_FFN_STORY_SQL: &str = "INSERT INTO stories
             (source, source_story_id, title, author, fandom, rating, genre, language, tags, status,
              word_count, favorite_count, chapter_count, summary, ffn_updated_at, last_fetched_at)
          VALUES ('ffn', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, datetime('now'))
@@ -159,7 +152,40 @@ pub fn upsert_story(conn: &Connection, meta: &crate::ffn::StoryMetadata) -> rusq
             summary = excluded.summary,
             ffn_updated_at = excluded.ffn_updated_at,
             last_fetched_at = excluded.last_fetched_at
-         RETURNING id",
+         RETURNING id";
+
+const UPSERT_AO3_STORY_SQL: &str = "INSERT INTO stories
+            (source, source_story_id, title, author, fandom, rating, language, tags, category, warnings,
+             status, word_count, favorite_count, chapter_count, summary, last_fetched_at)
+         VALUES ('ao3', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, datetime('now'))
+         ON CONFLICT(source, source_story_id) DO UPDATE SET
+            title = excluded.title,
+            author = excluded.author,
+            fandom = excluded.fandom,
+            rating = excluded.rating,
+            language = excluded.language,
+            tags = excluded.tags,
+            category = excluded.category,
+            warnings = excluded.warnings,
+            status = excluded.status,
+            word_count = excluded.word_count,
+            favorite_count = excluded.favorite_count,
+            chapter_count = excluded.chapter_count,
+            summary = excluded.summary,
+            last_fetched_at = excluded.last_fetched_at
+         RETURNING id";
+
+/// Upserts an FFN story by its (source, source_story_id) natural key —
+/// `source` is hardcoded to `'ffn'` below; AO3 has its own `upsert_ao3_story`
+/// since its metadata shape differs (category, warnings, split
+/// relationship/character tags — SPEC.md §8). Re-fetching an
+/// existing story updates its cached metadata without touching `read_state`
+/// — that's the user's own manual flags, not fetched data, and must survive
+/// refetches. Returns the internal `stories.id` (the FK target used
+/// everywhere else).
+pub fn upsert_story(conn: &Connection, meta: &crate::ffn::StoryMetadata) -> rusqlite::Result<i64> {
+    conn.query_row(
+        UPSERT_FFN_STORY_SQL,
         rusqlite::params![
             meta.ffn_story_id,
             meta.title,
@@ -188,26 +214,7 @@ pub fn upsert_story(conn: &Connection, meta: &crate::ffn::StoryMetadata) -> rusq
 /// `read_state` is untouched, `ON CONFLICT` only refreshes cached metadata.
 pub fn upsert_ao3_story(conn: &Connection, meta: &crate::ao3::Ao3StoryMetadata) -> rusqlite::Result<i64> {
     conn.query_row(
-        "INSERT INTO stories
-            (source, source_story_id, title, author, fandom, rating, language, tags, category, warnings,
-             status, word_count, favorite_count, chapter_count, summary, last_fetched_at)
-         VALUES ('ao3', ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, datetime('now'))
-         ON CONFLICT(source, source_story_id) DO UPDATE SET
-            title = excluded.title,
-            author = excluded.author,
-            fandom = excluded.fandom,
-            rating = excluded.rating,
-            language = excluded.language,
-            tags = excluded.tags,
-            category = excluded.category,
-            warnings = excluded.warnings,
-            status = excluded.status,
-            word_count = excluded.word_count,
-            favorite_count = excluded.favorite_count,
-            chapter_count = excluded.chapter_count,
-            summary = excluded.summary,
-            last_fetched_at = excluded.last_fetched_at
-         RETURNING id",
+        UPSERT_AO3_STORY_SQL,
         rusqlite::params![
             meta.source_story_id,
             meta.title,
@@ -230,7 +237,7 @@ pub fn upsert_ao3_story(conn: &Connection, meta: &crate::ao3::Ao3StoryMetadata) 
 
 /// Resolves a story's internal `stories.id` from its natural (source,
 /// source_story_id) key — a plain lookup, not an upsert. Used to identify a
-/// chapter fetch that's failing (`lib.rs`'s `classify_fetch_target`): the
+/// chapter fetch that's failing (`dispatch::resolve_target`): the
 /// story already exists (a chapter refetch always targets an already-
 /// imported story), but a failure before `upsert_story`/`upsert_ao3_story`
 /// runs means the DB id isn't otherwise in hand.
@@ -239,6 +246,39 @@ pub fn find_story_id(conn: &Connection, source: &str, source_story_id: i64) -> r
         "SELECT id FROM stories WHERE source = ?1 AND source_story_id = ?2",
         rusqlite::params![source, source_story_id],
         |row| row.get(0),
+    )
+    .optional()
+}
+
+/// One `"{table}: {n} row(s)"` line per user table, name-ordered — behind the
+/// debug page's `db_health_check` command.
+pub fn table_row_counts(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")?;
+    let table_names: Vec<String> = stmt.query_map([], |row| row.get::<_, String>(0))?.collect::<rusqlite::Result<_>>()?;
+
+    table_names
+        .into_iter()
+        .map(|name| {
+            let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {name}"), [], |row| row.get(0))?;
+            Ok(format!("{name}: {count} row(s)"))
+        })
+        .collect()
+}
+
+/// What a chapter fetch needs to build its URL: the story's `source` and own-
+/// site id, plus the chapter's `source_chapter_id` if a prior fetch recorded
+/// one. `None` when the story isn't in the DB.
+pub fn chapter_fetch_target(
+    conn: &Connection,
+    story_id: i64,
+    chapter_num: i64,
+) -> rusqlite::Result<Option<(String, i64, Option<i64>)>> {
+    conn.query_row(
+        "SELECT s.source, s.source_story_id,
+                (SELECT c.source_chapter_id FROM chapters c WHERE c.story_id = s.id AND c.chapter_num = ?2) AS source_chapter_id
+         FROM stories s WHERE s.id = ?1",
+        rusqlite::params![story_id, chapter_num],
+        |row| Ok((row.get("source")?, row.get("source_story_id")?, row.get("source_chapter_id")?)),
     )
     .optional()
 }
@@ -487,6 +527,54 @@ pub(crate) mod tests {
         conn.pragma_update(None, "foreign_keys", true).unwrap();
         conn.execute_batch(SCHEMA).unwrap();
         conn
+    }
+
+    /// Column names in `INSERT INTO stories (...)`'s parenthesised list.
+    fn insert_columns(sql: &str) -> std::collections::BTreeSet<String> {
+        let open = sql.find('(').expect("INSERT column list");
+        let close = sql[open..].find(')').expect("INSERT column list end") + open;
+        sql[open + 1..close].split(',').map(|c| c.trim().to_string()).collect()
+    }
+
+    #[test]
+    fn table_row_counts_reports_every_user_table_with_its_count() {
+        let conn = schema_conn("row_counts");
+        conn.execute_batch("INSERT INTO filter_presets (name, filters_json) VALUES ('p', '{}')").unwrap();
+
+        let lines = table_row_counts(&conn).unwrap();
+
+        assert!(lines.contains(&"stories: 0 row(s)".to_string()), "{lines:?}");
+        assert!(lines.contains(&"filter_presets: 1 row(s)".to_string()), "{lines:?}");
+        assert!(lines.iter().all(|l| !l.starts_with("sqlite_")));
+        let mut sorted = lines.clone();
+        sorted.sort();
+        assert_eq!(lines, sorted, "name-ordered");
+    }
+
+    #[test]
+    fn upsert_sql_columns_cover_the_schema() {
+        let conn = schema_conn("upsert_cols");
+        let schema: std::collections::BTreeSet<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('stories')")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .filter(|c| c != "id")
+            .collect();
+        let ffn = insert_columns(UPSERT_FFN_STORY_SQL);
+        let ao3 = insert_columns(UPSERT_AO3_STORY_SQL);
+
+        let union: std::collections::BTreeSet<_> = ffn.union(&ao3).cloned().collect();
+        assert_eq!(union, schema, "a `stories` column is missing from both upserts, or an upsert names one the schema lacks");
+
+        let one_source_only: std::collections::BTreeSet<_> = ffn.symmetric_difference(&ao3).cloned().collect();
+        let expected: std::collections::BTreeSet<String> =
+            ["genre", "ffn_updated_at", "category", "warnings"].iter().map(|c| c.to_string()).collect();
+        assert_eq!(
+            one_source_only, expected,
+            "a column is in only one source's upsert — add it to the other, or (if truly per-source) to this list"
+        );
     }
 
     pub(crate) fn sample_ao3_story(source_story_id: i64) -> crate::ao3::Ao3StoryMetadata {

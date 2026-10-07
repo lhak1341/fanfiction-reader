@@ -1,0 +1,47 @@
+{
+  "FETCH_TESTING.md": {
+    "mtime": 1787752879.6008627,
+    "ast_hash": "5043880c75293fc41a2e6f66a47cbaa6",
+    "semantic_hash": ""
+  },
+  "SPEC.md": {
+    "mtime": 1791338144.386045,
+    "ast_hash": "80911d93ddd85c32352bd5507dd2034f",
+    "semantic_hash": ""
+  },
+  "TESTING.md": {
+    "mtime": 1788153152.877603,
+    "ast_hash": "71580e9887137f56e936d305205f6000",
+    "semantic_hash": ""
+  },
+  "wayfinder/map.md": {
+    "mtime": 1784368785.6640692,
+    "ast_hash": "4f42dd6cad94841892434b9644f9d5fc",
+    "semantic_hash": ""
+  },
+  "wayfinder/tickets/001-cloudflare-session-handling.md": {
+    "mtime": 1784371821.2482822,
+    "ast_hash": "ed517b3c43fd6b0121476ac6ae99ac90",
+    "semantic_hash": ""
+  },
+  "wayfinder/tickets/002-frontend-framework-rust-crates.md": {
+    "mtime": 1784360108.3945277,
+    "ast_hash": "b43e04ce5aa69cdab9e97078c1bd48c0",
+    "semantic_hash": ""
+  },
+  "wayfinder/tickets/003-data-model-sqlite-schema.md": {
+    "mtime": 1784368770.7474377,
+    "ast_hash": "acace6bcfecb28e66ef117abe9be6ce0",
+    "semantic_hash": ""
+  },
+  "wayfinder/tickets/004-fanficfare-port-scope.md": {
+    "mtime": 1784367664.8152819,
+    "ast_hash": "58bbcbccf9d41d2755d2e094c3b61fa2",
+    "semantic_hash": ""
+  },
+  "wayfinder/tickets/005-ui-ux-layout-prototype.md": {
+    "mtime": 1784365533.640326,
+    "ast_hash": "6bbc9bb1814ff831fdd3d4e20e601674",
+    "semantic_hash": ""
+  }
+}

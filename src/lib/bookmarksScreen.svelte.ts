@@ -8,7 +8,6 @@
 
 import * as api from "./api";
 import { ensureChapterCached } from "./chapterCache";
-import { ficSourceAdapter } from "./ficSource";
 import { runPacedBestEffort } from "./pacedLoop";
 import type { SortBy, StoryRow } from "./types";
 
@@ -96,10 +95,7 @@ export class BookmarksScreen {
       // rest; runPacedBestEffort catches and keeps going regardless.
       await runPacedBestEffort(
         targets,
-        (story) => {
-          const url = ficSourceAdapter(story.source).chapterUrl(story, 1, null);
-          return api.fetchChapterAndWait(story.source, url, story.id, 1);
-        },
+        (story) => api.fetchChapterAndWait(story.id, 1),
         (i, total) => (this.refreshProgress = `Refreshing ${i + 1} of ${total}…`)
       );
       await this.reloadAll();
@@ -117,14 +113,13 @@ export class BookmarksScreen {
     this.downloadDone = 0;
     this.downloadTotal = 0;
     try {
-      let chapters = await api.listChapters(story.id);
+      const chapters = await api.listChapters(story.id);
       const missing = chapters.filter((c) => !c.isCached);
       this.downloadTotal = missing.length;
       await runPacedBestEffort(
         missing,
         async (target) => {
-          const result = await ensureChapterCached(story, chapters, story.id, target.chapterNum);
-          chapters = result.chapters;
+          await ensureChapterCached(story.id, target.chapterNum);
           // Best-effort — one chapter failing shouldn't stop the rest,
           // runPacedBestEffort catches and keeps going regardless.
         },

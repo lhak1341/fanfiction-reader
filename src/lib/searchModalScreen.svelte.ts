@@ -100,7 +100,15 @@ export class SearchModalScreen {
       if (this.mode === "url") {
         if (!this.url.trim()) return;
         const { storyId } = await api.addStoryByUrl(this.url.trim());
-        await api.toggleBookmarked(storyId, true);
+        try {
+          await api.toggleBookmarked(storyId, true);
+        } catch (e) {
+          // The import itself succeeded — say so, and stay in the modal so the
+          // message isn't lost (onStoryAdded would close it and jump to
+          // Bookmarks, where this story isn't listed).
+          this.error = `Imported, but couldn't bookmark it: ${e instanceof Error ? e.message : String(e)}`;
+          return;
+        }
         this.onStoryAdded();
       } else if (this.mode === "ffn") {
         if (!this.selectedFandom) return;

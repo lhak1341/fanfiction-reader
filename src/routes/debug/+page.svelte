@@ -1,7 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import * as api from "$lib/api";
-  import { ficSourceAdapter } from "$lib/ficSource";
   import { jitterDelay, sleep } from "$lib/pacedLoop";
   import type { StoryRow } from "$lib/types";
 
@@ -88,9 +87,8 @@
       }
       for (let num = prefetchFrom; num <= prefetchTo; num++) {
         prefetchStatus = `Fetching chapter ${num} of ${prefetchTo}…`;
-        const url = ficSourceAdapter("ffn").chapterUrl(target, num, null);
         try {
-          await api.fetchChapterAndWait("ffn", url, target.id, num);
+          await api.fetchChapterAndWait(target.id, num);
         } catch (e) {
           prefetchStatus = `Chapter ${num} failed (${e instanceof Error ? e.message : e}) — re-run with "from: ${num}" to resume.`;
           return;

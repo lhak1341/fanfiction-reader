@@ -8,9 +8,6 @@ vi.mock("./api", () => ({
   fetchChapterAndWait: vi.fn(),
   listChapters: vi.fn()
 }));
-vi.mock("./ficSource", () => ({
-  ficSourceAdapter: vi.fn(() => ({ chapterUrl: vi.fn(() => "https://example.test/chapter") }))
-}));
 vi.mock("./chapterCache", () => ({
   ensureChapterCached: vi.fn()
 }));
@@ -109,7 +106,7 @@ describe("BookmarksScreen.downloadAllChapters", () => {
     const bookmarks = makeScreen();
     await bookmarks.downloadAllChapters(story);
 
-    expect(vi.mocked(ensureChapterCached).mock.calls.map((c) => c[3])).toEqual([2, 3]);
+    expect(vi.mocked(ensureChapterCached).mock.calls.map((c) => c[1])).toEqual([2, 3]);
     expect(bookmarks.downloadTotal).toBe(2);
   });
 

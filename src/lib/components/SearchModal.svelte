@@ -8,6 +8,7 @@
   // deliberately the *only* thing that differs; word-count/status filters
   // and the submit flow are shared.
   import { X } from "lucide-svelte";
+  import { fmtCompact } from "$lib/format";
   import { fold } from "$lib/normalize";
   import { getAo3Tag } from "$lib/fandom";
   import { ALL, SearchModalScreen } from "$lib/searchModalScreen.svelte";
@@ -53,10 +54,6 @@
   let filteredOptions = $derived(
     screen.fandomOptions.filter((f) => fold(f.fandom).includes(fold(fandomQuery)))
   );
-
-  function fmtCount(n: number) {
-    return n >= 1000 ? `${Math.round(n / 100) / 10}K` : String(n);
-  }
 
   function categoryLabel(value: string) {
     return FFN_CATEGORIES.find((c) => c.value === value)?.label ?? value;
@@ -133,7 +130,7 @@
                       onclick={() => selectFandom(f)}
                     >
                       <span>{f.fandom}{#if screen.category === ALL}<span class="cat-tag">{categoryLabel(f.category)}</span>{/if}</span>
-                      <span class="count tnum">{fmtCount(f.ffnCount)}</span>
+                      <span class="count tnum">{fmtCompact(f.ffnCount)}</span>
                     </button>
                   </li>
                 {/each}

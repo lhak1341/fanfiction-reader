@@ -35,9 +35,10 @@ export class ReaderScreen {
   // resumes where you left off, instead of always landing at the top.
   scrollPositions = new Map<number, number>();
 
-  // Bumped on every loadChapter call; a running prefetch chain checks it
-  // before each step and bails the moment a real navigation supersedes it.
-  private prefetchGen = 0;
+  // Bumped on every new loadChapter; a superseded load and a running prefetch
+  // chain both check it and bail the moment a newer navigation takes over.
+  private loadGen = 0;
+  private inFlight?: { num: number; promise: Promise<void> };
 
   private readonly storyId: number;
   private readonly onChanged?: () => void;
@@ -53,6 +54,16 @@ export class ReaderScreen {
     await this.loadChapter(initialChapterNum);
   }
 
+  // A fetch can grow the story's metadata (new chapters on an in-progress
+  // fic), and `goToChapter`/prefetch bound on `story.chapterCount` — re-read
+  // the row after every fetch so those bounds don't go stale. Only
+  // `chapterCount` is merged in: replacing the whole row could clobber a
+  // flag toggle that landed while this read was in flight.
+  private async refreshStory() {
+    const fresh = await api.getStory(this.storyId);
+    if (fresh && this.story) this.story = { ...this.story, chapterCount: fresh.chapterCount };
+  }
+
   // Quietly warms the two chapters on either side of wherever you land, so
   // paging back and forth feels instant most of the time. Best-effort and
   // low-priority: skips chapters already cached, bails on the generation
@@ -65,19 +76,20 @@ export class ReaderScreen {
       (n) => n >= 1 && n <= this.story!.chapterCount
     );
     for (const n of targets) {
-      if (gen !== this.prefetchGen) return;
+      if (gen !== this.loadGen) return;
       let wasFetched = true;
       try {
-        const result = await ensureChapterCached(this.story, this.chapters, this.storyId, n);
-        this.chapters = result.chapters;
+        const result = await ensureChapterCached(this.storyId, n);
+        if (result.chapters) this.chapters = result.chapters;
         wasFetched = result.wasFetched;
+        if (wasFetched) await this.refreshStory();
       } catch {
         // Best-effort — a failed prefetch just means that chapter fetches
         // normally (foreground) whenever it's actually opened. Treated as
         // an attempt (paces before the next target), not a clean skip.
       }
       if (!wasFetched) continue;
-      if (gen !== this.prefetchGen) return;
+      if (gen !== this.loadGen) return;
       await sleep(jitterDelay());
     }
   }
@@ -86,9 +98,25 @@ export class ReaderScreen {
   // navigated *away from* so the caller can restore it on a later visit —
   // this class never touches the DOM, so it takes/returns plain numbers
   // rather than reading `scrollEl` itself.
+  //
+  // Latest call wins: a load superseded by a newer one still lets its fetch
+  // finish (the chapter lands in the DB) but writes no state. A repeat call
+  // for the chapter already in flight shares that load instead of fetching
+  // twice.
   async loadChapter(num: number, currentScrollTop?: number) {
-    const myGen = ++this.prefetchGen;
+    if (this.inFlight?.num === num) return this.inFlight.promise;
+    const myGen = ++this.loadGen;
     if (currentScrollTop !== undefined) this.scrollPositions.set(this.currentChapterNum, currentScrollTop);
+    const entry = { num, promise: this.runLoad(num, myGen) };
+    this.inFlight = entry;
+    try {
+      await entry.promise;
+    } finally {
+      if (this.inFlight === entry) this.inFlight = undefined;
+    }
+  }
+
+  private async runLoad(num: number, myGen: number) {
     this.loading = true;
     this.fetchError = "";
     if (!this.story) {
@@ -97,17 +125,21 @@ export class ReaderScreen {
       return;
     }
     try {
-      const result = await ensureChapterCached(this.story, this.chapters, this.storyId, num);
-      this.chapters = result.chapters;
+      const result = await ensureChapterCached(this.storyId, num);
+      if (myGen !== this.loadGen) return;
+      if (result.wasFetched) await this.refreshStory();
+      if (myGen !== this.loadGen) return;
+      if (result.chapters) this.chapters = result.chapters;
       this.content = result.content ?? undefined;
       this.currentChapterNum = num;
       await api.setResumeChapter(this.storyId, num);
       this.onChanged?.();
       void this.prefetchNeighbors(myGen, num);
     } catch (e) {
+      if (myGen !== this.loadGen) return;
       this.fetchError = e instanceof Error ? e.message : String(e);
     } finally {
-      this.loading = false;
+      if (myGen === this.loadGen) this.loading = false;
     }
   }
 
