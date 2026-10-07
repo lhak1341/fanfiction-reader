@@ -308,6 +308,61 @@ describe("ReaderScreen prefetch chain", () => {
     expect(calls.filter((n) => n === 3)).toEqual([]);
   });
 
+  it("fetches the chapter you asked for in the foreground and its neighbours in the background", async () => {
+    vi.mocked(ensureChapterCached).mockResolvedValue({ content: null, chapters: makeChapters(20), wasFetched: true });
+
+    const screen = makeScreen(20);
+    await screen.init(10);
+    await flush();
+
+    const calls = vi.mocked(ensureChapterCached).mock.calls;
+    expect(calls[0]).toEqual([story.id, 10]);
+    for (const call of calls.slice(1)) expect(call[2]).toEqual({ background: true });
+  });
+
+  it("stops the prefetch chain once the screen is disposed (Reader closed)", async () => {
+    const calls: number[] = [];
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((r) => (releaseGate = r));
+    vi.mocked(ensureChapterCached).mockImplementation(async (_storyId, num) => {
+      calls.push(num);
+      // Holds the first prefetch target (chapter 8) mid-fetch.
+      if (calls.length === 2) await gate;
+      return { content: null, chapters: makeChapters(20), wasFetched: true };
+    });
+
+    const screen = makeScreen(20);
+    await screen.init(10);
+    expect(calls).toEqual([10, 8]);
+
+    screen.dispose();
+    releaseGate();
+    await flush();
+
+    // The fetch already running finished; nothing after it was started.
+    expect(calls).toEqual([10, 8]);
+  });
+
+  it("starts no prefetch for a chapter whose load finishes after dispose", async () => {
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((r) => (releaseGate = r));
+    vi.mocked(ensureChapterCached).mockImplementation(async () => {
+      await gate;
+      return { content: null, chapters: makeChapters(20), wasFetched: true };
+    });
+
+    const screen = makeScreen(20);
+    const init = screen.init(10);
+    await flush();
+    screen.dispose();
+    releaseGate();
+    await init;
+    await flush();
+
+    expect(vi.mocked(ensureChapterCached)).toHaveBeenCalledTimes(1);
+    expect(api.setResumeChapter).not.toHaveBeenCalled();
+  });
+
   it("skips pacing on an already-cached neighbor but paces on a real fetch", async () => {
     vi.mocked(ensureChapterCached).mockImplementation(async (_storyId, num) => ({
       content: null,

@@ -14,8 +14,8 @@
 //! interleaving with ~750 lines of fetch machinery.
 
 use crate::dispatch::{self, BrowseFetched, ChapterFetched, FandomIndexFetched, FetchOutcome, StoryUrlSource};
-use crate::fetch_session::{FetchSession, FETCH_TIMEOUT};
-use crate::source;
+use crate::fetch_session::{FetchSession, Priority, FETCH_TIMEOUT};
+use crate::source::{self, ListingStatus};
 use crate::{ao3, db, ffn};
 use tauri::Manager;
 
@@ -63,8 +63,24 @@ fn persist_ffn_page(
         return Err("Cloudflare challenge page, not the story — try again".to_string());
     }
 
+    if html.contains(NO_SUCH_CHAPTER_MARKER) {
+        return Err(format!(
+            "FFN returned its {NO_SUCH_CHAPTER_MARKER:?} page for this chapter — often temporary (try again), not necessarily removed"
+        ));
+    }
+
     dispatch::persist_page::<source::Ffn>(db, html, page_url, None, listing_locator)
 }
+
+/// FFN answers a chapter URL it doesn't have with a bare message page (no
+/// `#profile_top`), which otherwise surfaces as a confusing parse error.
+/// Not permanent: story 470 ch 20 got this page three times in a row, then
+/// loaded normally in a browser and in the app later — so it is retried like
+/// any other failure, and the error must not claim the chapter is gone.
+const NO_SUCH_CHAPTER_MARKER: &str = "Story does not have any chapters";
+
+/// How many times `fetch_ffn` waits again after a Cloudflare page is reported.
+const BLOCKED_REARMS: u32 = 2;
 
 /// Points the single reused `fetch-page` window at `url`, building it on the
 /// app's first fetch. Tauri's own on_page_load(Finished) turned out
@@ -107,6 +123,29 @@ fn open_or_navigate(app: &tauri::AppHandle, parsed: url::Url) -> Result<(), Stri
     Ok(())
 }
 
+/// What `fetch_ffn_via` needs from the app's hidden `fetch-page` webview —
+/// the seam between the fetch sequence (testable) and Tauri (not). The real
+/// adapter is `TauriWebview`; tests use a fake that reports pages to the
+/// session the way `fetch_page_init.js` does.
+trait FfnWebview {
+    /// Points the webview at `url` (building it on the app's first fetch).
+    fn navigate(&self, url: url::Url) -> Result<(), String>;
+    /// Best-effort copy of the page for inspection (`dump_last_fetch`).
+    fn save_debug_page(&self, file_name: &str, html: &str);
+}
+
+struct TauriWebview<'a>(&'a tauri::AppHandle);
+
+impl FfnWebview for TauriWebview<'_> {
+    fn navigate(&self, url: url::Url) -> Result<(), String> {
+        open_or_navigate(self.0, url)
+    }
+
+    fn save_debug_page(&self, file_name: &str, html: &str) {
+        dump_last_fetch(self.0, file_name, html);
+    }
+}
+
 /// One FFN fetch end to end: navigate the webview, wait for the session to
 /// deliver the rendered page (or reject: interrupted, timed out), persist it.
 async fn fetch_ffn(
@@ -115,23 +154,56 @@ async fn fetch_ffn(
     session: &FetchSession,
     url: String,
     listing_locator: Option<source::FfnListingLocator>,
+    priority: Priority,
+) -> Result<FetchOutcome, String> {
+    fetch_ffn_via(&TauriWebview(app), db, session, url, listing_locator, priority, FETCH_TIMEOUT).await
+}
+
+/// `fetch_ffn` with the webview and the per-wait timeout injected, so the
+/// whole sequence — priority refusal, navigation failure, Cloudflare re-arm,
+/// timeout, persist — runs from tests.
+async fn fetch_ffn_via(
+    webview: &impl FfnWebview,
+    db: &db::Db,
+    session: &FetchSession,
+    url: String,
+    listing_locator: Option<source::FfnListingLocator>,
+    priority: Priority,
+    timeout: std::time::Duration,
 ) -> Result<FetchOutcome, String> {
     let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
 
     let fetch = {
         let _window = session.lock_window().await;
-        let fetch = session.start(&url, listing_locator);
-        if let Err(e) = open_or_navigate(app, parsed) {
+        // A refused background fetch returns before touching the webview.
+        let fetch = match priority {
+            Priority::Foreground => session.start(&url, listing_locator),
+            Priority::Background => session.start_background(&url, listing_locator)?,
+        };
+        if let Err(e) = webview.navigate(parsed) {
             session.abort(&fetch, e.clone());
             return Err(e);
         }
         fetch
     };
 
-    let page = session.wait(fetch, FETCH_TIMEOUT).await.inspect_err(|e| eprintln!("[fetch] failed: {e}"))?;
+    let mut page = session.wait(fetch, timeout).await.inspect_err(|e| eprintln!("[fetch] failed: {e}"))?;
+    // A Cloudflare interstitial reports on its own DOMContentLoaded, then
+    // redirects itself to the real page, whose report would be dropped as
+    // matching no pending fetch. Re-arm the session (no navigate — the webview
+    // is already on its way) and wait for that second report instead of
+    // failing the chapter outright.
+    for _ in 0..BLOCKED_REARMS {
+        if !looks_blocked(&page.html, &page.title) {
+            break;
+        }
+        let Some(next) = session.start_if_idle(&url, page.listing_locator.clone(), priority) else { break };
+        println!("[fetch] challenge page for {url}, waiting for the real page");
+        page = session.wait(next, timeout).await.inspect_err(|e| eprintln!("[fetch] failed: {e}"))?;
+    }
     // Dumped before the blocked check so a false positive there can still be
     // inspected, not just a genuine block.
-    dump_last_fetch(app, "debug-last-fetch.html", &page.html);
+    webview.save_debug_page("debug-last-fetch.html", &page.html);
     persist_ffn_page(db, &page.html, &page.href, &page.title, page.listing_locator)
         .inspect_err(|e| eprintln!("[fetch] failed: {e}"))
 }
@@ -164,7 +236,7 @@ pub async fn fetch_page(
     url: String,
     listing_locator: Option<source::FfnListingLocator>,
 ) -> Result<FetchOutcome, String> {
-    fetch_ffn(&app, &db, &session, url, listing_locator).await
+    fetch_ffn(&app, &db, &session, url, listing_locator, Priority::Foreground).await
 }
 
 /// Called by the injected init script (`fetch_page_init.js`) once per
@@ -304,9 +376,10 @@ async fn fetch_by_source(
     session: &FetchSession,
     source: StoryUrlSource,
     url: String,
+    priority: Priority,
 ) -> Result<FetchOutcome, String> {
     match source {
-        StoryUrlSource::Ffn => fetch_ffn(app, db, session, url, None).await,
+        StoryUrlSource::Ffn => fetch_ffn(app, db, session, url, None, priority).await,
         StoryUrlSource::Ao3 => fetch_ao3(app, db, &url, None).await,
     }
 }
@@ -323,14 +396,16 @@ pub async fn add_story_by_url(
 ) -> Result<ChapterFetched, String> {
     let url = url.trim().to_string();
     let source = dispatch::story_url_source(&url)?;
-    fetch_by_source(&app, &db, &session, source, url).await?.into_chapter()
+    fetch_by_source(&app, &db, &session, source, url, Priority::Foreground).await?.into_chapter()
 }
 
 /// Fetches one chapter of an already-imported story — the source, URL and (AO3)
 /// chapter id all come from the DB (`dispatch::chapter_fetch_url`), so the
 /// frontend sends only `(story_id, chapter_num)`. Always fetches (no cache
 /// check — callers ask the DB first). An unknown story fails here, before any
-/// fetch starts.
+/// fetch starts. `background` marks bulk work (Download-all, bookmark refresh,
+/// Reader's neighbour prefetch): it never supersedes a foreground FFN fetch
+/// and fails with `BUSY` instead (AO3 fetches ignore it — no shared webview).
 #[tauri::command]
 pub async fn fetch_chapter(
     app: tauri::AppHandle,
@@ -338,9 +413,11 @@ pub async fn fetch_chapter(
     session: tauri::State<'_, FetchSession>,
     story_id: i64,
     chapter_num: i64,
+    background: bool,
 ) -> Result<ChapterFetched, String> {
     let (source, url) = dispatch::chapter_fetch_url(&db, story_id, chapter_num)?;
-    fetch_by_source(&app, &db, &session, source, url).await?.into_chapter()
+    let priority = if background { Priority::Background } else { Priority::Foreground };
+    fetch_by_source(&app, &db, &session, source, url, priority).await?.into_chapter()
 }
 
 /// FFN discovery (SPEC.md §6): fetches the next page of a browse/category
@@ -355,18 +432,18 @@ pub async fn search_ffn(
     category: Option<String>,
     fandom: String,
     min_word_count: i64,
-    status: String,
+    status: ListingStatus,
 ) -> Result<BrowseFetched, String> {
     let (resolved_category, page) = db
-        .run(|conn| db::next_browse_page(conn, category.as_deref(), &fandom, min_word_count, &status))?
+        .run(|conn| db::next_browse_page(conn, category.as_deref(), &fandom, min_word_count, status.as_str()))?
         .ok_or_else(|| {
             format!("no category known for fandom {fandom:?} — search it from the Search FFN modal first")
         })?;
-    let url = ffn::build_browse_url(&resolved_category, &fandom, min_word_count, &status, page);
+    let url = ffn::build_browse_url(&resolved_category, &fandom, min_word_count, status, page);
     // Stashed as-requested rather than left to be re-derived by decoding the
     // fetched URL later — see `FetchSession`.
     let locator = source::FfnListingLocator { category: resolved_category, fandom, min_word_count, status, page };
-    fetch_ffn(&app, &db, &session, url, Some(locator)).await?.into_browse()
+    fetch_ffn(&app, &db, &session, url, Some(locator), Priority::Foreground).await?.into_browse()
 }
 
 /// AO3 counterpart to `search_ffn` — no category to resolve (AO3 has none),
@@ -386,10 +463,10 @@ pub async fn search_ao3(
     tag: String,
     fandom: String,
     min_word_count: i64,
-    status: String,
+    status: ListingStatus,
 ) -> Result<BrowseFetched, String> {
-    let page = db.run(|conn| db::next_ao3_browse_page(conn, &tag, min_word_count, &status))?;
-    let url = ao3::build_tag_browse_url(&tag, "bookmarks_count", min_word_count, &status, page);
+    let page = db.run(|conn| db::next_ao3_browse_page(conn, &tag, min_word_count, status.as_str()))?;
+    let url = ao3::build_tag_browse_url(&tag, "bookmarks_count", min_word_count, status, page);
     fetch_ao3(&app, &db, &url, Some(&fandom)).await?.into_browse()
 }
 
@@ -404,7 +481,9 @@ pub async fn index_ffn_category(
     session: tauri::State<'_, FetchSession>,
     category: String,
 ) -> Result<FandomIndexFetched, String> {
-    fetch_ffn(&app, &db, &session, format!("https://www.fanfiction.net/{category}/"), None).await?.into_fandom_index()
+    fetch_ffn(&app, &db, &session, format!("https://www.fanfiction.net/{category}/"), None, Priority::Foreground)
+        .await?
+        .into_fandom_index()
 }
 
 #[cfg(test)]
@@ -433,6 +512,16 @@ mod tests {
     }
 
     #[test]
+    fn persist_ffn_page_names_ffns_no_such_chapter_message_page() {
+        let dbh = test_db();
+        let html = r#"<html><body><div class="panel_normal"><span class="gui_normal">FanFiction.Net Message Type 1<hr>Story does not have any chapters. Please check to see you are not using an outdated url.</span></div></body></html>"#;
+
+        let err = persist_ffn_page(&dbh, html, "https://www.fanfiction.net/s/14583034/20/", "", None).unwrap_err();
+
+        assert!(err.contains("often temporary"), "{err}");
+    }
+
+    #[test]
     fn persist_ffn_page_persists_a_real_chapter_page() {
         let dbh = test_db();
         let url = "https://www.fanfiction.net/s/13493099/34/Welcome-to-the-insane-world-of-Pok-mon";
@@ -446,12 +535,12 @@ mod tests {
     #[test]
     fn persist_ffn_page_records_the_stashed_status_not_the_lossy_decoded_one() {
         let dbh = test_db();
-        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "in_progress", 1);
+        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, crate::source::ListingStatus::InProgress, 1);
         let requested = source::FfnListingLocator {
             category: "anime".to_string(),
             fandom: "Fullmetal Alchemist".to_string(),
             min_word_count: 0,
-            status: "in_progress".to_string(),
+            status: crate::source::ListingStatus::InProgress,
             page: 1,
         };
 
@@ -490,5 +579,165 @@ mod tests {
         // that happens to share its title text.
         let html = "<html><body>story prose</body></html>";
         assert!(looks_blocked(html, "Checking Your Browser Chapter 1: A Fic | FanFiction"));
+    }
+
+    // ---- fetch_ffn_via: the whole sequence against a fake webview ----
+
+    use crate::fetch_session::{FetchSession, BUSY};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    const CHAPTER_URL: &str = "https://www.fanfiction.net/s/13493099/34/";
+    const SLUGGED_URL: &str = "https://www.fanfiction.net/s/13493099/34/Welcome-to-the-insane-world-of-Pok-mon";
+    const CHAPTER_TITLE: &str = "Welcome Chapter 34: Title | FanFiction";
+    const CHALLENGE_HTML: &str = "<html><body>checking</body></html>";
+    const CHALLENGE_TITLE: &str = "Just a moment...";
+    const WAIT: Duration = Duration::from_millis(400);
+
+    /// One report the fake webview makes after `navigate`, `after` the
+    /// previous one — what `fetch_page_init.js` does on each DOMContentLoaded.
+    struct Report {
+        after_ms: u64,
+        html: &'static str,
+        title: &'static str,
+    }
+
+    struct FakeWebview {
+        session: Arc<FetchSession>,
+        reports: Vec<Report>,
+        navigate_error: Option<String>,
+        navigations: Mutex<Vec<String>>,
+        dumps: Mutex<Vec<String>>,
+    }
+
+    impl FakeWebview {
+        fn new(session: &Arc<FetchSession>, reports: Vec<Report>) -> Self {
+            Self {
+                session: Arc::clone(session),
+                reports,
+                navigate_error: None,
+                navigations: Mutex::new(vec![]),
+                dumps: Mutex::new(vec![]),
+            }
+        }
+    }
+
+    impl FfnWebview for FakeWebview {
+        fn navigate(&self, url: url::Url) -> Result<(), String> {
+            self.navigations.lock().unwrap().push(url.to_string());
+            if let Some(e) = &self.navigate_error {
+                return Err(e.clone());
+            }
+            let session = Arc::clone(&self.session);
+            let script: Vec<(u64, &'static str, &'static str)> =
+                self.reports.iter().map(|r| (r.after_ms, r.html, r.title)).collect();
+            tokio::spawn(async move {
+                for (after_ms, html, title) in script {
+                    tokio::time::sleep(Duration::from_millis(after_ms)).await;
+                    session.deliver(SLUGGED_URL, html.to_string(), title.to_string());
+                }
+            });
+            Ok(())
+        }
+
+        fn save_debug_page(&self, _file_name: &str, html: &str) {
+            self.dumps.lock().unwrap().push(html.to_string());
+        }
+    }
+
+    fn real_page() -> Report {
+        Report { after_ms: 10, html: FFN_STORY_PAGE, title: CHAPTER_TITLE }
+    }
+
+    fn challenge(after_ms: u64) -> Report {
+        Report { after_ms, html: CHALLENGE_HTML, title: CHALLENGE_TITLE }
+    }
+
+    fn run_fetch(
+        webview: &FakeWebview,
+        dbh: &db::Db,
+        session: &FetchSession,
+        priority: Priority,
+    ) -> Result<FetchOutcome, String> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap()
+            .block_on(fetch_ffn_via(webview, dbh, session, CHAPTER_URL.to_string(), None, priority, WAIT))
+    }
+
+    #[test]
+    fn fetch_ffn_navigates_once_dumps_the_page_and_persists_the_chapter() {
+        let (dbh, session) = (test_db(), Arc::new(FetchSession::new()));
+        let webview = FakeWebview::new(&session, vec![real_page()]);
+
+        let outcome = run_fetch(&webview, &dbh, &session, Priority::Foreground).unwrap();
+
+        assert_eq!(outcome.into_chapter().unwrap().chapter_num, 34);
+        assert_eq!(*webview.navigations.lock().unwrap(), vec![CHAPTER_URL.to_string()]);
+        assert_eq!(webview.dumps.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn fetch_ffn_waits_for_the_real_page_after_a_challenge_page_without_navigating_again() {
+        let (dbh, session) = (test_db(), Arc::new(FetchSession::new()));
+        // Challenge first, then (well after the re-arm) the page it redirects to.
+        let webview = FakeWebview::new(&session, vec![challenge(10), Report { after_ms: 60, ..real_page() }]);
+
+        let outcome = run_fetch(&webview, &dbh, &session, Priority::Foreground).unwrap();
+
+        assert_eq!(outcome.into_chapter().unwrap().chapter_num, 34);
+        assert_eq!(webview.navigations.lock().unwrap().len(), 1, "re-arm must not navigate again");
+        // The dump is the real page, not the challenge.
+        assert_eq!(webview.dumps.lock().unwrap().as_slice(), [FFN_STORY_PAGE.to_string()]);
+    }
+
+    #[test]
+    fn fetch_ffn_gives_up_with_the_cloudflare_error_after_the_re_arms_run_out() {
+        let (dbh, session) = (test_db(), Arc::new(FetchSession::new()));
+        // One initial report plus BLOCKED_REARMS more, all challenge pages.
+        let reports = (0..=BLOCKED_REARMS).map(|i| challenge(if i == 0 { 10 } else { 60 })).collect();
+        let webview = FakeWebview::new(&session, reports);
+
+        let err = run_fetch(&webview, &dbh, &session, Priority::Foreground).unwrap_err();
+
+        assert!(err.contains("Cloudflare"), "{err}");
+        let stories: i64 = dbh.run(|c| c.query_row("SELECT COUNT(*) FROM stories", [], |r| r.get(0))).unwrap();
+        assert_eq!(stories, 0);
+    }
+
+    #[test]
+    fn fetch_ffn_times_out_when_a_challenge_page_is_never_followed_by_the_real_one() {
+        let (dbh, session) = (test_db(), Arc::new(FetchSession::new()));
+        let webview = FakeWebview::new(&session, vec![challenge(10)]);
+
+        let err = run_fetch(&webview, &dbh, &session, Priority::Foreground).unwrap_err();
+
+        assert!(err.contains("timed out"), "{err}");
+    }
+
+    #[test]
+    fn fetch_ffn_refuses_a_background_fetch_while_a_foreground_one_is_pending_without_navigating() {
+        let (dbh, session) = (test_db(), Arc::new(FetchSession::new()));
+        let _foreground = session.start("https://www.fanfiction.net/s/1/1/", None);
+        let webview = FakeWebview::new(&session, vec![real_page()]);
+
+        let err = run_fetch(&webview, &dbh, &session, Priority::Background).unwrap_err();
+
+        assert_eq!(err, BUSY);
+        assert!(webview.navigations.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn fetch_ffn_fails_and_frees_the_slot_when_navigation_fails() {
+        let (dbh, session) = (test_db(), Arc::new(FetchSession::new()));
+        let mut webview = FakeWebview::new(&session, vec![]);
+        webview.navigate_error = Some("window gone".to_string());
+
+        let err = run_fetch(&webview, &dbh, &session, Priority::Foreground).unwrap_err();
+
+        assert_eq!(err, "window gone");
+        // Nothing left pending: a late report is dropped, and a new fetch can start.
+        assert!(!session.deliver(SLUGGED_URL, String::new(), String::new()));
     }
 }

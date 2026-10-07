@@ -1,6 +1,8 @@
 // One paced/best-effort background loop used by every bulk fetch in the app
 // (bookmark refresh, chapter download, category indexing) — architecture
-// review candidate 2, 2026-07-21. `prefetchNeighbors` (Reader.svelte) stays
+// review candidate 2, 2026-07-21. It also owns retry rounds and the failure
+// list those callers report (architecture review, 2026-10-07): before that,
+// only download retried and reported, and refresh/indexing failed silently. `prefetchNeighbors` (Reader.svelte) stays
 // separate: it cancels mid-loop via a generation token and skips pacing
 // entirely on an already-cached chapter, a different shape than the
 // run-to-completion loops here — but it imports DEFAULT_JITTER_MS below so
@@ -50,29 +52,99 @@ export class PauseGate {
   }
 }
 
+// Failed items get `retryRounds` extra passes, each after a longer pause and
+// at wider pacing: a failure is usually Cloudflare unhappy with the cadence,
+// so retrying at the same speed would just repeat it.
+export const DEFAULT_RETRY_PAUSE_MS = 10_000;
+export const DEFAULT_RETRY_JITTER_MS = { min: 4000, max: 7000 };
+
+export interface PacedProgress<T, R> {
+  /// 0 for the first pass, 1.. for retry passes.
+  round: number;
+  /// Position within this round's items, not the original list.
+  index: number;
+  total: number;
+  item: T;
+  result: R | Error;
+}
+
+export interface PacedOptions<T, R> {
+  onProgress?: (event: PacedProgress<T, R>) => void;
+  jitter?: typeof DEFAULT_JITTER_MS;
+  /// Awaited before every item (including the first) — lets a `PauseGate`
+  /// hold the loop.
+  gate?: PauseGate;
+  /// Extra passes over the items that failed. Default 0: report only.
+  retryRounds?: number;
+  retryPauseMs?: number;
+  retryJitter?: typeof DEFAULT_JITTER_MS;
+}
+
+export interface PacedFailure<T> {
+  item: T;
+  /// The last attempt's error message.
+  reason: string;
+}
+
+export interface PacedResult<T> {
+  ok: T[];
+  failed: PacedFailure<T>[];
+}
+
 /// Runs `fn` over `items` sequentially, pacing between calls (never after
-/// the last) and never stopping early on failure — one item throwing just
-/// means that item's `result` is the `Error`, the rest still run.
-/// `beforeEach`, when given, is awaited before every item (including the
-/// first) — pass `gate.wait` to let a `PauseGate` hold the loop.
+/// the last of a pass) and never stopping early on failure — a throwing item
+/// is recorded and the rest still run. Failures are retried for
+/// `retryRounds` further passes; whatever still fails comes back in
+/// `failed`, so every caller can report it the same way (`describeFailures`).
 export async function runPacedBestEffort<T, R>(
   items: readonly T[],
   fn: (item: T, index: number) => Promise<R>,
-  onProgress?: (index: number, total: number, item: T, result: R | Error) => void,
-  jitter: typeof DEFAULT_JITTER_MS = DEFAULT_JITTER_MS,
-  beforeEach?: () => Promise<void>
-): Promise<void> {
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i];
-    await beforeEach?.();
-    try {
-      const result = await fn(item, i);
-      onProgress?.(i, items.length, item, result);
-    } catch (e) {
-      onProgress?.(i, items.length, item, e instanceof Error ? e : new Error(String(e)));
+  options: PacedOptions<T, R> = {}
+): Promise<PacedResult<T>> {
+  const {
+    onProgress,
+    jitter = DEFAULT_JITTER_MS,
+    gate,
+    retryRounds = 0,
+    retryPauseMs = DEFAULT_RETRY_PAUSE_MS,
+    retryJitter = DEFAULT_RETRY_JITTER_MS
+  } = options;
+  const ok: T[] = [];
+  let pending = [...items];
+  let failed: PacedFailure<T>[] = [];
+
+  for (let round = 0; round <= retryRounds && pending.length > 0; round++) {
+    if (round > 0) await sleep(retryPauseMs);
+    failed = [];
+    for (let i = 0; i < pending.length; i++) {
+      const item = pending[i];
+      await gate?.wait();
+      let result: R | Error;
+      try {
+        result = await fn(item, i);
+        ok.push(item);
+      } catch (e) {
+        result = e instanceof Error ? e : new Error(String(e));
+        failed.push({ item, reason: result.message });
+      }
+      onProgress?.({ round, index: i, total: pending.length, item, result });
+      if (i < pending.length - 1) {
+        await sleep(jitterDelay(round === 0 ? jitter : retryJitter));
+      }
     }
-    if (i < items.length - 1) {
-      await sleep(jitterDelay(jitter));
-    }
+    pending = failed.map((f) => f.item);
   }
+  return { ok, failed };
+}
+
+/// "(4, 9, 20…). Last error: reason" — the part of a failure message every
+/// bulk-fetch caller shares; callers add the count noun in front and any
+/// advice after. `label` names each failed item in the list (capped at 8);
+/// omit it to leave the list out.
+export function describeFailures<T>(failed: readonly PacedFailure<T>[], label?: (item: T) => string | number): string {
+  const last = failed[failed.length - 1]?.reason ?? "unknown";
+  if (!label) return `Last error: ${last}`;
+  const names = failed.map((f) => label(f.item));
+  const list = names.length > 8 ? `${names.slice(0, 8).join(", ")}…` : names.join(", ");
+  return `(${list}). Last error: ${last}`;
 }

@@ -148,6 +148,30 @@ pub struct FfnChapterLocator {
     pub chapter_num: i64,
 }
 
+/// Which stories a listing search asks for: only finished ones, only
+/// unfinished ones, or either. Distinct from a story's own status
+/// (`complete | in_progress`, stored on `stories.status`) — `Any` is a filter,
+/// never a status. The wire/DB spelling is snake_case; `search_ffn` and
+/// `search_ao3` reject anything else instead of treating it as `Any`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ListingStatus {
+    Complete,
+    InProgress,
+    Any,
+}
+
+impl ListingStatus {
+    /// The spelling `browse_state.status` stores (an opaque key to `db.rs`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ListingStatus::Complete => "complete",
+            ListingStatus::InProgress => "in_progress",
+            ListingStatus::Any => "any",
+        }
+    }
+}
+
 /// `Deserialize` so `lib.rs::fetch_page` (a `#[tauri::command]`) can accept
 /// this as a param — always `None` over the wire in practice (only
 /// `search_ffn`'s own in-process call ever supplies `Some`, see
@@ -158,7 +182,7 @@ pub struct FfnListingLocator {
     pub category: String,
     pub fandom: String,
     pub min_word_count: i64,
-    pub status: String,
+    pub status: ListingStatus,
     pub page: i64,
 }
 
@@ -192,12 +216,14 @@ impl FicSource for Ffn {
             .and_then(|(_, v)| v.parse::<i64>().ok())
             .map(|thousands| thousands * 1000)
             .unwrap_or(0);
+        // FFN's URL only distinguishes complete from "not filtered" — an
+        // in-progress search decodes as Any, which is why the requested
+        // locator is stashed rather than re-derived (`FetchedPage`).
         let status = if parsed_url.query_pairs().any(|(k, v)| k == "s" && v == "2") {
-            "complete"
+            ListingStatus::Complete
         } else {
-            "any"
-        }
-        .to_string();
+            ListingStatus::Any
+        };
         Some(FfnListingLocator { category, fandom, min_word_count, status, page })
     }
 
@@ -238,7 +264,7 @@ impl FicSource for Ffn {
     }
 
     fn record_listing_page(conn: &Connection, locator: &Self::ListingLocator, page: i64) -> rusqlite::Result<()> {
-        db::record_browse_page(conn, &locator.category, &locator.fandom, locator.min_word_count, &locator.status, page)
+        db::record_browse_page(conn, &locator.category, &locator.fandom, locator.min_word_count, locator.status.as_str(), page)
     }
 
     fn resolve_listing_record_locator(_decoded: Self::ListingLocator, external: Option<Self::ListingLocator>) -> Option<Self::ListingLocator> {
@@ -257,7 +283,7 @@ pub struct Ao3ChapterLocator {
 pub struct Ao3ListingLocator {
     pub tag: String,
     pub min_word_count: i64,
-    pub status: String,
+    pub status: ListingStatus,
     pub page: i64,
 }
 
@@ -283,11 +309,10 @@ impl FicSource for Ao3 {
             .and_then(|(_, v)| v.parse().ok())
             .unwrap_or(0);
         let status = match parsed_url.query_pairs().find(|(k, _)| k == "work_search[complete]").map(|(_, v)| v.into_owned()) {
-            Some(v) if v == "T" => "complete",
-            Some(v) if v == "F" => "in_progress",
-            _ => "any",
-        }
-        .to_string();
+            Some(v) if v == "T" => ListingStatus::Complete,
+            Some(v) if v == "F" => ListingStatus::InProgress,
+            _ => ListingStatus::Any,
+        };
         let page: i64 = parsed_url.query_pairs().find(|(k, _)| k == "page").and_then(|(_, v)| v.parse().ok()).unwrap_or(1);
         Some(Ao3ListingLocator { tag, min_word_count, status, page })
     }
@@ -344,7 +369,7 @@ impl FicSource for Ao3 {
     }
 
     fn record_listing_page(conn: &Connection, locator: &Self::ListingLocator, page: i64) -> rusqlite::Result<()> {
-        db::record_ao3_browse_page(conn, &locator.tag, locator.min_word_count, &locator.status, page)
+        db::record_ao3_browse_page(conn, &locator.tag, locator.min_word_count, locator.status.as_str(), page)
     }
 
     fn resolve_listing_record_locator(decoded: Self::ListingLocator, _external: Option<Self::ListingLocator>) -> Option<Self::ListingLocator> {
@@ -355,6 +380,27 @@ impl FicSource for Ao3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listing_status_deserializes_only_its_three_snake_case_spellings() {
+        let parse = |v: &str| serde_json::from_str::<ListingStatus>(&format!("\"{v}\""));
+
+        assert_eq!(parse("complete").unwrap(), ListingStatus::Complete);
+        assert_eq!(parse("in_progress").unwrap(), ListingStatus::InProgress);
+        assert_eq!(parse("any").unwrap(), ListingStatus::Any);
+        // Used to silently behave as "any".
+        assert!(parse("inProgress").is_err());
+        assert!(parse("finished").is_err());
+        assert!(parse("").is_err());
+    }
+
+    #[test]
+    fn listing_status_as_str_round_trips_through_its_wire_spelling() {
+        for status in [ListingStatus::Complete, ListingStatus::InProgress, ListingStatus::Any] {
+            let wire = format!("\"{}\"", status.as_str());
+            assert_eq!(serde_json::from_str::<ListingStatus>(&wire).unwrap(), status);
+        }
+    }
 
     // Architecture review candidate 1 (2026-07-21): chapter_locator_from_url
     // must propagate a malformed-but-shape-matching URL's real parse error

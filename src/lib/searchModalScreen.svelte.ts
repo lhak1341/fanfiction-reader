@@ -13,10 +13,14 @@
 
 import * as api from "./api";
 import { saveAo3Tag } from "./fandom";
+import { describeFailures, runPacedBestEffort } from "./pacedLoop";
 import { FFN_CATEGORIES } from "./types";
 import type { FandomIndexEntry, StorySource, StoryStatus } from "./types";
 
 export const ALL = "all";
+
+// One retry pass for a category page that failed (pacing: pacedLoop.ts).
+const INDEX_RETRY_ROUNDS = 1;
 
 export type SearchMode = StorySource | "url";
 
@@ -71,20 +75,27 @@ export class SearchModalScreen {
     this.indexing = true;
     this.indexError = "";
     this.indexProgress = "";
+    let failedIndexing = "";
     try {
       if (this.category === ALL) {
-        await api.indexAllCategoriesAndWait(
+        const label = (cat: string) => FFN_CATEGORIES.find((c) => c.value === cat)?.label ?? cat;
+        const { failed } = await runPacedBestEffort(
           FFN_CATEGORIES.map((c) => c.value),
-          (cat, result) => {
-            const label = FFN_CATEGORIES.find((c) => c.value === cat)?.label ?? cat;
-            this.indexProgress = result instanceof Error ? `${label} failed — continuing…` : `Indexed ${label}…`;
+          (cat) => api.indexFfnCategoryAndWait(cat),
+          {
+            retryRounds: INDEX_RETRY_ROUNDS,
+            onProgress: ({ item, result }) => {
+              this.indexProgress = result instanceof Error ? `${label(item)} failed — continuing…` : `Indexed ${label(item)}…`;
+            }
           }
         );
+        failedIndexing = failed.length > 0 ? `${failed.length} categories failed to index ${describeFailures(failed, label)}` : "";
       } else {
         await api.indexFfnCategoryAndWait(this.category);
       }
       await this.loadFandomOptions();
       this.indexProgress = "";
+      if (failedIndexing) this.indexError = failedIndexing;
     } catch (e) {
       this.indexError = e instanceof Error ? e.message : String(e);
     } finally {

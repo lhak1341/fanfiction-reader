@@ -48,6 +48,17 @@ export class ReaderScreen {
     this.onChanged = onChanged;
   }
 
+  // Called when Reader unmounts. Bumps `loadGen`, so the prefetch chain and
+  // any load still in flight bail at their next check: without it the chain
+  // kept fetching (up to 4 chapters) after Back, competing with the bookmark
+  // download/refresh loop that resumes the moment Reader closes. The one
+  // fetch already running cannot be cancelled and may still collide with the
+  // resumed loop's first item — "newest wins" settles it, and the download
+  // retries an interrupted chapter.
+  dispose() {
+    this.loadGen++;
+  }
+
   // Never rejects: `loading` starts `true` and only `runLoad` clears it, so a
   // throw here used to leave the spinner up forever with no error shown.
   async init(initialChapterNum: number) {
@@ -96,7 +107,7 @@ export class ReaderScreen {
       if (gen !== this.loadGen) return;
       let wasFetched = true;
       try {
-        const result = await ensureChapterCached(this.storyId, n);
+        const result = await ensureChapterCached(this.storyId, n, { background: true });
         if (result.chapters) this.chapters = result.chapters;
         wasFetched = result.wasFetched;
         if (wasFetched) await this.refreshStory();

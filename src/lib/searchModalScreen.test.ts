@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./api", () => ({
   listFandomIndex: vi.fn(),
   indexFfnCategoryAndWait: vi.fn(),
-  indexAllCategoriesAndWait: vi.fn(),
   searchFfnAndWait: vi.fn(),
   searchAo3AndWait: vi.fn(),
   addStoryByUrl: vi.fn(),
@@ -34,19 +33,45 @@ beforeEach(() => {
 
 describe("SearchModalScreen.refreshIndex", () => {
   it("indexes every category when category is ALL", async () => {
-    vi.mocked(api.indexAllCategoriesAndWait).mockResolvedValue(undefined);
+    vi.useFakeTimers();
+    vi.mocked(api.indexFfnCategoryAndWait).mockResolvedValue({ category: "anime", count: 10 });
 
     const screen = makeScreen();
     screen.category = ALL;
-    await screen.refreshIndex();
+    const run = screen.refreshIndex();
+    await vi.runAllTimersAsync();
+    await run;
 
-    expect(api.indexAllCategoriesAndWait).toHaveBeenCalledWith(
-      FFN_CATEGORIES.map((c) => c.value),
-      expect.any(Function)
+    expect(vi.mocked(api.indexFfnCategoryAndWait).mock.calls.map((c) => c[0])).toEqual(
+      FFN_CATEGORIES.map((c) => c.value)
     );
-    expect(api.indexFfnCategoryAndWait).not.toHaveBeenCalled();
     expect(api.listFandomIndex).toHaveBeenCalledWith(undefined);
+    expect(screen.indexError).toBe("");
     expect(screen.indexing).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("retries a failed category once and reports the ones that never indexed", async () => {
+    vi.useFakeTimers();
+    const bad = FFN_CATEGORIES[1].value;
+    vi.mocked(api.indexFfnCategoryAndWait).mockImplementation(async (cat) => {
+      if (cat === bad) throw new Error("Cloudflare challenge page");
+      return { category: cat, count: 1 };
+    });
+
+    const screen = makeScreen();
+    screen.category = ALL;
+    const run = screen.refreshIndex();
+    await vi.runAllTimersAsync();
+    await run;
+
+    const badCalls = vi.mocked(api.indexFfnCategoryAndWait).mock.calls.filter((c) => c[0] === bad);
+    expect(badCalls).toHaveLength(2);
+    expect(screen.indexError).toContain("1 categories failed to index");
+    expect(screen.indexError).toContain(FFN_CATEGORIES[1].label);
+    expect(screen.indexError).toContain("Cloudflare challenge page");
+    expect(screen.indexing).toBe(false);
+    vi.useRealTimers();
   });
 
   it("indexes only the selected category otherwise", async () => {
@@ -57,7 +82,6 @@ describe("SearchModalScreen.refreshIndex", () => {
     await screen.refreshIndex();
 
     expect(api.indexFfnCategoryAndWait).toHaveBeenCalledWith("anime");
-    expect(api.indexAllCategoriesAndWait).not.toHaveBeenCalled();
     expect(api.listFandomIndex).toHaveBeenCalledWith("anime");
     expect(screen.indexing).toBe(false);
   });

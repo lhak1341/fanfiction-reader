@@ -16,10 +16,11 @@
 //! navigation and the persist step stay in `fetch.rs`, so every transition
 //! here is unit-testable.
 //!
-//! "Newest wins" is unchanged: `start` rejects the fetch it replaces with
-//! `"interrupted by a newer fetch"`. Whether a foreground fetch should
-//! outrank a background one is a separate question this module does not
-//! decide.
+//! "Newest wins": `start` rejects the fetch it replaces with
+//! `"interrupted by a newer fetch"`. The one exception is priority —
+//! `start_background` refuses with `BUSY` while a foreground fetch is
+//! pending, so bulk work never kills the fetch the user is waiting on.
+//! Queueing and pacing between navigations are not done here.
 
 use crate::dispatch::{classify_page, PageShape};
 use crate::source::{self, FfnListingLocator};
@@ -34,6 +35,20 @@ use tokio::sync::oneshot;
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub const INTERRUPTED: &str = "interrupted by a newer fetch";
+
+/// What a background fetch gets when a foreground one is pending.
+pub const BUSY: &str = "a foreground fetch is in progress — try again";
+
+/// Who is waiting on a fetch. A foreground fetch is something the user just
+/// asked for (Reader's chapter, a search, an index refresh, a pasted URL); a
+/// background one is bulk work they are not watching (Download-all, bookmark
+/// refresh, Reader's neighbour prefetch). The only rule it adds to "newest
+/// wins": a background fetch never supersedes a pending foreground one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Priority {
+    Foreground,
+    Background,
+}
 
 /// What a fetch is *for*, compared between the requested URL and the URL the
 /// webview ended up on. Two URLs that name the same chapter, listing page or
@@ -80,6 +95,7 @@ pub struct FetchedPage {
 
 struct Pending {
     id: u64,
+    priority: Priority,
     key: TargetKey,
     listing_locator: Option<FfnListingLocator>,
     tx: oneshot::Sender<Result<FetchedPage, String>>,
@@ -122,20 +138,58 @@ impl FetchSession {
         self.window_gate.lock().await
     }
 
-    /// Registers a new fetch for `url`, rejecting whichever fetch was still
-    /// in flight — a `navigate()` over a loading page kills that page's init
-    /// script, so its report would never come.
+    /// Registers a new foreground fetch for `url`, rejecting whichever fetch
+    /// was still in flight — a `navigate()` over a loading page kills that
+    /// page's init script, so its report would never come.
     pub fn start(&self, url: &str, listing_locator: Option<FfnListingLocator>) -> Fetch {
+        self.begin(url, listing_locator, Priority::Foreground).expect("a foreground start is never refused")
+    }
+
+    /// Like `start`, but refuses with `BUSY` while a foreground fetch is
+    /// pending, so bulk work cannot kill the one the user is waiting on.
+    /// Against another background fetch (or nothing) it behaves like `start`.
+    pub fn start_background(&self, url: &str, listing_locator: Option<FfnListingLocator>) -> Result<Fetch, String> {
+        self.begin(url, listing_locator, Priority::Background)
+    }
+
+    fn begin(&self, url: &str, listing_locator: Option<FfnListingLocator>, priority: Priority) -> Result<Fetch, String> {
         let (tx, rx) = oneshot::channel();
         let mut slot = self.slot.lock().expect("fetch session slot poisoned");
+        if priority == Priority::Background
+            && slot.pending.as_ref().is_some_and(|p| p.priority == Priority::Foreground)
+        {
+            return Err(BUSY.to_string());
+        }
         let id = slot.next_id;
         slot.next_id += 1;
-        let previous = slot.pending.replace(Pending { id, key: TargetKey::of(url), listing_locator, tx });
+        let previous =
+            slot.pending.replace(Pending { id, priority, key: TargetKey::of(url), listing_locator, tx });
         drop(slot);
         if let Some(previous) = previous {
             let _ = previous.tx.send(Err(INTERRUPTED.to_string()));
         }
-        Fetch { id, rx }
+        Ok(Fetch { id, rx })
+    }
+
+    /// Like `start`, but only when nothing is pending — never supersedes
+    /// another fetch. For re-waiting on the page the webview is already
+    /// loading (a Cloudflare challenge that redirects itself to the real
+    /// page): a newer fetch that began meanwhile must not be interrupted.
+    pub fn start_if_idle(
+        &self,
+        url: &str,
+        listing_locator: Option<FfnListingLocator>,
+        priority: Priority,
+    ) -> Option<Fetch> {
+        let mut slot = self.slot.lock().expect("fetch session slot poisoned");
+        if slot.pending.is_some() {
+            return None;
+        }
+        let (tx, rx) = oneshot::channel();
+        let id = slot.next_id;
+        slot.next_id += 1;
+        slot.pending = Some(Pending { id, priority, key: TargetKey::of(url), listing_locator, tx });
+        Some(Fetch { id, rx })
     }
 
     /// The webview reported a page. Delivered to the pending fetch only if
@@ -203,12 +257,12 @@ mod tests {
         tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap().block_on(f)
     }
 
-    fn locator(fandom: &str, status: &str) -> FfnListingLocator {
+    fn locator(fandom: &str, status: crate::source::ListingStatus) -> FfnListingLocator {
         FfnListingLocator {
             category: "anime".to_string(),
             fandom: fandom.to_string(),
             min_word_count: 0,
-            status: status.to_string(),
+            status,
             page: 1,
         }
     }
@@ -228,17 +282,17 @@ mod tests {
     #[test]
     fn delivers_a_non_ascii_fandom_listing_and_keeps_the_stashed_locator() {
         let session = FetchSession::new();
-        let requested = ffn::build_browse_url("anime", "Pokémon", 0, "in_progress", 1);
+        let requested = ffn::build_browse_url("anime", "Pokémon", 0, crate::source::ListingStatus::InProgress, 1);
         // What the webview reports back: the same path, percent-encoded.
         let observed = requested.replace('é', "%C3%A9");
         assert_ne!(requested, observed);
-        let fetch = session.start(&requested, Some(locator("Pokémon", "in_progress")));
+        let fetch = session.start(&requested, Some(locator("Pokémon", crate::source::ListingStatus::InProgress)));
 
         assert!(session.deliver(&observed, String::new(), String::new()));
 
         let page = block_on(session.wait(fetch, SHORT)).unwrap();
         // The lossy decoded status ("any") must not replace the stashed one.
-        assert_eq!(page.listing_locator.unwrap().status, "in_progress");
+        assert_eq!(page.listing_locator.unwrap().status, crate::source::ListingStatus::InProgress);
     }
 
     #[test]
@@ -296,6 +350,68 @@ mod tests {
         let _ = block_on(session.wait(older, SHORT));
 
         assert!(session.deliver("https://www.fanfiction.net/s/1/1/", String::new(), String::new()));
+    }
+
+    #[test]
+    fn a_background_start_never_supersedes_a_pending_foreground_fetch() {
+        let session = FetchSession::new();
+        let foreground = session.start(SLUGLESS, None);
+
+        let refused = session.start_background("https://www.fanfiction.net/s/1/1/", None);
+
+        assert_eq!(refused.err().as_deref(), Some(BUSY));
+        // The foreground fetch is untouched and still deliverable.
+        assert!(session.deliver(SLUGGED, String::new(), String::new()));
+        assert!(block_on(session.wait(foreground, SHORT)).is_ok());
+    }
+
+    #[test]
+    fn a_foreground_start_supersedes_a_pending_background_fetch() {
+        let session = FetchSession::new();
+        let background = session.start_background(SLUGLESS, None).unwrap();
+        let _foreground = session.start("https://www.fanfiction.net/s/1/1/", None);
+
+        assert_eq!(block_on(session.wait(background, SHORT)).unwrap_err(), INTERRUPTED);
+    }
+
+    #[test]
+    fn background_fetches_keep_newest_wins_among_themselves() {
+        let session = FetchSession::new();
+        let older = session.start_background(SLUGLESS, None).unwrap();
+        let _newer = session.start_background("https://www.fanfiction.net/s/1/1/", None).unwrap();
+
+        assert_eq!(block_on(session.wait(older, SHORT)).unwrap_err(), INTERRUPTED);
+    }
+
+    #[test]
+    fn a_background_start_proceeds_once_the_foreground_fetch_has_finished() {
+        let session = FetchSession::new();
+        let foreground = session.start(SLUGLESS, None);
+        assert!(session.deliver(SLUGGED, String::new(), String::new()));
+        block_on(session.wait(foreground, SHORT)).unwrap();
+
+        assert!(session.start_background("https://www.fanfiction.net/s/1/1/", None).is_ok());
+    }
+
+    #[test]
+    fn start_if_idle_never_supersedes_a_pending_fetch() {
+        let session = FetchSession::new();
+        let pending = session.start(SLUGLESS, None);
+
+        assert!(session.start_if_idle("https://www.fanfiction.net/s/1/1/", None, Priority::Foreground).is_none());
+
+        // The original is untouched and still deliverable.
+        assert!(session.deliver(SLUGGED, String::new(), String::new()));
+        assert!(block_on(session.wait(pending, SHORT)).is_ok());
+    }
+
+    #[test]
+    fn start_if_idle_registers_a_fetch_when_the_slot_is_empty() {
+        let session = FetchSession::new();
+        let fetch = session.start_if_idle(SLUGLESS, None, Priority::Foreground).expect("slot was empty");
+
+        assert!(session.deliver(SLUGGED, "<html/>".into(), "t".into()));
+        assert!(block_on(session.wait(fetch, SHORT)).is_ok());
     }
 
     #[test]

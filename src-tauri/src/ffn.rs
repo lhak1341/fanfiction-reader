@@ -6,6 +6,7 @@ use percent_encoding::percent_decode_str;
 use scraper::{ElementRef, Html, Selector};
 
 use crate::scrape::{parse_int, text_of};
+use crate::source::ListingStatus;
 
 #[derive(Debug, serde::Serialize)]
 pub struct StoryMetadata {
@@ -226,13 +227,13 @@ pub fn parse_story_page(html: &str, ffn_story_id: i64) -> Result<(StoryMetadata,
 /// query with and without it — several top-favorited results, e.g. "Borne
 /// of Caution", only appear with `r=10` present). Always sent, same as
 /// `srt=4`.
-pub fn build_browse_url(category: &str, fandom: &str, min_word_count: i64, status: &str, page: i64) -> String {
+pub fn build_browse_url(category: &str, fandom: &str, min_word_count: i64, status: ListingStatus, page: i64) -> String {
     let fandom_slug = fandom.replace(' ', "-");
     let mut url = format!("https://www.fanfiction.net/{category}/{fandom_slug}/?srt=4&r=10");
     if min_word_count > 0 {
         url.push_str(&format!("&len={}", min_word_count / 1000));
     }
-    if status == "complete" {
+    if status == ListingStatus::Complete {
         url.push_str("&s=2");
     }
     url.push_str(&format!("&p={page}"));

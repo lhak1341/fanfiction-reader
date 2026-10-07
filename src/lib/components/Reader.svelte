@@ -5,7 +5,7 @@
   // instantly, an uncached one triggers a real webview fetch (same
   // Cloudflare/webview strategy as the initial fetch) and waits for the
   // fetch to resolve before rendering.
-  import { tick } from "svelte";
+  import { onDestroy, tick } from "svelte";
   import { ChevronLeft, ChevronRight, Check, Menu, Star, Type, X } from "lucide-svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
   import Stepper from "$lib/components/Stepper.svelte";
@@ -30,6 +30,7 @@
   // so storyId/onChanged never change during one mount's lifetime.
   // svelte-ignore state_referenced_locally
   const screen = new ReaderScreen(storyId, onChanged);
+  onDestroy(() => screen.dispose());
 
   let drawerOpen = $state(false);
   let scrollEl = $state<HTMLDivElement | undefined>(undefined);

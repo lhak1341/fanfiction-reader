@@ -11,6 +11,7 @@
 use scraper::{ElementRef, Html, Selector};
 
 use crate::scrape::{parse_int, text_of};
+use crate::source::ListingStatus;
 
 #[derive(Debug, serde::Serialize)]
 pub struct Ao3StoryMetadata {
@@ -319,7 +320,7 @@ pub fn tag_from_listing_url(url: &str) -> Option<String> {
 /// other), omitted entirely for "any" (mirrors FFN's `s=2`-or-omit pattern,
 /// §4). No max-word-count or "any" `words_from` — mirrors FFN's `len`
 /// (minimum-only, §4).
-pub fn build_tag_browse_url(fandom_tag: &str, sort_column: &str, min_word_count: i64, status: &str, page: i64) -> String {
+pub fn build_tag_browse_url(fandom_tag: &str, sort_column: &str, min_word_count: i64, status: ListingStatus, page: i64) -> String {
     let encoded_tag = url::form_urlencoded::byte_serialize(fandom_tag.as_bytes()).collect::<String>();
     let mut url = format!(
         "https://archiveofourown.org/works?tag_id={encoded_tag}&work_search%5Bsort_column%5D={sort_column}&page={page}"
@@ -328,9 +329,9 @@ pub fn build_tag_browse_url(fandom_tag: &str, sort_column: &str, min_word_count:
         url.push_str(&format!("&work_search%5Bwords_from%5D={min_word_count}"));
     }
     match status {
-        "complete" => url.push_str("&work_search%5Bcomplete%5D=T"),
-        "in_progress" => url.push_str("&work_search%5Bcomplete%5D=F"),
-        _ => {}
+        ListingStatus::Complete => url.push_str("&work_search%5Bcomplete%5D=T"),
+        ListingStatus::InProgress => url.push_str("&work_search%5Bcomplete%5D=F"),
+        ListingStatus::Any => {}
     }
     url
 }
@@ -445,7 +446,7 @@ mod tests {
 
     #[test]
     fn build_tag_browse_url_omits_optional_filters_when_unset() {
-        let url = build_tag_browse_url("Naruto", "kudos_count", 0, "any", 3);
+        let url = build_tag_browse_url("Naruto", "kudos_count", 0, crate::source::ListingStatus::Any, 3);
         assert_eq!(
             url,
             "https://archiveofourown.org/works?tag_id=Naruto&work_search%5Bsort_column%5D=kudos_count&page=3"
@@ -454,19 +455,19 @@ mod tests {
 
     #[test]
     fn build_tag_browse_url_includes_word_count_and_status_when_set() {
-        let url = build_tag_browse_url("Naruto (Anime & Manga)", "kudos_count", 100_000, "complete", 1);
+        let url = build_tag_browse_url("Naruto (Anime & Manga)", "kudos_count", 100_000, crate::source::ListingStatus::Complete, 1);
         assert_eq!(
             url,
             "https://archiveofourown.org/works?tag_id=Naruto+%28Anime+%26+Manga%29&work_search%5Bsort_column%5D=kudos_count&page=1&work_search%5Bwords_from%5D=100000&work_search%5Bcomplete%5D=T"
         );
 
-        let url = build_tag_browse_url("Naruto", "kudos_count", 0, "in_progress", 1);
+        let url = build_tag_browse_url("Naruto", "kudos_count", 0, crate::source::ListingStatus::InProgress, 1);
         assert!(url.ends_with("&work_search%5Bcomplete%5D=F"));
     }
 
     #[test]
     fn tag_from_listing_url_recovers_the_tag_and_ignores_work_urls() {
-        let listing_url = build_tag_browse_url("Naruto (Anime & Manga)", "kudos_count", 100_000, "complete", 1);
+        let listing_url = build_tag_browse_url("Naruto (Anime & Manga)", "kudos_count", 100_000, crate::source::ListingStatus::Complete, 1);
         assert_eq!(tag_from_listing_url(&listing_url).as_deref(), Some("Naruto (Anime & Manga)"));
 
         assert_eq!(tag_from_listing_url("https://archiveofourown.org/works/85954646"), None);
@@ -477,7 +478,7 @@ mod tests {
     fn ao3_locator_from_url_does_not_false_positive_on_a_listing_url() {
         // Bare `/works` with no id segment — a shape mismatch (NoMatch), not
         // a malformed id.
-        let listing_url = build_tag_browse_url("Naruto", "kudos_count", 0, "any", 1);
+        let listing_url = build_tag_browse_url("Naruto", "kudos_count", 0, crate::source::ListingStatus::Any, 1);
         assert_eq!(ao3_locator_from_url(&listing_url), Ok(None));
     }
 

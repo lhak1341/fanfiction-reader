@@ -127,7 +127,7 @@
         class="refresh-btn"
         class:spinning={bookmarks.refreshing}
         onclick={handleRefreshBookmarks}
-        disabled={bookmarks.refreshing}
+        disabled={bookmarks.refreshing || bookmarks.downloadingStoryId !== null}
         title={bookmarks.refreshing ? bookmarks.refreshProgress : "Refresh bookmarked stories (in-progress only)"}
       >
         <RefreshCw size={15} />

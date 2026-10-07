@@ -8,8 +8,11 @@
 
 import * as api from "./api";
 import { ensureChapterCached } from "./chapterCache";
-import { DEFAULT_JITTER_MS, PauseGate, runPacedBestEffort } from "./pacedLoop";
+import { describeFailures, PauseGate, runPacedBestEffort } from "./pacedLoop";
 import type { SortBy, StoryRow } from "./types";
+
+// Failed download chapters get this many extra passes (pacing: pacedLoop.ts).
+const DOWNLOAD_RETRY_ROUNDS = 2;
 
 export class BookmarksScreen {
   fandom = $state<string | undefined>(undefined);
@@ -101,21 +104,23 @@ export class BookmarksScreen {
   // stories already marked complete locally (SPEC.md §6) — those don't
   // change.
   async refresh() {
-    if (this.refreshing) return;
+    if (this.refreshing || this.downloadingStoryId !== null) return;
     this.refreshing = true;
     this.refreshProgress = "";
     try {
       const targets = await api.listBookmarks({ status: "in_progress" });
       // Best-effort — one story failing (e.g. taken down) shouldn't stop the
-      // rest; runPacedBestEffort catches and keeps going regardless.
-      await runPacedBestEffort(
-        targets,
-        (story) => api.fetchChapterAndWait(story.id, 1),
-        (i, total) => (this.refreshProgress = `Refreshing ${i + 1} of ${total}…`),
-        DEFAULT_JITTER_MS,
-        () => this.gate.wait()
-      );
+      // rest. No retry rounds: a removed story fails every time.
+      const { failed } = await runPacedBestEffort(targets, (story) => api.fetchChapterAndWait(story.id, 1, true), {
+        onProgress: ({ index, total }) => (this.refreshProgress = `Refreshing ${index + 1} of ${total}…`),
+        gate: this.gate
+      });
       await this.reloadAll();
+      if (failed.length > 0) {
+        this.onError(
+          `${failed.length} ${failed.length === 1 ? "story" : "stories"} failed to refresh: ${describeFailures(failed)}`
+        );
+      }
     } finally {
       this.refreshing = false;
       this.refreshProgress = "";
@@ -124,6 +129,10 @@ export class BookmarksScreen {
 
   async downloadAllChapters(story: StoryRow) {
     if (this.downloadingStoryId !== null) return;
+    if (this.refreshing) {
+      this.onError("Wait for the bookmark refresh to finish before downloading — both use the one fetch window.");
+      return;
+    }
     this.downloadingStoryId = story.id;
     this.downloadingStoryTitle = story.title;
     this.downloadProgress = "";
@@ -131,23 +140,38 @@ export class BookmarksScreen {
     this.downloadTotal = 0;
     try {
       const chapters = await api.listChapters(story.id);
-      const missing = chapters.filter((c) => !c.isCached);
+      const missing = chapters.filter((c) => !c.isCached).map((c) => c.chapterNum);
       this.downloadTotal = missing.length;
-      await runPacedBestEffort(
+
+      // A failed chapter (Cloudflare page, interrupted, timeout, empty
+      // result) is retried after a longer pause rather than left as a hole.
+      let firstPassFailures = 0;
+      const { failed } = await runPacedBestEffort(
         missing,
-        async (target) => {
-          await ensureChapterCached(story.id, target.chapterNum);
-          // Best-effort — one chapter failing shouldn't stop the rest,
-          // runPacedBestEffort catches and keeps going regardless.
+        async (num) => {
+          const result = await ensureChapterCached(story.id, num, { background: true });
+          if (!result.content?.isCached) throw new Error("fetched, but the chapter came back empty");
         },
-        (i) => {
-          this.downloadProgress = `Downloading ${i + 1} of ${missing.length}…`;
-          this.downloadDone = i + 1;
-        },
-        DEFAULT_JITTER_MS,
-        () => this.gate.wait()
+        {
+          retryRounds: DOWNLOAD_RETRY_ROUNDS,
+          gate: this.gate,
+          onProgress: ({ round, index, total, result }) => {
+            if (!(result instanceof Error)) this.downloadDone++;
+            else if (round === 0) firstPassFailures++;
+            this.downloadProgress =
+              round === 0
+                ? `Downloading ${index + 1} of ${total}${firstPassFailures ? ` (${firstPassFailures} failed)` : ""}…`
+                : `Retry ${index + 1} of ${total} (round ${round} of ${DOWNLOAD_RETRY_ROUNDS})…`;
+          }
+        }
       );
       await this.reloadAll();
+      if (failed.length > 0) {
+        this.onError(
+          `Download of "${story.title}" incomplete: ${failed.length} chapter${failed.length === 1 ? "" : "s"} failed ` +
+            `${describeFailures(failed, (n) => n)}. Click Download again to retry.`
+        );
+      }
     } finally {
       this.downloadingStoryId = null;
       this.downloadProgress = "";

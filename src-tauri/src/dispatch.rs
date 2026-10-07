@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn ffn_listing_url_dispatches_to_browse_branch() {
         let dbh = test_db();
-        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "any", 1);
+        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, crate::source::ListingStatus::Any, 1);
 
         let outcome = persist_page::<source::Ffn>(&dbh, FFN_BROWSE_LISTING, &url, None, None).unwrap();
 
@@ -332,12 +332,12 @@ mod tests {
         // URL itself (see FfnListingLocator's doc comment) — decoding this
         // URL alone would always recover "any", which is the bug this test
         // guards against.
-        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "in_progress", 1);
+        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, crate::source::ListingStatus::InProgress, 1);
         let requested = source::FfnListingLocator {
             category: "anime".to_string(),
             fandom: "Fullmetal Alchemist".to_string(),
             min_word_count: 0,
-            status: "in_progress".to_string(),
+            status: crate::source::ListingStatus::InProgress,
             page: 1,
         };
 
@@ -356,7 +356,7 @@ mod tests {
         // The debug harness's raw-URL fetch has no real search session behind
         // it — see `FicSource::resolve_listing_record_locator`'s doc comment.
         let dbh = test_db();
-        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "any", 1);
+        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, crate::source::ListingStatus::Any, 1);
 
         persist_page::<source::Ffn>(&dbh, FFN_BROWSE_LISTING, &url, None, None).unwrap();
 
@@ -369,7 +369,7 @@ mod tests {
     #[test]
     fn empty_listing_page_is_an_error_not_a_zero_count_browse_outcome() {
         let dbh = test_db();
-        let url = ffn::build_browse_url("anime", "Nonexistent Fandom", 0, "any", 1);
+        let url = ffn::build_browse_url("anime", "Nonexistent Fandom", 0, crate::source::ListingStatus::Any, 1);
 
         // FFN_STORY_PAGE is a chapter page, not a listing — parse_browse_page
         // against it should find zero story rows.
@@ -416,7 +416,7 @@ mod tests {
                  BEGIN SELECT RAISE(ABORT, 'injected'); END;",
             )
             .unwrap();
-        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "any", 1);
+        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, crate::source::ListingStatus::Any, 1);
 
         let result = persist_page::<source::Ffn>(&dbh, FFN_BROWSE_LISTING, &url, None, None);
 
@@ -428,7 +428,7 @@ mod tests {
     #[test]
     fn ao3_fandom_override_applies_on_listing_rows() {
         let dbh = test_db();
-        let url = ao3::build_tag_browse_url("Harry Potter", "bookmarks_count", 0, "any", 1);
+        let url = ao3::build_tag_browse_url("Harry Potter", "bookmarks_count", 0, crate::source::ListingStatus::Any, 1);
 
         persist_page::<source::Ao3>(&dbh, AO3_LISTING_PAGE, &url, Some("Overridden Fandom"), None).unwrap();
 
@@ -542,7 +542,7 @@ mod tests {
         let chapter = "https://www.fanfiction.net/s/13493099/34/Welcome-to-the-insane-world-of-Pok-mon";
         assert!(matches!(classify_page::<source::Ffn>(chapter), Ok(PageShape::Chapter(_))));
 
-        let listing = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "any", 1);
+        let listing = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, crate::source::ListingStatus::Any, 1);
         assert!(matches!(classify_page::<source::Ffn>(&listing), Ok(PageShape::Listing(_))));
 
         assert!(matches!(classify_page::<source::Ffn>("https://example.com/"), Ok(PageShape::Unknown)));
@@ -603,7 +603,7 @@ mod tests {
     #[test]
     fn story_url_source_rejects_non_story_shapes_even_on_a_known_host() {
         // A listing/category URL would import a page of stories as a side effect.
-        let listing = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "any", 1);
+        let listing = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, crate::source::ListingStatus::Any, 1);
         for url in [
             listing.as_str(),
             "https://www.fanfiction.net/anime/",

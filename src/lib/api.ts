@@ -2,7 +2,6 @@
 // Keeps `invoke()` string command names in one place.
 
 import { invoke } from "@tauri-apps/api/core";
-import { runPacedBestEffort } from "./pacedLoop";
 import type {
   BrowseFetched,
   ChapterContent,
@@ -10,10 +9,10 @@ import type {
   ChapterListItem,
   FandomIndexEntry,
   FandomIndexFetched,
+  ListingStatus,
   StoryFilters,
   StoryRow,
-  StorySource,
-  StoryStatus
+  StorySource
 } from "./types";
 
 export function listStories(filters: StoryFilters): Promise<StoryRow[]> {
@@ -81,8 +80,11 @@ export function getContinueReading(limit: number): Promise<StoryRow[]> {
 /// on a fetch error) — for callers that need to know when it's safe to read
 /// the result back out of the DB. An unknown `storyId` rejects immediately,
 /// before any fetch starts. Always fetches — check the cache first.
-export function fetchChapterAndWait(storyId: number, chapterNum: number): Promise<void> {
-  return invoke<ChapterFetched>("fetch_chapter", { storyId, chapterNum }).then(() => {});
+/// `background` marks bulk work (download, refresh, Reader prefetch): it never
+/// interrupts a fetch the user is waiting on and rejects instead (`BUSY`,
+/// fetch_session.rs). Sent explicitly — see src-tauri/CLAUDE.md.
+export function fetchChapterAndWait(storyId: number, chapterNum: number, background = false): Promise<void> {
+  return invoke<ChapterFetched>("fetch_chapter", { storyId, chapterNum, background }).then(() => {});
 }
 
 /// Adds one story from a pasted URL (`add_story_by_url` validates it and picks
@@ -102,7 +104,7 @@ export function addStoryByUrl(url: string): Promise<ChapterFetched> {
 export function searchFfnAndWait(
   fandom: string,
   minWordCount: number,
-  status: StoryStatus | "any",
+  status: ListingStatus,
   category?: string
 ): Promise<BrowseFetched> {
   return invoke("search_ffn", { category: category ?? null, fandom, minWordCount, status });
@@ -120,7 +122,7 @@ export function searchAo3AndWait(
   tag: string,
   fandom: string,
   minWordCount: number,
-  status: StoryStatus | "any"
+  status: ListingStatus
 ): Promise<BrowseFetched> {
   return invoke("search_ao3", { tag, fandom, minWordCount, status });
 }
@@ -135,16 +137,4 @@ export function listFandomIndex(category?: string): Promise<FandomIndexEntry[]> 
 
 export function indexFfnCategoryAndWait(category: string): Promise<FandomIndexFetched> {
   return invoke("index_ffn_category", { category });
-}
-
-/// Indexes every category sequentially (see `runPacedBestEffort`, pacedLoop.ts,
-/// for why this is paced). `onProgress` fires after each category (success or
-/// failure) so the caller can show a running status.
-export async function indexAllCategoriesAndWait(
-  categories: readonly string[],
-  onProgress?: (category: string, result: FandomIndexFetched | Error) => void
-): Promise<void> {
-  await runPacedBestEffort(categories, indexFfnCategoryAndWait, (_i, _total, category, result) =>
-    onProgress?.(category, result)
-  );
 }

@@ -33,8 +33,18 @@ describe("ensureChapterCached", () => {
 
     const result = await ensureChapterCached(storyId, 2);
 
-    expect(api.fetchChapterAndWait).toHaveBeenCalledWith(storyId, 2);
+    expect(api.fetchChapterAndWait).toHaveBeenCalledWith(storyId, 2, false);
     expect(result).toEqual({ content: fetchedContent, chapters: refreshedChapters, wasFetched: true });
+  });
+
+  it("passes background through to the fetch", async () => {
+    vi.mocked(api.getChapter).mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    vi.mocked(api.fetchChapterAndWait).mockResolvedValueOnce(undefined);
+    vi.mocked(api.listChapters).mockResolvedValueOnce(chapters);
+
+    await ensureChapterCached(storyId, 2, { background: true });
+
+    expect(api.fetchChapterAndWait).toHaveBeenCalledWith(storyId, 2, true);
   });
 
   it("returns null content if the chapter still isn't persisted after a fetch", async () => {

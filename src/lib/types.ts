@@ -6,6 +6,8 @@
 // — see its own doc comment for exactly which structs it covers and why.
 
 export type StoryStatus = "complete" | "in_progress";
+// What a listing search asks for — a filter, not a story's status (Rust: `ListingStatus`, source.rs).
+export type ListingStatus = StoryStatus | "any";
 export type SortBy = "favorites" | "updated" | "words";
 export type StorySource = "ffn" | "ao3";
 
