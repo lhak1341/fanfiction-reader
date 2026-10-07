@@ -357,8 +357,11 @@ pub async fn search_ffn(
     min_word_count: i64,
     status: String,
 ) -> Result<BrowseFetched, String> {
-    let (resolved_category, page) =
-        db.run(|conn| db::next_browse_page(conn, category.as_deref(), &fandom, min_word_count, &status))?;
+    let (resolved_category, page) = db
+        .run(|conn| db::next_browse_page(conn, category.as_deref(), &fandom, min_word_count, &status))?
+        .ok_or_else(|| {
+            format!("no category known for fandom {fandom:?} — search it from the Search FFN modal first")
+        })?;
     let url = ffn::build_browse_url(&resolved_category, &fandom, min_word_count, &status, page);
     // Stashed as-requested rather than left to be re-derived by decoding the
     // fetched URL later — see `FetchSession`.
@@ -457,7 +460,7 @@ mod tests {
         let next = dbh
             .run(|c| db::next_browse_page(c, None, "Fullmetal Alchemist", 0, "in_progress"))
             .unwrap();
-        assert_eq!(next, ("anime".to_string(), 2), "Load more must continue the in-progress search, not an 'any' one");
+        assert_eq!(next, Some(("anime".to_string(), 2)), "Load more must continue the in-progress search, not an 'any' one");
     }
 
     #[test]

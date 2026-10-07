@@ -12,7 +12,7 @@
 //
 // - Renaming/merging a fandom bucket needs every other piece of client
 //   state that names the old fandom to follow (a pin, the current search
-//   selection) or the rename silently orphans them.
+//   selection, the AO3 tag map) or the rename silently orphans them.
 
 import { definePersistedPref } from "./persistedPref";
 
@@ -24,6 +24,16 @@ export function getAo3Tag(fandom: string): string | undefined {
 
 export function saveAo3Tag(fandom: string, tag: string) {
   tagMapPref.save({ ...tagMapPref.get(), [fandom]: tag });
+}
+
+/// Moves the AO3 tag saved under `oldFandom` to `newFandom` so a rename doesn't
+/// make the user retype it. If `newFandom` already has a tag (a merge into an
+/// existing fandom) that one wins — it's the one already in use.
+export function renameAo3Tag(oldFandom: string, newFandom: string) {
+  const map = tagMapPref.get();
+  if (!(oldFandom in map)) return;
+  const { [oldFandom]: tag, ...rest } = map;
+  tagMapPref.save({ ...rest, [newFandom]: map[newFandom] ?? tag });
 }
 
 /// Carries a fandom rename/merge across the client state that names the old

@@ -345,14 +345,16 @@ pub fn upsert_chapter_content(
 /// fandom's category isn't stored anywhere else). `explicit_category`, when
 /// given, is trusted as-is (the "search a new fandom" flow already has it
 /// from the user); otherwise falls back to *any* prior search for that
-/// fandom, since a fandom's category doesn't vary by filter combo.
+/// fandom, since a fandom's category doesn't vary by filter combo. `None`
+/// means no category is known (none given, no prior search for the fandom) —
+/// distinct from a DB error, which is `Err`.
 pub fn next_browse_page(
     conn: &Connection,
     explicit_category: Option<&str>,
     fandom: &str,
     min_word_count: i64,
     status: &str,
-) -> rusqlite::Result<(String, i64)> {
+) -> rusqlite::Result<Option<(String, i64)>> {
     if let Some(category) = explicit_category {
         // `.optional()?`, not `.ok()`: only "no row yet" means page 1 — any other
         // DB error must surface, not silently restart the search from page 1.
@@ -363,7 +365,7 @@ pub fn next_browse_page(
                 |row| row.get(0),
             )
             .optional()?;
-        return Ok((category.to_string(), last.unwrap_or(0) + 1));
+        return Ok(Some((category.to_string(), last.unwrap_or(0) + 1)));
     }
 
     // No explicit category — look up this exact combo first, then any prior
@@ -376,14 +378,16 @@ pub fn next_browse_page(
         )
         .optional()?
     {
-        return Ok((category, last + 1));
+        return Ok(Some((category, last + 1)));
     }
-    let category: String = conn.query_row(
-        "SELECT category FROM browse_state WHERE fandom = ?1 ORDER BY last_fetched_at DESC LIMIT 1",
-        rusqlite::params![fandom],
-        |row| row.get(0),
-    )?;
-    Ok((category, 1))
+    let category: Option<String> = conn
+        .query_row(
+            "SELECT category FROM browse_state WHERE fandom = ?1 ORDER BY last_fetched_at DESC LIMIT 1",
+            rusqlite::params![fandom],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(category.map(|c| (c, 1)))
 }
 
 pub fn record_browse_page(
@@ -411,13 +415,15 @@ pub fn record_browse_page(
 /// tag+filter combo has never been fetched, otherwise one past whatever was
 /// last fetched.
 pub fn next_ao3_browse_page(conn: &Connection, tag: &str, min_word_count: i64, status: &str) -> rusqlite::Result<i64> {
+    // `.optional()?`, not `.ok()`: same rule as `next_browse_page` — only "no row
+    // yet" means page 1; any other DB error must surface.
     let last: Option<i64> = conn
         .query_row(
             "SELECT last_page_fetched FROM ao3_browse_state WHERE tag = ?1 AND min_word_count = ?2 AND status = ?3",
             rusqlite::params![tag, min_word_count, status],
             |row| row.get(0),
         )
-        .ok();
+        .optional()?;
     Ok(last.unwrap_or(0) + 1)
 }
 
@@ -739,19 +745,19 @@ pub(crate) mod tests {
     #[test]
     fn ffn_browse_page_resume_starts_at_one_and_advances() {
         let conn = schema_conn("ffn_browse_page");
-        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 100_000, "complete").unwrap(), ("anime".to_string(), 1));
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 100_000, "complete").unwrap(), Some(("anime".to_string(), 1)));
 
         record_browse_page(&conn, "anime", "Naruto", 100_000, "complete", 1).unwrap();
-        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 100_000, "complete").unwrap(), ("anime".to_string(), 2));
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 100_000, "complete").unwrap(), Some(("anime".to_string(), 2)));
 
         record_browse_page(&conn, "anime", "Naruto", 100_000, "complete", 2).unwrap();
-        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 100_000, "complete").unwrap(), ("anime".to_string(), 3));
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 100_000, "complete").unwrap(), Some(("anime".to_string(), 3)));
 
         // A different status for the same fandom/word-count tracks its own
         // page independently — the case that used to break (architecture
         // review, 2026-07-29): "in_progress" and "complete" share the same
         // browse URL shape but must not share pagination state.
-        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 100_000, "in_progress").unwrap(), ("anime".to_string(), 1));
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 100_000, "in_progress").unwrap(), Some(("anime".to_string(), 1)));
     }
 
     #[test]
@@ -759,7 +765,7 @@ pub(crate) mod tests {
         let conn = schema_conn("ffn_browse_page_regress");
         record_browse_page(&conn, "anime", "Naruto", 0, "any", 5).unwrap();
         record_browse_page(&conn, "anime", "Naruto", 0, "any", 2).unwrap();
-        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 0, "any").unwrap(), ("anime".to_string(), 6));
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 0, "any").unwrap(), Some(("anime".to_string(), 6)));
     }
 
     #[test]
@@ -788,14 +794,14 @@ pub(crate) mod tests {
     #[test]
     fn next_browse_page_resumes_after_the_recorded_page_and_starts_at_one_for_a_new_search() {
         let conn = memory_conn();
-        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 0, "any").unwrap(), ("anime".to_string(), 1));
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 0, "any").unwrap(), Some(("anime".to_string(), 1)));
 
         record_browse_page(&conn, "anime", "Naruto", 0, "any", 3).unwrap();
 
-        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 0, "any").unwrap(), ("anime".to_string(), 4));
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 0, "any").unwrap(), Some(("anime".to_string(), 4)));
         // No explicit category: found via the recorded combo, then via any prior search of the fandom.
-        assert_eq!(next_browse_page(&conn, None, "Naruto", 0, "any").unwrap(), ("anime".to_string(), 4));
-        assert_eq!(next_browse_page(&conn, None, "Naruto", 50000, "complete").unwrap(), ("anime".to_string(), 1));
+        assert_eq!(next_browse_page(&conn, None, "Naruto", 0, "any").unwrap(), Some(("anime".to_string(), 4)));
+        assert_eq!(next_browse_page(&conn, None, "Naruto", 50000, "complete").unwrap(), Some(("anime".to_string(), 1)));
     }
 
     #[test]
@@ -805,5 +811,20 @@ pub(crate) mod tests {
 
         assert!(next_browse_page(&conn, Some("anime"), "Naruto", 0, "any").is_err());
         assert!(next_browse_page(&conn, None, "Naruto", 0, "any").is_err());
+    }
+
+    #[test]
+    fn next_ao3_browse_page_surfaces_a_db_error_instead_of_restarting_at_page_one() {
+        let conn = memory_conn();
+        conn.execute_batch("DROP TABLE ao3_browse_state").unwrap();
+
+        assert!(next_ao3_browse_page(&conn, "Naruto", 0, "any").is_err());
+    }
+
+    #[test]
+    fn next_browse_page_is_none_when_no_category_is_given_and_none_is_known() {
+        let conn = memory_conn();
+
+        assert_eq!(next_browse_page(&conn, None, "Naruto", 0, "any").unwrap(), None);
     }
 }

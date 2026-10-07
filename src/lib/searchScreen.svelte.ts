@@ -6,7 +6,7 @@
 // context, which a bare `new SearchScreen()` in a unit test doesn't have.
 
 import * as api from "./api";
-import { applyFandomRename } from "./fandom";
+import { applyFandomRename, renameAo3Tag } from "./fandom";
 import { ficSourceAdapter } from "./ficSource";
 import { getSearchFilterPrefs } from "./filterPrefs";
 import { getPinnedFandoms } from "./pinnedFandoms";
@@ -134,6 +134,7 @@ export class SearchScreen {
   async renameFandom(oldFandom: string, newFandom: string) {
     try {
       await api.renameFandom(oldFandom, newFandom);
+      renameAo3Tag(oldFandom, newFandom);
       ({ pinnedFandoms: this.pinnedFandoms, searchFandom: this.fandom } = applyFandomRename(
         oldFandom,
         newFandom,

@@ -204,6 +204,14 @@ pub fn persist_page<S: FicSource>(
 
             // One transaction: a failure mid-TOC leaves nothing behind, and a
             // 300-chapter import is one commit instead of 300+.
+            //
+            // Architecture review candidate 3 (2026-10-07), rejected: wrapping
+            // this sequence in one `save_story_page` write module. There is no
+            // ordering rule to hide — `upsert_chapter_content` is insert-or-update,
+            // so stubs-before-content is not required; only `story_id` feeds the
+            // later calls — and atomicity is already covered by
+            // `chapter_page_failing_mid_toc_leaves_no_story_behind`. Reopen if a
+            // third caller needs the same write.
             let story_id = db.run_mut(|conn| {
                 let tx = conn.transaction()?;
                 let story_id = S::persist_story(&tx, &meta)?;

@@ -17,10 +17,13 @@
 //! `db::next_browse_page`/`next_ao3_browse_page` (the "Load more" cursor
 //! reads, called only from `search_ffn`/`search_ao3` in `fetch.rs`) stay
 //! outside this trait too. Their signatures differ for real reasons — FFN
-//! resolves a category from an optional hint and returns `(category, page)`,
-//! AO3 has no category and returns just `page` — so a shared method would
-//! need an associated request type wider than either twin, for two call
-//! sites. Reopen if a third source appears.
+//! resolves a category from an optional hint and returns
+//! `Option<(category, page)>` (`None` = no category known; `search_ffn` turns
+//! that into a readable error), AO3 has no category and returns just `page` —
+//! so a shared method would need an associated request type wider than either
+//! twin, for two call sites. Reopen if a third source appears. Re-confirmed
+//! 2026-10-07 (second pass): the one real defect in the pair — AO3's
+//! `.ok()` swallowing DB errors — was fixed in place, with a regression test.
 
 use rusqlite::Connection;
 

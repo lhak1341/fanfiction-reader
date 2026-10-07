@@ -10,6 +10,7 @@ vi.mock("./ficSource", () => ({
 }));
 
 import * as api from "./api";
+import { getAo3Tag, saveAo3Tag } from "./fandom";
 import { ficSourceAdapter } from "./ficSource";
 import { SearchScreen } from "./searchScreen.svelte";
 
@@ -77,6 +78,24 @@ describe("SearchScreen.renameFandom", () => {
 
     expect(search.fandom).toBe("Bleach");
     expect(search.pinnedFandoms.size).toBe(0);
+  });
+
+  it("moves the saved AO3 tag to the new name", async () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+      setItem: (key: string, value: string) => {
+        store.set(key, value);
+      }
+    });
+    vi.mocked(api.renameFandom).mockResolvedValue(1);
+    saveAo3Tag("Naruto", "Naruto tag");
+
+    await makeScreen().renameFandom("Naruto", "Naruto (merged)");
+
+    expect(getAo3Tag("Naruto (merged)")).toBe("Naruto tag");
+    expect(getAo3Tag("Naruto")).toBeUndefined();
+    vi.unstubAllGlobals();
   });
 });
 

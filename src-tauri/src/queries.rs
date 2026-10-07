@@ -223,6 +223,13 @@ pub fn get_story(conn: &Connection, story_id: i64) -> rusqlite::Result<Option<St
 /// store a comma-joined multi-fandom string as one bucket (e.g. "Naruto,
 /// Game of Thrones (TV), ...") — both need a manual one-time fix-up, not
 /// just prevention going forward. Returns how many rows changed.
+///
+/// Updates `stories.fandom` only, on purpose: `browse_state.fandom` is FFN's
+/// own fandom name (it builds the browse URL), not a display label, so
+/// carrying it along would point "Load more" at a fandom FFN doesn't have.
+/// Merging into a real FFN fandom keeps paging working (that fandom's
+/// `browse_state` row already exists); renaming one to a custom label ends
+/// "Load more" with `search_ffn`'s "no category known" error.
 pub fn rename_fandom(conn: &Connection, old_fandom: &str, new_fandom: &str) -> rusqlite::Result<usize> {
     conn.execute("UPDATE stories SET fandom = ?1 WHERE fandom = ?2", rusqlite::params![new_fandom, old_fandom])
 }
