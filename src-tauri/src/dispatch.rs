@@ -1,15 +1,14 @@
 //! Page-shape dispatch: classify a fetched URL into a `PageShape` *once*,
-//! then let both consumers — `persist_page` (success path) and
-//! `resolve_target` (error path, which needs a typed event target) — read
-//! that one answer. Before this module the two walked their own
-//! chapter/listing/category-index ladders, kept in the same order only by
-//! comments (`fetch.rs`, architecture review 2026-07-29 recorded one drift
-//! bug between them).
+//! then let every consumer — `persist_page` (what to parse and write) and
+//! `fetch_session.rs` (whether a reported page is the fetch that's waiting) —
+//! read that one answer. Before this module the success and error paths
+//! walked their own chapter/listing/category-index ladders, kept in the same
+//! order only by comments (`fetch.rs`, architecture review 2026-07-29
+//! recorded one drift bug between them).
 //!
 //! Deliberately free of `AppHandle`/`tauri::State`: takes `(html, url,
 //! hints)` and a `db::Db`, so every shape is testable from fixtures. The FFN
-//! pre-checks (debug dump, Cloudflare-block detection) and event emission
-//! stay in `fetch.rs`. Parsing stays in `ffn.rs`/`ao3.rs`, reached through
+//! pre-checks (debug dump, Cloudflare-block detection) stay in `fetch.rs`. Parsing stays in `ffn.rs`/`ao3.rs`, reached through
 //! `FicSource` (`source.rs`).
 
 use crate::db;
@@ -39,11 +38,46 @@ pub struct FandomIndexFetched {
 /// What a successful persist produced. `FandomIndex` is FFN-only (SPEC.md
 /// §8): `Ao3` never classifies a page as one (`FicSource::category_from_index_url`
 /// defaults to `None`), so no caller needs an `unreachable!()` for it.
-#[derive(Debug)]
+///
+/// Crosses to the frontend only as the raw-URL `fetch_page`/`fetch_ao3_page`
+/// return (the debug page); every typed command unwraps it with `into_*`.
+#[derive(Debug, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
 pub enum FetchOutcome {
     Chapter(ChapterFetched),
     Browse(BrowseFetched),
     FandomIndex(FandomIndexFetched),
+}
+
+impl FetchOutcome {
+    fn describe(&self) -> &'static str {
+        match self {
+            FetchOutcome::Chapter(_) => "a chapter page",
+            FetchOutcome::Browse(_) => "a browse listing",
+            FetchOutcome::FandomIndex(_) => "a category index",
+        }
+    }
+
+    pub fn into_chapter(self) -> Result<ChapterFetched, String> {
+        match self {
+            FetchOutcome::Chapter(fetched) => Ok(fetched),
+            other => Err(format!("expected a chapter page, got {}", other.describe())),
+        }
+    }
+
+    pub fn into_browse(self) -> Result<BrowseFetched, String> {
+        match self {
+            FetchOutcome::Browse(fetched) => Ok(fetched),
+            other => Err(format!("expected a browse listing, got {}", other.describe())),
+        }
+    }
+
+    pub fn into_fandom_index(self) -> Result<FandomIndexFetched, String> {
+        match self {
+            FetchOutcome::FandomIndex(fetched) => Ok(fetched),
+            other => Err(format!("expected a category index, got {}", other.describe())),
+        }
+    }
 }
 
 /// Which of the fetch shapes a URL identifies, with that shape's locator.
@@ -56,7 +90,7 @@ pub enum PageShape<S: FicSource> {
 }
 
 /// The one classification order, shared by `persist_page` and
-/// `resolve_target`: category index, then chapter, then listing.
+/// `fetch_session::TargetKey`: category index, then chapter, then listing.
 ///
 /// A matched chapter locator is definitive — listing/category parsing don't
 /// know to reject `/s/{id}/{chapter}/...` shapes, so checking chapter before
@@ -128,11 +162,13 @@ pub fn chapter_fetch_url(db: &db::Db, story_id: i64, chapter_num: i64) -> Result
     }
 }
 
-/// Parse + persist a fetched page for any `FicSource`. `report_fetch_result`
-/// (`fetch.rs`) / `fetch_ao3_page` turn the `Result` into
-/// `chapter-fetched`/`browse-fetched`/`fandom-index-fetched`/`*-error`
-/// events, since the command that kicked off the fetch already returned by
-/// the time this runs.
+/// Parse + persist a fetched page for any `FicSource`. Called by the fetch
+/// command that is waiting on the page (`fetch.rs`), which returns the
+/// `FetchOutcome` (or the error) straight to its caller.
+///
+/// Each arm parses first and only then takes the DB lock (`Db::run_mut`), so
+/// the one `Mutex<Connection>` is held for the transaction alone — a UI query
+/// never waits behind an HTML parse.
 pub fn persist_page<S: FicSource>(
     db: &db::Db,
     html: &str,
@@ -140,16 +176,13 @@ pub fn persist_page<S: FicSource>(
     fandom_override: Option<&str>,
     external_listing_locator: Option<S::ListingLocator>,
 ) -> Result<FetchOutcome, String> {
-    let shape = classify_page::<S>(page_url)?;
-    let mut conn = db.0.lock().map_err(|e| e.to_string())?;
-
-    match shape {
+    match classify_page::<S>(page_url)? {
         PageShape::FandomIndex(category) => {
             let entries = S::parse_category_index(html);
             if entries.is_empty() {
                 return Err("no fandoms found on this page — not a category index, or the layout changed".to_string());
             }
-            db::replace_fandom_index(&mut conn, &category, &entries).map_err(|e| e.to_string())?;
+            db.run_mut(|conn| db::replace_fandom_index(conn, &category, &entries))?;
             println!("{} indexed {} fandoms (1000+ fics) for category {category}", S::LOG_PREFIX, entries.len());
             Ok(FetchOutcome::FandomIndex(FandomIndexFetched { category, count: entries.len() as i64 }))
         }
@@ -171,20 +204,21 @@ pub fn persist_page<S: FicSource>(
 
             // One transaction: a failure mid-TOC leaves nothing behind, and a
             // 300-chapter import is one commit instead of 300+.
-            let tx = conn.transaction().map_err(|e| e.to_string())?;
-            let story_id = S::persist_story(&tx, &meta).map_err(|e| e.to_string())?;
-            db::ensure_read_state(&tx, story_id).map_err(|e| e.to_string())?;
-            // Register the *full* TOC every time — any story page lists every
-            // chapter, so this keeps titles browsable even before their own
-            // pages have been fetched. Only the chapter we actually
-            // navigated to gets content.
-            for c in &chapters {
-                db::upsert_chapter_stub(&tx, story_id, c.chapter_num(), c.title(), c.source_chapter_id())
-                    .map_err(|e| e.to_string())?;
-            }
-            db::upsert_chapter_content(&tx, story_id, chapter_num, chapter_title, &content, source_chapter_id)
-                .map_err(|e| e.to_string())?;
-            tx.commit().map_err(|e| e.to_string())?;
+            let story_id = db.run_mut(|conn| {
+                let tx = conn.transaction()?;
+                let story_id = S::persist_story(&tx, &meta)?;
+                db::ensure_read_state(&tx, story_id)?;
+                // Register the *full* TOC every time — any story page lists every
+                // chapter, so this keeps titles browsable even before their own
+                // pages have been fetched. Only the chapter we actually
+                // navigated to gets content.
+                for c in &chapters {
+                    db::upsert_chapter_stub(&tx, story_id, c.chapter_num(), c.title(), c.source_chapter_id())?;
+                }
+                db::upsert_chapter_content(&tx, story_id, chapter_num, chapter_title, &content, source_chapter_id)?;
+                tx.commit()?;
+                Ok(story_id)
+            })?;
 
             Ok(FetchOutcome::Chapter(ChapterFetched { story_id, chapter_num }))
         }
@@ -198,27 +232,37 @@ pub fn persist_page<S: FicSource>(
                     S::apply_fandom_override(meta, label);
                 }
             }
-            let tx = conn.transaction().map_err(|e| e.to_string())?;
-            for meta in &summaries {
-                let story_id = S::persist_story(&tx, meta).map_err(|e| e.to_string())?;
-                db::ensure_read_state(&tx, story_id).map_err(|e| e.to_string())?;
-            }
+            let fandom = S::metadata_fandom(&summaries[0]).to_string();
+            let prefix = S::LOG_PREFIX;
             // `resolve_listing_record_locator` picks which locator (if any) gets
             // persisted — `Ffn` prefers the stashed pre-fetch request locator
             // over `locator` (decoded from the fetched URL, lossy for status);
             // `Ao3` always keeps `locator` (its own URL round-trips cleanly).
-            // See `PendingFetch`'s doc comment (`fetch.rs`) for why the decode
+            // See `FetchedPage`'s doc comment (`fetch_session.rs`) for why the decode
             // alone isn't enough.
-            let fandom = S::metadata_fandom(&summaries[0]).to_string();
-            let prefix = S::LOG_PREFIX;
-            if let Some(record_locator) = S::resolve_listing_record_locator(locator, external_listing_locator) {
-                let page = S::listing_page(&record_locator);
-                S::record_listing_page(&tx, &record_locator, page).map_err(|e| e.to_string())?;
-                tx.commit().map_err(|e| e.to_string())?;
-                println!("{prefix} imported {} stories into fandom {fandom:?}, page {page}", summaries.len());
-            } else {
-                tx.commit().map_err(|e| e.to_string())?;
-                println!("{prefix} imported {} stories into fandom {fandom:?} (no search session to bookkeep)", summaries.len());
+            let recorded_page = db.run_mut(|conn| {
+                let tx = conn.transaction()?;
+                for meta in &summaries {
+                    let story_id = S::persist_story(&tx, meta)?;
+                    db::ensure_read_state(&tx, story_id)?;
+                }
+                let page = match S::resolve_listing_record_locator(locator, external_listing_locator) {
+                    Some(record_locator) => {
+                        let page = S::listing_page(&record_locator);
+                        S::record_listing_page(&tx, &record_locator, page)?;
+                        Some(page)
+                    }
+                    None => None,
+                };
+                tx.commit()?;
+                Ok(page)
+            })?;
+            match recorded_page {
+                Some(page) => println!("{prefix} imported {} stories into fandom {fandom:?}, page {page}", summaries.len()),
+                None => println!(
+                    "{prefix} imported {} stories into fandom {fandom:?} (no search session to bookkeep)",
+                    summaries.len()
+                ),
             }
             Ok(FetchOutcome::Browse(BrowseFetched { fandom, count: summaries.len() as i64 }))
         }
@@ -226,52 +270,10 @@ pub fn persist_page<S: FicSource>(
     }
 }
 
-/// Which of the three fetch shapes a URL identifies, and that shape's
-/// identifying fields — the same fields each `*Fetched`/`*FetchError` struct
-/// carries. Recovered from the URL alone wherever the URL encodes it
-/// (browse/fandom-index); a chapter's DB `story_id` doesn't live in the URL
-/// (only the source's own site id does), so that case needs `find_story_id` —
-/// safe because a chapter fetch always targets an already-imported story.
-/// `Unknown` covers a URL matching none of the three shapes (or a malformed
-/// chapter URL) — see `fetch.rs`'s `emit_targeted_error`.
-pub enum FetchTarget {
-    Chapter { story_id: i64, chapter_num: i64 },
-    Browse { fandom: String },
-    FandomIndex { category: String },
-    Unknown,
-}
-
-/// Turns a request URL into its `FetchTarget`, by reading the same
-/// `classify_page` answer `persist_page` does. `fandom_hint` is AO3's own
-/// `fandom_override` — see `FicSource::resolve_target_fandom`. Used to target
-/// a typed error at the right channel (`emit_fetch_outcome`'s `Err` arm) and
-/// by `fetch.rs`'s `resolve_interrupted_target` (FFN only — AO3 never shares
-/// the webview).
-pub fn resolve_target<S: FicSource>(db: &db::Db, url: &str, fandom_hint: Option<&str>) -> FetchTarget {
-    match classify_page::<S>(url) {
-        Ok(PageShape::FandomIndex(category)) => FetchTarget::FandomIndex { category },
-        Ok(PageShape::Chapter(locator)) => {
-            let (source_story_id, chapter_num) = S::chapter_locator_ids(&locator);
-            let story_id =
-                db.0.lock().ok().and_then(|conn| db::find_story_id(&conn, S::SOURCE_TAG, source_story_id).ok().flatten());
-            match story_id {
-                Some(story_id) => FetchTarget::Chapter { story_id, chapter_num },
-                None => FetchTarget::Unknown,
-            }
-        }
-        Ok(PageShape::Listing(locator)) => match S::resolve_target_fandom(locator, fandom_hint) {
-            Some(fandom) => FetchTarget::Browse { fandom },
-            None => FetchTarget::Unknown,
-        },
-        Ok(PageShape::Unknown) | Err(_) => FetchTarget::Unknown,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{ao3, ffn, source};
-    use rusqlite::Connection;
 
     const FFN_STORY_PAGE: &str =
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ffn_story_page.html"));
@@ -284,10 +286,7 @@ mod tests {
         include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/ao3_listing_page.html"));
 
     fn test_db() -> db::Db {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.pragma_update(None, "foreign_keys", true).unwrap();
-        conn.execute_batch(db::SCHEMA).unwrap();
-        db::Db(std::sync::Mutex::new(conn))
+        db::Db(std::sync::Mutex::new(db::tests::memory_conn()))
     }
 
     #[test]
@@ -452,98 +451,27 @@ mod tests {
 
 
     #[test]
-    fn classify_chapter_url_resolves_the_db_story_id_once_imported() {
-        let dbh = test_db();
-        let url = "https://www.fanfiction.net/s/13493099/34/Welcome-to-the-insane-world-of-Pok-mon";
-        let outcome = persist_page::<source::Ffn>(&dbh, FFN_STORY_PAGE, url, None, None).unwrap();
-        let db_story_id = match outcome {
-            FetchOutcome::Chapter(fetched) => fetched.story_id,
-            _ => panic!("expected a Chapter outcome"),
-        };
+    fn into_chapter_unwraps_a_chapter_outcome_and_rejects_the_other_shapes() {
+        let chapter = FetchOutcome::Chapter(ChapterFetched { story_id: 7, chapter_num: 2 });
+        assert_eq!(chapter.into_chapter().unwrap().story_id, 7);
 
-        let target = resolve_target::<source::Ffn>(&dbh, url, None);
-
-        match target {
-            FetchTarget::Chapter { story_id, chapter_num } => {
-                assert_eq!(story_id, db_story_id, "must be the DB id, not FFN's own site id (13493099)");
-                assert_eq!(chapter_num, 34);
-            }
-            _ => panic!("expected FetchTarget::Chapter"),
-        }
+        let browse = FetchOutcome::Browse(BrowseFetched { fandom: "x".to_string(), count: 1 });
+        assert_eq!(browse.into_chapter().unwrap_err(), "expected a chapter page, got a browse listing");
     }
 
-
     #[test]
-    fn classify_chapter_url_for_an_unimported_story_falls_back_to_unknown() {
-        let dbh = test_db();
-        let url = "https://www.fanfiction.net/s/999999999/1/Never-Imported";
+    fn into_browse_and_into_fandom_index_reject_a_mismatched_outcome() {
+        let index = FetchOutcome::FandomIndex(FandomIndexFetched { category: "anime".to_string(), count: 3 });
+        assert_eq!(index.into_browse().unwrap_err(), "expected a browse listing, got a category index");
 
-        assert!(matches!(resolve_target::<source::Ffn>(&dbh, url, None), FetchTarget::Unknown));
+        let chapter = FetchOutcome::Chapter(ChapterFetched { story_id: 1, chapter_num: 1 });
+        assert_eq!(chapter.into_fandom_index().unwrap_err(), "expected a category index, got a chapter page");
     }
 
-
     #[test]
-    fn classify_ffn_browse_url_recovers_fandom_with_no_db_lookup() {
-        let dbh = test_db();
-        let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, "any", 1);
-
-        match resolve_target::<source::Ffn>(&dbh, &url, None) {
-            FetchTarget::Browse { fandom } => assert_eq!(fandom, "Fullmetal Alchemist"),
-            _ => panic!("expected FetchTarget::Browse"),
-        }
-    }
-
-
-    #[test]
-    fn classify_ffn_category_index_url_recovers_category() {
-        let dbh = test_db();
-        let url = "https://www.fanfiction.net/anime/";
-
-        match resolve_target::<source::Ffn>(&dbh, url, None) {
-            FetchTarget::FandomIndex { category } => assert_eq!(category, "anime"),
-            _ => panic!("expected FetchTarget::FandomIndex"),
-        }
-    }
-
-
-    #[test]
-    fn classify_ao3_browse_url_uses_the_fandom_hint_not_the_url_tag() {
-        let dbh = test_db();
-        let url = ao3::build_tag_browse_url("Harry Potter", "bookmarks_count", 0, "any", 1);
-
-        match resolve_target::<source::Ao3>(&dbh, &url, Some("Harry Potter - J. K. Rowling")) {
-            FetchTarget::Browse { fandom } => assert_eq!(fandom, "Harry Potter - J. K. Rowling"),
-            _ => panic!("expected FetchTarget::Browse"),
-        }
-    }
-
-
-    #[test]
-    fn classify_ao3_browse_url_without_a_hint_falls_back_to_unknown() {
-        // AO3's listing URL only encodes its search *tag*, not the
-        // force-applied fandom label — with no hint there's nothing to
-        // recover fandom from, so this is the accepted degenerate case.
-        let dbh = test_db();
-        let url = ao3::build_tag_browse_url("Harry Potter", "bookmarks_count", 0, "any", 1);
-
-        assert!(matches!(resolve_target::<source::Ao3>(&dbh, &url, None), FetchTarget::Unknown));
-    }
-
-
-    #[test]
-    fn classify_ao3_chapter_url_resolves_the_db_story_id_once_imported() {
-        let dbh = test_db();
-        let url = "https://archiveofourown.org/works/85954646/chapters/227238471";
-        let outcome = persist_page::<source::Ao3>(&dbh, AO3_WORK_PAGE, url, None, None).unwrap();
-        let db_story_id = match outcome {
-            FetchOutcome::Chapter(fetched) => fetched.story_id,
-            _ => panic!("expected a Chapter outcome"),
-        };
-
-        match resolve_target::<source::Ao3>(&dbh, url, None) {
-            FetchTarget::Chapter { story_id, .. } => assert_eq!(story_id, db_story_id),
-            _ => panic!("expected FetchTarget::Chapter"),
-        }
+    fn fetch_outcome_serializes_with_a_kind_tag_the_debug_page_can_read() {
+        let json = serde_json::to_value(FetchOutcome::Chapter(ChapterFetched { story_id: 7, chapter_num: 2 })).unwrap();
+        assert_eq!(json, serde_json::json!({ "kind": "chapter", "storyId": 7, "chapterNum": 2 }));
     }
 
     #[test]

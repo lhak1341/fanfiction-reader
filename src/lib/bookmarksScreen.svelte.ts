@@ -8,7 +8,7 @@
 
 import * as api from "./api";
 import { ensureChapterCached } from "./chapterCache";
-import { runPacedBestEffort } from "./pacedLoop";
+import { DEFAULT_JITTER_MS, PauseGate, runPacedBestEffort } from "./pacedLoop";
 import type { SortBy, StoryRow } from "./types";
 
 export class BookmarksScreen {
@@ -45,9 +45,24 @@ export class BookmarksScreen {
 
   private onError: (message: string) => void;
 
+  // The bulk loops below keep running when +page.svelte swaps Reader in (this
+  // instance lives in the page script, not in the list screens), where they
+  // would compete with Reader's own fetches for the one FFN webview. The page
+  // pauses them while Reader is shown; `refreshing`/`downloadingStoryId` stay
+  // set meanwhile, so their buttons stay disabled.
+  private gate = new PauseGate();
+
   constructor(onError: (message: string) => void, initialHideRead: boolean) {
     this.onError = onError;
     this.hideRead = initialHideRead;
+  }
+
+  pauseBackgroundFetches() {
+    this.gate.pause();
+  }
+
+  resumeBackgroundFetches() {
+    this.gate.resume();
   }
 
   async loadFandoms() {
@@ -96,7 +111,9 @@ export class BookmarksScreen {
       await runPacedBestEffort(
         targets,
         (story) => api.fetchChapterAndWait(story.id, 1),
-        (i, total) => (this.refreshProgress = `Refreshing ${i + 1} of ${total}…`)
+        (i, total) => (this.refreshProgress = `Refreshing ${i + 1} of ${total}…`),
+        DEFAULT_JITTER_MS,
+        () => this.gate.wait()
       );
       await this.reloadAll();
     } finally {
@@ -126,7 +143,9 @@ export class BookmarksScreen {
         (i) => {
           this.downloadProgress = `Downloading ${i + 1} of ${missing.length}…`;
           this.downloadDone = i + 1;
-        }
+        },
+        DEFAULT_JITTER_MS,
+        () => this.gate.wait()
       );
       await this.reloadAll();
     } finally {

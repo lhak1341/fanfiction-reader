@@ -46,6 +46,12 @@
     search.loadStories();
   });
 
+  // Bookmark refresh/download loops keep running behind Reader (see
+  // BookmarksScreen's gate) — hold them while it's open.
+  $effect(() => {
+    if (screen === "reader") bookmarks.pauseBackgroundFetches();
+    else bookmarks.resumeBackgroundFetches();
+  });
   $effect(() => saveBookmarksHideRead(bookmarks.hideRead));
   $effect(() => {
     void bookmarks.reloadTrigger;

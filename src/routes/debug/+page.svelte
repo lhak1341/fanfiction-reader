@@ -5,8 +5,9 @@
   import type { StoryRow } from "$lib/types";
 
   // Fetch spike (SPEC.md §3): confirm the webview-navigation strategy clears
-  // Cloudflare on a real story page. Result is printed to the Rust console
-  // (the terminal running `bun run tauri dev`), not shown here.
+  // Cloudflare on a real story page. `fetch_page` resolves once the page is
+  // fetched and persisted; the Rust console (the terminal running
+  // `bun run tauri dev`) has the step-by-step log.
   let spikeUrl = $state("https://www.fanfiction.net/s/8067258/1/");
   let spikeStatus = $state("");
 
@@ -14,9 +15,10 @@
     event.preventDefault();
     spikeStatus = "Opening webview — check the Rust terminal for the result…";
     try {
-      await invoke("fetch_page", { url: spikeUrl, listingLocator: null });
+      const outcome = await invoke("fetch_page", { url: spikeUrl, listingLocator: null });
+      spikeStatus = `Fetched and persisted: ${JSON.stringify(outcome)}`;
     } catch (e) {
-      spikeStatus = `Failed to open spike window: ${e}`;
+      spikeStatus = `Fetch failed: ${e}`;
     }
   }
 

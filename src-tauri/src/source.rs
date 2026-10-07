@@ -65,9 +65,9 @@ pub trait FicSource {
     type ChapterLocator;
     type ListingLocator;
 
-    /// Matches `stories.source` (`db.rs` schema) — lets `dispatch::resolve_target`
-    /// (`dispatch.rs`) resolve a source's own site id to Longform's internal DB id
-    /// generically instead of hand-matching a runtime `FetchSource` enum.
+    /// Matches `stories.source` (`db.rs` schema) — lets `dispatch::chapter_fetch_url`
+    /// pick this source's impl for a stored story generically instead of
+    /// hand-matching a runtime `FetchSource` enum.
     const SOURCE_TAG: &'static str;
 
     /// Prefix for this source's `println!`/`eprintln!` lines in `dispatch.rs`/
@@ -102,16 +102,6 @@ pub trait FicSource {
 
     fn resolve_chapter_num(chapters: &[Self::ChapterRef], locator: &Self::ChapterLocator) -> Result<i64, String>;
 
-    /// `(source_story_id, chapter_num)` — normalizes each source's own
-    /// `ChapterLocator` field names (`story_id`/`chapter_num` vs
-    /// `work_id`/`chapter_id`) so `dispatch::resolve_target` can read a chapter
-    /// locator generically. `chapter_num` is a display/DB value, not
-    /// necessarily what a URL encoded — AO3 locators without an explicit
-    /// chapter id (a bare `/works/{id}` URL) report `0`, matching
-    /// `dispatch::resolve_target`'s existing behavior of treating that as "no
-    /// specific chapter known yet" for lookup purposes.
-    fn chapter_locator_ids(locator: &Self::ChapterLocator) -> (i64, i64);
-
     /// The URL that fetches chapter `chapter_num` of the story whose own-site
     /// id is `source_story_id`. `source_chapter_id` is the per-chapter opaque
     /// id a prior fetch recorded (`chapters.source_chapter_id`), when known —
@@ -136,8 +126,8 @@ pub trait FicSource {
 
     /// Which locator (if any) `record_listing_page` should persist under —
     /// `decoded` came from re-parsing the fetched page's own URL, `external`
-    /// from whatever the caller stashed before the fetch began (`fetch.rs`'s
-    /// `PendingFetch`, FFN-only). `Ffn` prefers `external` and returns `None`
+    /// from whatever the caller stashed before the fetch began (`fetch_session.rs`'s
+    /// `FetchedPage::listing_locator`, FFN-only). `Ffn` prefers `external` and returns `None`
     /// (skip recording) when nothing was stashed — its own URL encoding
     /// can't round-trip `status` losslessly (`build_browse_url`, architecture
     /// review candidate, 2026-07-29), so a bare decode risks persisting a
@@ -145,18 +135,6 @@ pub trait FicSource {
     /// session behind it worth bookkeeping anyway. `Ao3`'s encoding round-trips
     /// cleanly and it never stashes anything, so it always keeps `decoded`.
     fn resolve_listing_record_locator(decoded: Self::ListingLocator, external: Option<Self::ListingLocator>) -> Option<Self::ListingLocator>;
-
-    /// The fandom `dispatch::resolve_target` should report for a `Browse`
-    /// target, given the locator decoded from the URL and (`Ao3` only) the
-    /// caller's own fandom hint. `Ffn`'s listing URL encodes fandom directly,
-    /// so it ignores `fandom_hint` and always returns `decoded`'s. `Ao3`'s
-    /// listing URL only encodes its search *tag*, not the force-applied
-    /// fandom label callers actually care about (`apply_fandom_override`), so
-    /// it ignores `decoded` entirely and returns `fandom_hint` verbatim —
-    /// `None` (no hint given) means there's nothing to recover fandom from,
-    /// the accepted degenerate case (`dispatch::resolve_target` falls back to
-    /// `Unknown`).
-    fn resolve_target_fandom(decoded: Self::ListingLocator, fandom_hint: Option<&str>) -> Option<String>;
 }
 
 pub struct Ffn;
@@ -170,7 +148,7 @@ pub struct FfnChapterLocator {
 /// `Deserialize` so `lib.rs::fetch_page` (a `#[tauri::command]`) can accept
 /// this as a param — always `None` over the wire in practice (only
 /// `search_ffn`'s own in-process call ever supplies `Some`, see
-/// `PendingFetch`), but the IPC macro still needs the bound to compile.
+/// `FetchedPage::listing_locator`, `fetch_session.rs`), but the IPC macro still needs the bound to compile.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FfnListingLocator {
@@ -236,10 +214,6 @@ impl FicSource for Ffn {
         Ok(locator.chapter_num)
     }
 
-    fn chapter_locator_ids(locator: &Self::ChapterLocator) -> (i64, i64) {
-        (locator.story_id, locator.chapter_num)
-    }
-
     fn chapter_url(source_story_id: i64, chapter_num: i64, _source_chapter_id: Option<i64>) -> String {
         format!("https://www.fanfiction.net/s/{source_story_id}/{chapter_num}/")
     }
@@ -266,10 +240,6 @@ impl FicSource for Ffn {
 
     fn resolve_listing_record_locator(_decoded: Self::ListingLocator, external: Option<Self::ListingLocator>) -> Option<Self::ListingLocator> {
         external
-    }
-
-    fn resolve_target_fandom(decoded: Self::ListingLocator, _fandom_hint: Option<&str>) -> Option<String> {
-        Some(decoded.fandom)
     }
 }
 
@@ -343,10 +313,6 @@ impl FicSource for Ao3 {
         }
     }
 
-    fn chapter_locator_ids(locator: &Self::ChapterLocator) -> (i64, i64) {
-        (locator.work_id, locator.chapter_id.unwrap_or(0))
-    }
-
     fn chapter_url(source_story_id: i64, _chapter_num: i64, source_chapter_id: Option<i64>) -> String {
         match source_chapter_id {
             Some(id) => format!("https://archiveofourown.org/works/{source_story_id}/chapters/{id}"),
@@ -380,10 +346,6 @@ impl FicSource for Ao3 {
 
     fn resolve_listing_record_locator(decoded: Self::ListingLocator, _external: Option<Self::ListingLocator>) -> Option<Self::ListingLocator> {
         Some(decoded)
-    }
-
-    fn resolve_target_fandom(_decoded: Self::ListingLocator, fandom_hint: Option<&str>) -> Option<String> {
-        fandom_hint.map(str::to_string)
     }
 }
 

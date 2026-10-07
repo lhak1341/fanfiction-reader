@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { DEFAULT_JITTER_MS, jitterDelay, runPacedBestEffort } from "./pacedLoop";
+import { DEFAULT_JITTER_MS, jitterDelay, PauseGate, runPacedBestEffort } from "./pacedLoop";
 
 describe("jitterDelay", () => {
   // Architecture review candidate 5: exported so Reader.svelte's
@@ -80,5 +80,62 @@ describe("runPacedBestEffort", () => {
 
     await run;
     vi.useRealTimers();
+  });
+
+  it("holds the next item while the gate is paused and continues on resume", async () => {
+    vi.useFakeTimers();
+    const gate = new PauseGate();
+    const fn = vi.fn(async () => undefined);
+
+    const run = runPacedBestEffort([1, 2, 3], fn, undefined, DEFAULT_JITTER_MS, () => gate.wait());
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    gate.pause();
+    await vi.advanceTimersByTimeAsync(DEFAULT_JITTER_MS.max * 5);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    gate.resume();
+    await vi.advanceTimersByTimeAsync(DEFAULT_JITTER_MS.max * 3);
+    await run;
+    expect(fn).toHaveBeenCalledTimes(3);
+    vi.useRealTimers();
+  });
+
+  it("does not start the first item while the gate is already paused", async () => {
+    vi.useFakeTimers();
+    const gate = new PauseGate();
+    gate.pause();
+    const fn = vi.fn(async () => undefined);
+
+    const run = runPacedBestEffort([1], fn, undefined, DEFAULT_JITTER_MS, () => gate.wait());
+    await vi.advanceTimersByTimeAsync(DEFAULT_JITTER_MS.max * 5);
+    expect(fn).not.toHaveBeenCalled();
+
+    gate.resume();
+    await run;
+    expect(fn).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+});
+
+describe("PauseGate", () => {
+  it("wait() resolves immediately when never paused", async () => {
+    await expect(new PauseGate().wait()).resolves.toBeUndefined();
+  });
+
+  it("resume() releases every pending waiter", async () => {
+    const gate = new PauseGate();
+    gate.pause();
+    const released = vi.fn();
+    const a = gate.wait().then(released);
+    const b = gate.wait().then(released);
+    await Promise.resolve();
+    expect(released).not.toHaveBeenCalled();
+
+    gate.resume();
+    await Promise.all([a, b]);
+    expect(released).toHaveBeenCalledTimes(2);
   });
 });

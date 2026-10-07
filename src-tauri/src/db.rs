@@ -128,6 +128,14 @@ impl Db {
         let conn = self.0.lock().map_err(|e| e.to_string())?;
         f(&conn).map_err(|e| e.to_string())
     }
+
+    /// `run` for work that needs `&mut Connection` (a transaction). The lock
+    /// is held only while `f` runs, so callers parse first and pass in the
+    /// parsed result.
+    pub fn run_mut<T>(&self, f: impl FnOnce(&mut Connection) -> rusqlite::Result<T>) -> Result<T, String> {
+        let mut conn = self.0.lock().map_err(|e| e.to_string())?;
+        f(&mut conn).map_err(|e| e.to_string())
+    }
 }
 
 /// The two `stories` upserts' SQL, named so `upsert_sql_columns_cover_the_schema`
@@ -233,21 +241,6 @@ pub fn upsert_ao3_story(conn: &Connection, meta: &crate::ao3::Ao3StoryMetadata) 
         ],
         |row| row.get(0),
     )
-}
-
-/// Resolves a story's internal `stories.id` from its natural (source,
-/// source_story_id) key — a plain lookup, not an upsert. Used to identify a
-/// chapter fetch that's failing (`dispatch::resolve_target`): the
-/// story already exists (a chapter refetch always targets an already-
-/// imported story), but a failure before `upsert_story`/`upsert_ao3_story`
-/// runs means the DB id isn't otherwise in hand.
-pub fn find_story_id(conn: &Connection, source: &str, source_story_id: i64) -> rusqlite::Result<Option<i64>> {
-    conn.query_row(
-        "SELECT id FROM stories WHERE source = ?1 AND source_story_id = ?2",
-        rusqlite::params![source, source_story_id],
-        |row| row.get(0),
-    )
-    .optional()
 }
 
 /// One `"{table}: {n} row(s)"` line per user table, name-ordered — behind the
@@ -361,13 +354,15 @@ pub fn next_browse_page(
     status: &str,
 ) -> rusqlite::Result<(String, i64)> {
     if let Some(category) = explicit_category {
+        // `.optional()?`, not `.ok()`: only "no row yet" means page 1 — any other
+        // DB error must surface, not silently restart the search from page 1.
         let last: Option<i64> = conn
             .query_row(
                 "SELECT last_page_fetched FROM browse_state WHERE fandom = ?1 AND min_word_count = ?2 AND status = ?3",
                 rusqlite::params![fandom, min_word_count, status],
                 |row| row.get(0),
             )
-            .ok();
+            .optional()?;
         return Ok((category.to_string(), last.unwrap_or(0) + 1));
     }
 
@@ -379,7 +374,7 @@ pub fn next_browse_page(
             rusqlite::params![fandom, min_word_count, status],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
         )
-        .ok()
+        .optional()?
     {
         return Ok((category, last + 1));
     }
@@ -520,6 +515,16 @@ pub(crate) mod tests {
         let path = std::env::temp_dir().join(format!("longform_db_test_{name}_{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
         Connection::open(&path).unwrap()
+    }
+
+    /// The default fixture for tests that don't care about the on-disk FK
+    /// quirk above: an in-memory connection with `SCHEMA` applied and
+    /// foreign keys on. (Migration tests keep `schema_conn`/`temp_conn`.)
+    pub(crate) fn memory_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        conn
     }
 
     pub(crate) fn schema_conn(name: &str) -> Connection {
@@ -778,5 +783,27 @@ pub(crate) mod tests {
         record_ao3_browse_page(&conn, "Naruto", 0, "any", 5).unwrap();
         record_ao3_browse_page(&conn, "Naruto", 0, "any", 2).unwrap();
         assert_eq!(next_ao3_browse_page(&conn, "Naruto", 0, "any").unwrap(), 6);
+    }
+
+    #[test]
+    fn next_browse_page_resumes_after_the_recorded_page_and_starts_at_one_for_a_new_search() {
+        let conn = memory_conn();
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 0, "any").unwrap(), ("anime".to_string(), 1));
+
+        record_browse_page(&conn, "anime", "Naruto", 0, "any", 3).unwrap();
+
+        assert_eq!(next_browse_page(&conn, Some("anime"), "Naruto", 0, "any").unwrap(), ("anime".to_string(), 4));
+        // No explicit category: found via the recorded combo, then via any prior search of the fandom.
+        assert_eq!(next_browse_page(&conn, None, "Naruto", 0, "any").unwrap(), ("anime".to_string(), 4));
+        assert_eq!(next_browse_page(&conn, None, "Naruto", 50000, "complete").unwrap(), ("anime".to_string(), 1));
+    }
+
+    #[test]
+    fn next_browse_page_surfaces_a_db_error_instead_of_restarting_at_page_one() {
+        let conn = memory_conn();
+        conn.execute_batch("DROP TABLE browse_state").unwrap();
+
+        assert!(next_browse_page(&conn, Some("anime"), "Naruto", 0, "any").is_err());
+        assert!(next_browse_page(&conn, None, "Naruto", 0, "any").is_err());
     }
 }

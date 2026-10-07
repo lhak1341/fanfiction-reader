@@ -4,7 +4,7 @@
   // Chapters are fetched lazily (SPEC.md §3/§6): a cached chapter renders
   // instantly, an uncached one triggers a real webview fetch (same
   // Cloudflare/webview strategy as the initial fetch) and waits for the
-  // `chapter-fetched` event before rendering.
+  // fetch to resolve before rendering.
   import { tick } from "svelte";
   import { ChevronLeft, ChevronRight, Check, Menu, Star, Type, X } from "lucide-svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";

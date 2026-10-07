@@ -2,13 +2,15 @@ mod ao3;
 mod db;
 mod dispatch;
 mod fetch;
+mod fetch_session;
 mod ffn;
 mod migrations;
 mod queries;
 mod scrape;
 mod source;
 
-use fetch::{add_story_by_url, fetch_ao3_page, fetch_chapter, fetch_page, index_ffn_category, report_fetch_result, search_ao3, search_ffn, FetchLock};
+use fetch::{add_story_by_url, fetch_ao3_page, fetch_chapter, fetch_page, index_ffn_category, report_fetch_result, search_ao3, search_ffn};
+use fetch_session::FetchSession;
 use tauri::Manager;
 
 /// Sanity check for the SQLite schema (SPEC.md §5): confirms every table
@@ -22,13 +24,12 @@ fn db_health_check(db: tauri::State<db::Db>) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 fn list_stories(db: tauri::State<db::Db>, filters: queries::StoryFilters) -> Result<Vec<queries::StoryRow>, String> {
-    db.run(|conn| queries::list_stories(conn, &filters))
+    db.run(|conn| queries::list_stories(conn, &filters, queries::Scope::All))
 }
 
 #[tauri::command]
-fn list_bookmarks(db: tauri::State<db::Db>, mut filters: queries::StoryFilters) -> Result<Vec<queries::StoryRow>, String> {
-    filters.bookmarked_only = true;
-    db.run(|conn| queries::list_stories(conn, &filters))
+fn list_bookmarks(db: tauri::State<db::Db>, filters: queries::StoryFilters) -> Result<Vec<queries::StoryRow>, String> {
+    db.run(|conn| queries::list_stories(conn, &filters, queries::Scope::BookmarksOnly))
 }
 
 #[tauri::command]
@@ -98,7 +99,7 @@ pub fn run() {
         .setup(|app| {
             let conn = db::init(&app.handle())?;
             app.manage(db::Db(std::sync::Mutex::new(conn)));
-            app.manage(FetchLock(tokio::sync::Mutex::new(None)));
+            app.manage(FetchSession::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

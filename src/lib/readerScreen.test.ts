@@ -90,6 +90,91 @@ describe("ReaderScreen.loadChapter", () => {
   });
 });
 
+describe("ReaderScreen.init failures", () => {
+  it("surfaces a getStory failure as fetchError and stops loading, without rejecting", async () => {
+    vi.mocked(api.getStory).mockRejectedValue(new Error("db locked"));
+    const screen = new ReaderScreen(story.id);
+
+    await expect(screen.init(1)).resolves.toBeUndefined();
+
+    expect(screen.fetchError).toBe("Could not load story: db locked");
+    expect(screen.loading).toBe(false);
+    expect(ensureChapterCached).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a listChapters failure the same way", async () => {
+    vi.mocked(api.getStory).mockResolvedValue(story);
+    vi.mocked(api.listChapters).mockRejectedValue("disk full");
+    const screen = new ReaderScreen(story.id);
+
+    await screen.init(1);
+
+    expect(screen.fetchError).toBe("Could not load story: disk full");
+    expect(screen.loading).toBe(false);
+    expect(ensureChapterCached).not.toHaveBeenCalled();
+  });
+
+  it("reports a missing story as \"story not found\"", async () => {
+    vi.mocked(api.getStory).mockResolvedValue(null);
+    const screen = new ReaderScreen(story.id);
+
+    await screen.init(1);
+
+    expect(screen.fetchError).toBe("story not found");
+    expect(screen.loading).toBe(false);
+    expect(ensureChapterCached).not.toHaveBeenCalled();
+  });
+});
+
+describe("ReaderScreen resume bookkeeping failures", () => {
+  it("keeps a loaded chapter on screen, notifies the caller and still prefetches when saving the resume position fails", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(api.getStory).mockResolvedValue(story);
+    vi.mocked(api.listChapters).mockResolvedValue(makeChapters(story.chapterCount));
+    vi.mocked(ensureChapterCached).mockResolvedValue({
+      content: { title: "Ch 1", content: "text", isCached: true },
+      chapters: makeChapters(story.chapterCount),
+      wasFetched: false
+    });
+    vi.mocked(api.setResumeChapter).mockRejectedValue(new Error("db locked"));
+    const onChanged = vi.fn();
+    const screen = new ReaderScreen(story.id, onChanged);
+
+    await screen.init(1);
+    await flush();
+
+    expect(screen.fetchError).toBe("");
+    expect(screen.content?.content).toBe("text");
+    expect(screen.currentChapterNum).toBe(1);
+    expect(screen.loading).toBe(false);
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(errors).toHaveBeenCalled();
+    // The prefetch chain still ran: chapter 1 for the load, then its neighbours.
+    expect(vi.mocked(ensureChapterCached).mock.calls.map((c) => c[1])).toContain(2);
+    errors.mockRestore();
+  });
+
+  it("keeps a loaded chapter on screen when onChanged throws", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(api.getStory).mockResolvedValue(story);
+    vi.mocked(api.listChapters).mockResolvedValue(makeChapters(story.chapterCount));
+    vi.mocked(ensureChapterCached).mockResolvedValue({
+      content: { title: "Ch 1", content: "text", isCached: true },
+      chapters: makeChapters(story.chapterCount),
+      wasFetched: false
+    });
+    const screen = new ReaderScreen(story.id, () => {
+      throw new Error("refresh blew up");
+    });
+
+    await screen.init(1);
+
+    expect(screen.fetchError).toBe("");
+    expect(screen.content?.content).toBe("text");
+    errors.mockRestore();
+  });
+});
+
 // Holds the first `ensureChapterCached` call for each listed chapter until
 // its returned `release`/`fail` is called; every other call resolves at once.
 function gateFirstCall(nums: number[]) {

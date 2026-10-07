@@ -24,17 +24,47 @@ export function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/// A pause/resume switch a paced loop checks before each item. Open by
+/// default; while paused, `wait()` stays pending until `resume()`. Lets a
+/// background loop (bookmark refresh/download) stay out of the way of a
+/// foreground fetch (Reader) without being cancelled — the item already in
+/// flight when `pause()` lands still finishes (or is interrupted by the
+/// foreground fetch, which wins under "newest wins").
+export class PauseGate {
+  private paused = false;
+  private waiters: Array<() => void> = [];
+
+  pause() {
+    this.paused = true;
+  }
+
+  resume() {
+    this.paused = false;
+    const waiters = this.waiters;
+    this.waiters = [];
+    for (const wake of waiters) wake();
+  }
+
+  wait(): Promise<void> {
+    return this.paused ? new Promise((resolve) => this.waiters.push(resolve)) : Promise.resolve();
+  }
+}
+
 /// Runs `fn` over `items` sequentially, pacing between calls (never after
 /// the last) and never stopping early on failure — one item throwing just
 /// means that item's `result` is the `Error`, the rest still run.
+/// `beforeEach`, when given, is awaited before every item (including the
+/// first) — pass `gate.wait` to let a `PauseGate` hold the loop.
 export async function runPacedBestEffort<T, R>(
   items: readonly T[],
   fn: (item: T, index: number) => Promise<R>,
   onProgress?: (index: number, total: number, item: T, result: R | Error) => void,
-  jitter: typeof DEFAULT_JITTER_MS = DEFAULT_JITTER_MS
+  jitter: typeof DEFAULT_JITTER_MS = DEFAULT_JITTER_MS,
+  beforeEach?: () => Promise<void>
 ): Promise<void> {
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
+    await beforeEach?.();
     try {
       const result = await fn(item, i);
       onProgress?.(i, items.length, item, result);

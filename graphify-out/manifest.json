@@ -40,8 +40,8 @@
     "semantic_hash": ""
   },
   "src-tauri/src/db.rs": {
-    "mtime": 1791307545.1640801,
-    "ast_hash": "e9d162a224a4bcb2d9b8f3803aa7ad9a",
+    "mtime": 1791376899.2990284,
+    "ast_hash": "21d8e96a84bad674f77a70b960b72c06",
     "semantic_hash": ""
   },
   "src-tauri/src/ffn.rs": {
@@ -50,8 +50,8 @@
     "semantic_hash": "795437a4bee140e9375a552e6aca5f5c"
   },
   "src-tauri/src/lib.rs": {
-    "mtime": 1791308054.2990847,
-    "ast_hash": "cf2debe45284929f7ff710455361413a",
+    "mtime": 1791376661.2122498,
+    "ast_hash": "57db69dd241a163970fc58f5be7d66d4",
     "semantic_hash": ""
   },
   "src-tauri/src/main.rs": {
@@ -60,9 +60,9 @@
     "semantic_hash": "84d6270fa0d45211c1386bd04bb002e8"
   },
   "src-tauri/src/queries.rs": {
-    "mtime": 1788152949.2376795,
-    "ast_hash": "32b90025d625ba7bb7f62835bb54b553",
-    "semantic_hash": "32b90025d625ba7bb7f62835bb54b553"
+    "mtime": 1791376736.3326395,
+    "ast_hash": "d1ecf24d55b8c353faeae95c920fe832",
+    "semantic_hash": ""
   },
   "src-tauri/src/scrape.rs": {
     "mtime": 1788153422.6302183,
@@ -70,8 +70,8 @@
     "semantic_hash": "e38046f98ee4ca3c409b57bea2a2d8d5"
   },
   "src-tauri/src/source.rs": {
-    "mtime": 1791307597.956809,
-    "ast_hash": "864ab1f71a650d95ad4dedc395bc3fd6",
+    "mtime": 1791375671.2834997,
+    "ast_hash": "d0c21a6c06b814776754fef6c95c1d29",
     "semantic_hash": ""
   },
   "src-tauri/tauri.conf.json": {
@@ -80,19 +80,19 @@
     "semantic_hash": "852f81e2873351cfe5a8798aa94b1c28"
   },
   "src/lib/api.ts": {
-    "mtime": 1791308083.8042676,
-    "ast_hash": "fc562588757ff338a1ceb059d6242997",
+    "mtime": 1791375619.1366143,
+    "ast_hash": "17e00eb904f5b93a179be008ef625ea3",
     "semantic_hash": ""
   },
   "src/lib/bookmarksScreen.svelte.ts": {
-    "mtime": 1784648868.2003093,
-    "ast_hash": "d0eaf42a0479580a7ba2be2eb157f59b",
-    "semantic_hash": "d0eaf42a0479580a7ba2be2eb157f59b"
+    "mtime": 1791376245.5852997,
+    "ast_hash": "24954178e354914129b3dbba66aa404b",
+    "semantic_hash": ""
   },
   "src/lib/chapterCache.ts": {
-    "mtime": 1784460519.2674072,
-    "ast_hash": "4c081e4692bd1a2af98e02c2303887d5",
-    "semantic_hash": "4c081e4692bd1a2af98e02c2303887d5"
+    "mtime": 1791335569.5253386,
+    "ast_hash": "4c87bf4a94ec16dee056f928ed910077",
+    "semantic_hash": ""
   },
   "src/lib/components/FandomPicker.svelte": {
     "mtime": 1784438108.732473,
@@ -100,9 +100,9 @@
     "semantic_hash": "179a6b08c00873bec40a77d201f93831"
   },
   "src/lib/components/Reader.svelte": {
-    "mtime": 1784822056.4214964,
-    "ast_hash": "2ebde4bae77a8c29b87e4dd95dd54f9a",
-    "semantic_hash": "2ebde4bae77a8c29b87e4dd95dd54f9a"
+    "mtime": 1791375671.2824726,
+    "ast_hash": "e0c7ac6d9a1a7dfa815e543a7a1173e7",
+    "semantic_hash": ""
   },
   "src/lib/components/RowActions.svelte": {
     "mtime": 1785305779.2535958,
@@ -110,8 +110,8 @@
     "semantic_hash": "e472098c4a2b676ad60e640485e26a0c"
   },
   "src/lib/components/SearchModal.svelte": {
-    "mtime": 1791308644.6603525,
-    "ast_hash": "23f2f5d16f938dc3e1919ccd2afdf346",
+    "mtime": 1791337225.6112103,
+    "ast_hash": "27f30dea55e3ec9af22a239c29b6ffd8",
     "semantic_hash": ""
   },
   "src/lib/components/StatusBadges.svelte": {
@@ -140,9 +140,9 @@
     "semantic_hash": "f901aa7dcd333184604aac8d42053775"
   },
   "src/lib/ficSource.ts": {
-    "mtime": 1785306337.0330908,
-    "ast_hash": "72a58c117e774bc31fcb0884271ca81b",
-    "semantic_hash": "72a58c117e774bc31fcb0884271ca81b"
+    "mtime": 1791335581.0370934,
+    "ast_hash": "cb9797507dac846cbe53f170543b3e54",
+    "semantic_hash": ""
   },
   "src/lib/filterPrefs.ts": {
     "mtime": 1784822023.7589278,
@@ -150,9 +150,9 @@
     "semantic_hash": "112e4edb518d2293a59371760da92b37"
   },
   "src/lib/format.ts": {
-    "mtime": 1784391169.3005362,
-    "ast_hash": "f42effd8dfdbabbae4bf331e7bde232d",
-    "semantic_hash": "f42effd8dfdbabbae4bf331e7bde232d"
+    "mtime": 1791337282.4107955,
+    "ast_hash": "b546cb4bcfa87727c3bc94874fe98c3b",
+    "semantic_hash": ""
   },
   "src/lib/normalize.ts": {
     "mtime": 1784385322.855994,
@@ -165,9 +165,9 @@
     "semantic_hash": "382de2d9dc6dc0c61250a7e2f5889615"
   },
   "src/lib/pacedLoop.ts": {
-    "mtime": 1784649417.8123221,
-    "ast_hash": "e31cd093ab5e19577cb3ff581c228dec",
-    "semantic_hash": "e31cd093ab5e19577cb3ff581c228dec"
+    "mtime": 1791376201.9723346,
+    "ast_hash": "b05dd5117f357279e10c5c5f0a97ac7f",
+    "semantic_hash": ""
   },
   "src/lib/persistedPref.ts": {
     "mtime": 1784821499.840786,
@@ -185,13 +185,13 @@
     "semantic_hash": "1cfb03fd99516b2939f44857ff7d5667"
   },
   "src/lib/readerScreen.svelte.ts": {
-    "mtime": 1791307671.2252343,
-    "ast_hash": "2eb603fafa7be0e9309da727a22d369e",
+    "mtime": 1791377349.827536,
+    "ast_hash": "57d258df73a2b58da88970deb4c0d46f",
     "semantic_hash": ""
   },
   "src/lib/searchModalScreen.svelte.ts": {
-    "mtime": 1791308644.65934,
-    "ast_hash": "2adf8ffbbabe43eee10eb432b1bf2b3c",
+    "mtime": 1791336578.647132,
+    "ast_hash": "de16f6c1dcd0d641bacb73ed23911a18",
     "semantic_hash": ""
   },
   "src/lib/searchScreen.svelte.ts": {
@@ -209,20 +209,15 @@
     "ast_hash": "80d9549e6a9d105368b1c305529c87a4",
     "semantic_hash": ""
   },
-  "src/lib/tauriEvents.ts": {
-    "mtime": 1785305452.192759,
-    "ast_hash": "684b48a94b36c2c85a2ad6b9ff1c6a84",
-    "semantic_hash": "684b48a94b36c2c85a2ad6b9ff1c6a84"
-  },
   "src/lib/theme.ts": {
     "mtime": 1784852105.3909156,
     "ast_hash": "c089381d52a14265d104c4385c9ba23e",
     "semantic_hash": "c089381d52a14265d104c4385c9ba23e"
   },
   "src/lib/types.ts": {
-    "mtime": 1788152972.4133372,
-    "ast_hash": "6fef08692853c834cd5b42acb6b828db",
-    "semantic_hash": "6fef08692853c834cd5b42acb6b828db"
+    "mtime": 1791375619.137278,
+    "ast_hash": "b0115a1ee8bbde807a9e653b49912412",
+    "semantic_hash": ""
   },
   "src/lib/typography.ts": {
     "mtime": 1784458874.0898404,
@@ -245,13 +240,13 @@
     "semantic_hash": "6fcc01a9e86b5ac2814ef7b2e6831657"
   },
   "src/routes/+page.svelte": {
-    "mtime": 1791308644.6608965,
-    "ast_hash": "41b74d16b5d133829d8451471b574854",
+    "mtime": 1791376210.834406,
+    "ast_hash": "96775425daa1d59aa9015b390d016cc4",
     "semantic_hash": ""
   },
   "src/routes/debug/+page.svelte": {
-    "mtime": 1785947268.6480622,
-    "ast_hash": "0f186cce03591f4960eaa1348772b518",
+    "mtime": 1791375633.480597,
+    "ast_hash": "d57bbeda358362ffdb53379f9f4c59c1",
     "semantic_hash": ""
   },
   "svelte.config.js": {
@@ -275,14 +270,14 @@
     "semantic_hash": "c3d54ccee9bf23eb15ee480f57068775"
   },
   "CLAUDE.md": {
-    "mtime": 1791310010.9453168,
-    "ast_hash": "bf949911674c705ee9de4989f612f637",
+    "mtime": 1791338083.7535968,
+    "ast_hash": "e9051c016c2ac9c0fa28756ff9d59c4a",
     "semantic_hash": ""
   },
   "CONTEXT.md": {
-    "mtime": 1784850450.9405875,
-    "ast_hash": "8b015ae589b607e817ffca4e2b290d04",
-    "semantic_hash": "8b015ae589b607e817ffca4e2b290d04"
+    "mtime": 1791375671.28415,
+    "ast_hash": "b0762e9867684d5f1eaaf0000aaf93df",
+    "semantic_hash": ""
   },
   "README.md": {
     "mtime": 1784365714.7750103,
@@ -290,8 +285,8 @@
     "semantic_hash": "2787283facf1123fe6c06de5e0de8013"
   },
   "docs/SPEC.md": {
-    "mtime": 1791308644.6614647,
-    "ast_hash": "89708dbd20e6bc77acae5169b34c9757",
+    "mtime": 1791377362.1943355,
+    "ast_hash": "bc6bb00242091b529c858abada3ab0eb",
     "semantic_hash": ""
   },
   "docs/wayfinder/map.md": {
@@ -330,8 +325,8 @@
     "semantic_hash": "91baf8024c006e814c54d85a56e4efdd"
   },
   "src-tauri/src/fetch.rs": {
-    "mtime": 1791308054.2988381,
-    "ast_hash": "e52e51662dbabc1648bc2ad3e806e1e5",
+    "mtime": 1791376661.2141337,
+    "ast_hash": "bd5fb49063e9986438f870f89139bda8",
     "semantic_hash": ""
   },
   "src-tauri/src/fetch_page_init.js": {
@@ -440,8 +435,8 @@
     "semantic_hash": ""
   },
   "src-tauri/src/dispatch.rs": {
-    "mtime": 1791308054.2983754,
-    "ast_hash": "7cc118b60f2af17a87ed9538515ed28c",
+    "mtime": 1791376899.2996092,
+    "ast_hash": "948f28d67b8bf35b110ce465c6bea534",
     "semantic_hash": ""
   },
   "src-tauri/src/migrations.rs": {
@@ -455,13 +450,13 @@
     "semantic_hash": ""
   },
   "docs/TESTING.md": {
-    "mtime": 1788153152.877603,
-    "ast_hash": "71580e9887137f56e936d305205f6000",
+    "mtime": 1791377513.355583,
+    "ast_hash": "570bc417cc27f9b2589460828669ceec",
     "semantic_hash": ""
   },
   "src-tauri/CLAUDE.md": {
-    "mtime": 1791310011.175822,
-    "ast_hash": "94fc5f28ea5dc3dd3d4d3f1e9006a1aa",
+    "mtime": 1791377513.3557365,
+    "ast_hash": "06392cba2320d55de7bc86de17a081f8",
     "semantic_hash": ""
   },
   "src/CLAUDE.md": {
@@ -472,6 +467,11 @@
   "src-tauri/icons/icon.svg": {
     "mtime": 1791309933.265722,
     "ast_hash": "5c7870e1f7b595d327d5e902177c53c1",
+    "semantic_hash": ""
+  },
+  "src-tauri/src/fetch_session.rs": {
+    "mtime": 1791375592.9232528,
+    "ast_hash": "c938fa880bb0faaf258fd85f0ff1c967",
     "semantic_hash": ""
   }
 }

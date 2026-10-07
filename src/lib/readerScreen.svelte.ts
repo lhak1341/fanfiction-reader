@@ -48,10 +48,27 @@ export class ReaderScreen {
     this.onChanged = onChanged;
   }
 
+  // Never rejects: `loading` starts `true` and only `runLoad` clears it, so a
+  // throw here used to leave the spinner up forever with no error shown.
   async init(initialChapterNum: number) {
-    this.story = (await api.getStory(this.storyId)) ?? undefined;
-    this.chapters = await api.listChapters(this.storyId);
+    try {
+      const story = await api.getStory(this.storyId);
+      if (!story) {
+        this.fail("story not found");
+        return;
+      }
+      this.story = story;
+      this.chapters = await api.listChapters(this.storyId);
+    } catch (e) {
+      this.fail(`Could not load story: ${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
     await this.loadChapter(initialChapterNum);
+  }
+
+  private fail(message: string) {
+    this.fetchError = message;
+    this.loading = false;
   }
 
   // A fetch can grow the story's metadata (new chapters on an in-progress
@@ -124,6 +141,7 @@ export class ReaderScreen {
       this.loading = false;
       return;
     }
+    let rendered = false;
     try {
       const result = await ensureChapterCached(this.storyId, num);
       if (myGen !== this.loadGen) return;
@@ -132,15 +150,29 @@ export class ReaderScreen {
       if (result.chapters) this.chapters = result.chapters;
       this.content = result.content ?? undefined;
       this.currentChapterNum = num;
-      await api.setResumeChapter(this.storyId, num);
-      this.onChanged?.();
-      void this.prefetchNeighbors(myGen, num);
+      rendered = true;
     } catch (e) {
       if (myGen !== this.loadGen) return;
       this.fetchError = e instanceof Error ? e.message : String(e);
     } finally {
       if (myGen === this.loadGen) this.loading = false;
     }
+    if (!rendered) return;
+
+    // The chapter is already on screen: a failure to remember the position or
+    // to tell the caller must not replace it with an error banner (the
+    // template shows `fetchError` instead of `content`) or skip the prefetch.
+    try {
+      await api.setResumeChapter(this.storyId, num);
+    } catch (e) {
+      console.error("could not save resume position:", e);
+    }
+    try {
+      this.onChanged?.();
+    } catch (e) {
+      console.error("onChanged failed:", e);
+    }
+    void this.prefetchNeighbors(myGen, num);
   }
 
   async goToChapter(num: number, currentScrollTop?: number) {

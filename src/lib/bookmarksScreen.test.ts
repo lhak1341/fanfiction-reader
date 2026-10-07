@@ -124,3 +124,56 @@ describe("BookmarksScreen.downloadAllChapters", () => {
     expect(vi.mocked(ensureChapterCached)).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("BookmarksScreen background fetch pause", () => {
+  // +page.svelte pauses these loops while Reader is shown — they keep running
+  // behind it otherwise and compete for the one FFN webview.
+  it("refresh() holds its fetches while paused, keeps `refreshing` set, and finishes after resume", async () => {
+    vi.useFakeTimers();
+    vi.mocked(api.listBookmarks).mockResolvedValueOnce([story, { ...story, id: 2 }]);
+    vi.mocked(api.fetchChapterAndWait).mockResolvedValue(undefined);
+    const bookmarks = makeScreen();
+    bookmarks.pauseBackgroundFetches();
+
+    const run = bookmarks.refresh();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(vi.mocked(api.fetchChapterAndWait)).not.toHaveBeenCalled();
+    expect(bookmarks.refreshing).toBe(true);
+
+    bookmarks.resumeBackgroundFetches();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await run;
+
+    expect(vi.mocked(api.fetchChapterAndWait).mock.calls.map((c) => c[0])).toEqual([1, 2]);
+    expect(bookmarks.refreshing).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("downloadAllChapters() stops between chapters when paused mid-download, then continues", async () => {
+    vi.useFakeTimers();
+    const chapters: ChapterListItem[] = [
+      { chapterNum: 1, title: "Ch 1", isCached: false, sourceChapterId: null },
+      { chapterNum: 2, title: "Ch 2", isCached: false, sourceChapterId: null }
+    ];
+    vi.mocked(api.listChapters).mockResolvedValue(chapters);
+    vi.mocked(ensureChapterCached).mockResolvedValue({ content: null, chapters, wasFetched: true });
+    const bookmarks = makeScreen();
+
+    const run = bookmarks.downloadAllChapters(story);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(ensureChapterCached)).toHaveBeenCalledTimes(1);
+
+    bookmarks.pauseBackgroundFetches();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(vi.mocked(ensureChapterCached)).toHaveBeenCalledTimes(1);
+    expect(bookmarks.downloadingStoryId).toBe(story.id);
+
+    bookmarks.resumeBackgroundFetches();
+    await vi.advanceTimersByTimeAsync(10_000);
+    await run;
+
+    expect(vi.mocked(ensureChapterCached)).toHaveBeenCalledTimes(2);
+    expect(bookmarks.downloadingStoryId).toBeNull();
+    vi.useRealTimers();
+  });
+});

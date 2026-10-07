@@ -105,26 +105,3 @@ export interface FandomIndexFetched {
   category: string;
   count: number;
 }
-
-// Error twins of the three *Fetched shapes above — carry the same
-// identifying fields as their success counterpart so `awaitCorrelatedEvent`
-// can apply one `match` predicate across both listeners. The one exception
-// (a URL matching none of the three known fetch shapes, `lib.rs`'s
-// `FetchTarget::Unknown`) still broadcasts a bare `message` with no id
-// fields — every real caller now supplies a match predicate, so that
-// broadcast simply matches nobody rather than misfiring one.
-export interface ChapterFetchError {
-  storyId: number;
-  chapterNum: number;
-  message: string;
-}
-
-export interface BrowseFetchError {
-  fandom: string;
-  message: string;
-}
-
-export interface FandomIndexFetchError {
-  category: string;
-  message: string;
-}

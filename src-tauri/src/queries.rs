@@ -44,7 +44,7 @@ pub struct StoryRow {
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoryFilters {
-    /// `None` or `"All fandoms"` means no fandom filter.
+    /// `None` or empty means no fandom filter.
     pub fandom: Option<String>,
     /// `"ffn"` | `"ao3"` | `None` for both — SPEC.md §8's locked "sources
     /// aren't merged into one ranking" means sort-by-favorites only makes
@@ -65,12 +65,16 @@ pub struct StoryFilters {
     pub hide_dismissed: bool,
     #[serde(default)]
     pub hide_bookmarked: bool,
-    /// Internal-only — `list_bookmarks` (`lib.rs`) force-sets this to `true`
-    /// server-side after deserializing; the frontend never sets it itself
-    /// (confirmed dead as a TS-settable field, architecture review
-    /// 2026-07-29 — `types.ts` doesn't declare it at all).
-    #[serde(default)]
-    pub bookmarked_only: bool,
+}
+
+/// Which stories a [`list_stories`] call ranges over. Not part of
+/// [`StoryFilters`] (which the frontend deserializes into): the Bookmarks
+/// screen's "bookmarked only" rule is the backend's, so a client can't set
+/// it by adding a field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    All,
+    BookmarksOnly,
 }
 
 fn row_to_story(row: &rusqlite::Row) -> rusqlite::Result<StoryRow> {
@@ -113,7 +117,7 @@ const STORY_COLUMNS: &str = "s.id AS id, s.source_story_id AS source_story_id, s
                 rs.last_chapter_num AS last_chapter_num, s.ffn_updated_at AS ffn_updated_at, s.source AS source,
                 (SELECT COUNT(*) FROM chapters c WHERE c.story_id = s.id AND c.content <> '') AS cached_chapter_count";
 
-pub fn list_stories(conn: &Connection, filters: &StoryFilters) -> rusqlite::Result<Vec<StoryRow>> {
+pub fn list_stories(conn: &Connection, filters: &StoryFilters, scope: Scope) -> rusqlite::Result<Vec<StoryRow>> {
     let mut sql = format!(
         "SELECT {STORY_COLUMNS}
          FROM stories s
@@ -122,7 +126,7 @@ pub fn list_stories(conn: &Connection, filters: &StoryFilters) -> rusqlite::Resu
     );
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
-    if let Some(fandom) = filters.fandom.as_deref().filter(|f| !f.is_empty() && *f != "All fandoms") {
+    if let Some(fandom) = filters.fandom.as_deref().filter(|f| !f.is_empty()) {
         sql.push_str(" AND s.fandom = ?");
         params.push(Box::new(fandom.to_string()));
     }
@@ -152,7 +156,7 @@ pub fn list_stories(conn: &Connection, filters: &StoryFilters) -> rusqlite::Resu
     if filters.hide_bookmarked {
         sql.push_str(" AND COALESCE(rs.bookmarked, 0) = 0");
     }
-    if filters.bookmarked_only {
+    if scope == Scope::BookmarksOnly {
         sql.push_str(" AND COALESCE(rs.bookmarked, 0) = 1");
     }
     sql.push_str(match filters.sort_by.as_str() {
@@ -359,10 +363,7 @@ mod tests {
     use super::*;
 
     fn test_conn() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.pragma_update(None, "foreign_keys", true).unwrap();
-        conn.execute_batch(crate::db::SCHEMA).unwrap();
-        conn
+        crate::db::tests::memory_conn()
     }
 
     fn sample_ao3(source_story_id: i64) -> crate::ao3::Ao3StoryMetadata {
@@ -416,10 +417,10 @@ mod tests {
         assert_eq!(ffn_row.source, "ffn");
         assert_eq!(ao3_row.source, "ao3");
 
-        let all = list_stories(&conn, &StoryFilters::default()).unwrap();
+        let all = list_stories(&conn, &StoryFilters::default(), Scope::All).unwrap();
         assert_eq!(all.len(), 2);
 
-        let ao3_only = list_stories(&conn, &StoryFilters { source: Some("ao3".to_string()), ..Default::default() }).unwrap();
+        let ao3_only = list_stories(&conn, &StoryFilters { source: Some("ao3".to_string()), ..Default::default() }, Scope::All).unwrap();
         assert_eq!(ao3_only.len(), 1);
         assert_eq!(ao3_only[0].source, "ao3");
     }
@@ -498,5 +499,183 @@ mod tests {
         for (input, expected) in cases {
             assert_eq!(fold(&input), expected, "fold({input:?})");
         }
+    }
+
+    // ---- list_stories / flags / continue-reading over a seeded library ----
+
+    /// Six stories, ids 1..=6 in insertion order. Chosen so each filter
+    /// separates a different subset:
+    ///
+    /// | id | src | fandom  | status      | words  | fav | fetched    | flags                  |
+    /// |----|-----|---------|-------------|--------|-----|------------|------------------------|
+    /// | 1  | ffn | Naruto  | complete    | 100000 | 500 | 2026-01-01 | read                   |
+    /// | 2  | ffn | Bleach  | in_progress | 20000  | 300 | 2026-03-01 | bookmarked             |
+    /// | 3  | ao3 | Naruto  | in_progress | 50000  | 900 | 2026-02-01 | dismissed, bookmarked  |
+    /// | 4  | ao3 | Bleach  | complete    | 5000   | 100 | 2026-04-01 | read, bookmarked       |
+    /// | 5  | ffn | Pokemon | complete    | 70000  | 700 | 2026-05-01 | none                   |
+    /// | 6  | ao3 | Naruto  | complete    | 90000  | 400 | 2025-12-01 | no read_state row at all |
+    fn seeded() -> Connection {
+        let conn = test_conn();
+        let stories: [(&str, i64, &str, &str, &str, &str, &str, i64, i64, Option<&str>); 6] = [
+            ("ffn", 101, "Alpha", "Ann", "Naruto", "complete", "2026-01-01", 100000, 500, None),
+            ("ffn", 102, "Beta", "Bob", "Bleach", "in_progress", "2026-03-01", 20000, 300, None),
+            ("ao3", 103, "Gamma", "Cy", "Naruto", "in_progress", "2026-02-01", 50000, 900, None),
+            ("ao3", 104, "Delta", "Di", "Bleach", "complete", "2026-04-01", 5000, 100, None),
+            ("ffn", 105, "Pokémon Quest", "Zed", "Pokemon", "complete", "2026-05-01", 70000, 700, Some("Gotta catch 'em all")),
+            ("ao3", 106, "Zeta", "Émile", "Naruto", "complete", "2025-12-01", 90000, 400, Some("Café au lait")),
+        ];
+        for (source, sid, title, author, fandom, status, fetched, words, fav, summary) in stories {
+            conn.execute(
+                "INSERT INTO stories (source, source_story_id, title, author, fandom, rating, status, word_count,
+                                      favorite_count, chapter_count, summary, last_fetched_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'T', ?6, ?7, ?8, 1, ?9, ?10)",
+                rusqlite::params![source, sid, title, author, fandom, status, words, fav, summary, fetched],
+            )
+            .unwrap();
+        }
+        // (story_id, is_read, dismissed, bookmarked)
+        for (id, read, dismissed, bookmarked) in [(1, 1, 0, 0), (2, 0, 0, 1), (3, 0, 1, 1), (4, 1, 0, 1), (5, 0, 0, 0)] {
+            conn.execute(
+                "INSERT INTO read_state (story_id, is_read, dismissed, bookmarked) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![id, read, dismissed, bookmarked],
+            )
+            .unwrap();
+        }
+        conn
+    }
+
+    fn ids(conn: &Connection, filters: StoryFilters, scope: Scope) -> Vec<i64> {
+        list_stories(conn, &filters, scope).unwrap().into_iter().map(|s| s.id).collect()
+    }
+
+    fn filters() -> StoryFilters {
+        StoryFilters::default()
+    }
+
+    #[test]
+    fn list_stories_default_is_everything_by_favorites_desc() {
+        assert_eq!(ids(&seeded(), filters(), Scope::All), [3, 5, 1, 6, 2, 4]);
+    }
+
+    #[test]
+    fn list_stories_sorts_by_words_and_by_last_fetched() {
+        let conn = seeded();
+        assert_eq!(ids(&conn, StoryFilters { sort_by: "words".into(), ..filters() }, Scope::All), [1, 6, 5, 3, 2, 4]);
+        assert_eq!(ids(&conn, StoryFilters { sort_by: "updated".into(), ..filters() }, Scope::All), [5, 4, 2, 3, 1, 6]);
+    }
+
+    #[test]
+    fn list_stories_scalar_filters_each_narrow_on_their_own() {
+        let conn = seeded();
+        let fandom = |f: &str| StoryFilters { fandom: Some(f.into()), ..filters() };
+        assert_eq!(ids(&conn, fandom("Naruto"), Scope::All), [3, 1, 6]);
+        // An empty fandom is "no filter", not "fandom equals empty string".
+        assert_eq!(ids(&conn, fandom(""), Scope::All), [3, 5, 1, 6, 2, 4]);
+        assert_eq!(ids(&conn, StoryFilters { source: Some("ao3".into()), ..filters() }, Scope::All), [3, 6, 4]);
+        assert_eq!(ids(&conn, StoryFilters { status: Some("complete".into()), ..filters() }, Scope::All), [5, 1, 6, 4]);
+        assert_eq!(ids(&conn, StoryFilters { min_word_count: Some(50000), ..filters() }, Scope::All), [3, 5, 1, 6]);
+    }
+
+    #[test]
+    fn list_stories_hide_flags_each_drop_their_rows_and_treat_a_missing_read_state_as_unflagged() {
+        let conn = seeded();
+        assert_eq!(ids(&conn, StoryFilters { hide_read: true, ..filters() }, Scope::All), [3, 5, 6, 2]);
+        assert_eq!(ids(&conn, StoryFilters { hide_dismissed: true, ..filters() }, Scope::All), [5, 1, 6, 2, 4]);
+        // Story 6 has no read_state row: it must survive every hide_* filter.
+        assert_eq!(ids(&conn, StoryFilters { hide_bookmarked: true, ..filters() }, Scope::All), [5, 1, 6]);
+    }
+
+    #[test]
+    fn list_stories_filters_combine() {
+        let conn = seeded();
+        let f = StoryFilters {
+            fandom: Some("Naruto".into()),
+            status: Some("complete".into()),
+            hide_read: true,
+            ..filters()
+        };
+        assert_eq!(ids(&conn, f, Scope::All), [6]);
+    }
+
+    #[test]
+    fn bookmarks_scope_returns_only_bookmarked_stories_under_every_filter() {
+        let conn = seeded();
+        assert_eq!(ids(&conn, filters(), Scope::BookmarksOnly), [3, 2, 4]);
+
+        let combos = [
+            filters(),
+            StoryFilters { hide_read: true, ..filters() },
+            StoryFilters { hide_dismissed: true, ..filters() },
+            StoryFilters { fandom: Some("Bleach".into()), ..filters() },
+            StoryFilters { sort_by: "words".into(), ..filters() },
+            StoryFilters { search: Some("a".into()), ..filters() },
+        ];
+        for combo in combos {
+            let label = format!("{combo:?}");
+            for story in list_stories(&conn, &combo, Scope::BookmarksOnly).unwrap() {
+                assert!(story.bookmarked, "unbookmarked story {} leaked into Bookmarks under {label}", story.id);
+            }
+        }
+        // Contradictory on purpose: bookmarks scope + hide_bookmarked is empty, not "everything".
+        assert!(ids(&conn, StoryFilters { hide_bookmarked: true, ..filters() }, Scope::BookmarksOnly).is_empty());
+    }
+
+    #[test]
+    fn list_stories_search_is_accent_and_case_insensitive_over_title_author_and_summary() {
+        let conn = seeded();
+        let search = |s: &str| ids(&conn, StoryFilters { search: Some(s.into()), ..filters() }, Scope::All);
+        assert_eq!(search("poke"), [5], "title, accent-folded");
+        assert_eq!(search("EMILE"), [6], "author, accent-folded and case-folded");
+        assert_eq!(search("cafe"), [6], "summary, accent-folded");
+        assert_eq!(search("  zed  "), [5], "trimmed");
+        assert_eq!(search("naruto"), Vec::<i64>::new(), "fandom is never searched — it has its own picker");
+        assert_eq!(search("   "), [3, 5, 1, 6, 2, 4], "blank search is no search");
+    }
+
+    #[test]
+    fn set_flags_persist_and_stamp_or_clear_their_timestamp() {
+        let conn = seeded();
+        let stamp = |column: &str| -> Option<String> {
+            conn.query_row(&format!("SELECT {column} FROM read_state WHERE story_id = 5"), [], |r| r.get(0)).unwrap()
+        };
+
+        set_read(&conn, 5, true).unwrap();
+        set_dismissed(&conn, 5, true).unwrap();
+        set_bookmarked(&conn, 5, true).unwrap();
+        let row = get_story(&conn, 5).unwrap().unwrap();
+        assert!(row.is_read && row.dismissed && row.bookmarked);
+        assert!(stamp("marked_at").is_some() && stamp("dismissed_at").is_some() && stamp("bookmarked_at").is_some());
+
+        set_read(&conn, 5, false).unwrap();
+        let row = get_story(&conn, 5).unwrap().unwrap();
+        assert!(!row.is_read && row.dismissed && row.bookmarked, "flags are independent");
+        assert!(stamp("marked_at").is_none());
+    }
+
+    #[test]
+    fn continue_reading_lists_unfinished_opened_stories_newest_first_and_honours_limit() {
+        let conn = seeded();
+        // 1: read (excluded)  3: dismissed (excluded)  6: no read_state row (excluded)  4: never opened
+        for (id, opened) in [(2, "2026-06-01"), (5, "2026-07-01"), (1, "2026-08-01"), (3, "2026-09-01")] {
+            conn.execute("UPDATE read_state SET last_opened_at = ?1 WHERE story_id = ?2", rusqlite::params![opened, id])
+                .unwrap();
+        }
+        let ids_of = |limit| -> Vec<i64> {
+            get_continue_reading(&conn, limit).unwrap().into_iter().map(|s| s.id).collect()
+        };
+        assert_eq!(ids_of(10), [5, 2]);
+        assert_eq!(ids_of(1), [5]);
+    }
+
+    #[test]
+    fn set_resume_chapter_stamps_last_opened_so_the_story_shows_up_in_continue_reading() {
+        let conn = seeded();
+        assert!(get_continue_reading(&conn, 10).unwrap().is_empty());
+
+        set_resume_chapter(&conn, 5, 3).unwrap();
+
+        let rows = get_continue_reading(&conn, 10).unwrap();
+        assert_eq!(rows.iter().map(|s| s.id).collect::<Vec<_>>(), [5]);
+        assert_eq!(rows[0].last_chapter_num, Some(3));
     }
 }

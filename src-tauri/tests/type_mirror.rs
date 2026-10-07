@@ -12,10 +12,10 @@
 //! consequence there is one the frontend must be able to read. The
 //! `Deserialize` (TS→Rust) side (`StoryFilters`) is deliberately excluded:
 //! its fields are `#[serde(default)]`-tolerant of TS omitting them, so the
-//! risk shape is different (see `bookmarked_only`'s doc comment,
-//! `queries.rs`, for the one real bug this distinction already caught — a
-//! dead TS field, not a name mismatch, which no field-name-diffing test
-//! could have caught).
+//! risk shape is different (the one real bug this distinction caught was
+//! `bookmarked_only`, a dead TS-settable field that has since moved out of
+//! `StoryFilters` into `queries::Scope` — a dead field, not a name mismatch,
+//! which no field-name-diffing test could have caught).
 //!
 //! TS interface names are required to match their Rust struct name exactly
 //! (`ChapterFetched` (Rust) <-> `ChapterFetched` (TS), not `ChapterFetchedEvent`)
@@ -39,9 +39,6 @@ const MIRRORED_STRUCTS: &[&str] = &[
     "ChapterFetched",
     "BrowseFetched",
     "FandomIndexFetched",
-    "ChapterFetchError",
-    "BrowseFetchError",
-    "FandomIndexFetchError",
 ];
 
 /// `Serialize`-deriving types deliberately outside the mirror, each with the
@@ -51,12 +48,12 @@ const MIRRORED_STRUCTS: &[&str] = &[
 /// crossing the wire can't reach the frontend unmirrored.
 const UNMIRRORED_TYPES: &[(&str, &str)] = &[
     (
-        "UnmatchedFetchError",
-        "fetch.rs: the `FetchTarget::Unknown` fallback has no identity fields by design (see its doc comment) — no TS-side counterpart to pair it with",
+        "FetchOutcome",
+        "dispatch.rs: only the raw-URL `fetch_page`/`fetch_ao3_page` (debug page) return it, and nothing there reads the payload; every typed fetch command returns one of the mirrored `*Fetched` structs instead",
     ),
     (
         "StoryMetadata",
-        "ffn.rs: parser output, persisted into SQLite by `dispatch::persist_page`; no command hands it to the frontend (every fetch command returns `Result<(), String>`)",
+        "ffn.rs: parser output, persisted into SQLite by `dispatch::persist_page`; no command hands it to the frontend",
     ),
     ("ChapterRef", "ffn.rs: parser output, same as `StoryMetadata`"),
     ("Ao3StoryMetadata", "ao3.rs: parser output, same as `StoryMetadata`"),
