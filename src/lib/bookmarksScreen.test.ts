@@ -1,3 +1,4 @@
+import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChapterListItem, EnsuredChapter, StoryRow } from "./types";
 
@@ -59,11 +60,15 @@ beforeEach(() => {
   vi.mocked(api.getContinueReading).mockResolvedValue([]);
 });
 
-describe("BookmarksScreen.reloadTrigger", () => {
-  // Architecture review candidate 4: +page.svelte's $effect watches this
-  // single value instead of enumerating each field itself.
-  it("changes when any field loadStories() reads is mutated", () => {
+describe("BookmarksScreen.start", () => {
+  // Architecture review candidate 4: the reload effect watches one private
+  // list of fields — flipping each one must reload the list.
+  it("reloads the list on start, then whenever a field loadStories() reads changes", () => {
     const bookmarks = makeScreen();
+    bookmarks.start();
+    flushSync();
+    expect(api.listBookmarks).toHaveBeenCalledTimes(1);
+
     const mutations: Array<() => void> = [
       () => (bookmarks.fandom = "Naruto"),
       () => (bookmarks.sortBy = "fetched"),
@@ -71,10 +76,43 @@ describe("BookmarksScreen.reloadTrigger", () => {
     ];
 
     for (const mutate of mutations) {
-      const before = bookmarks.reloadTrigger;
+      const before = vi.mocked(api.listBookmarks).mock.calls.length;
       mutate();
-      expect(bookmarks.reloadTrigger).not.toEqual(before);
+      flushSync();
+      expect(vi.mocked(api.listBookmarks).mock.calls.length).toBe(before + 1);
     }
+    bookmarks.dispose();
+  });
+
+  it("persists hideRead when it changes", () => {
+    const store = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+      setItem: (key: string, value: string) => {
+        store.set(key, value);
+      }
+    });
+    const bookmarks = makeScreen();
+    bookmarks.start();
+    flushSync();
+
+    bookmarks.hideRead = true;
+    flushSync();
+
+    expect(store.get("ffn-bookmarks-hide-read")).toBe("true");
+    bookmarks.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it("stops reacting after dispose", () => {
+    const bookmarks = makeScreen();
+    bookmarks.start();
+    flushSync();
+    bookmarks.dispose();
+
+    bookmarks.sortBy = "fetched";
+    flushSync();
+    expect(api.listBookmarks).toHaveBeenCalledTimes(1);
   });
 });
 

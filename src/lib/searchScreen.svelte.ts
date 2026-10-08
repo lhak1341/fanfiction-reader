@@ -1,16 +1,16 @@
 // Search screen state + logic, split out of +page.svelte (architecture
 // review candidate 3, 2026-07-21) so it's reachable from Vitest — a plain
-// .svelte.ts class instead of a .svelte route. Reactive auto-reload
-// ($effect on filter changes) and pref persistence stay in +page.svelte
-// rather than this constructor: $effect requires a live component/effect-root
-// context, which a bare `new SearchScreen()` in a unit test doesn't have.
+// .svelte.ts class instead of a .svelte route. Reactive auto-reload and
+// pref persistence live in `start()` (reopened 2026-10-08): it supplies its
+// own $effect.root, and vitest runs client-compiled runes
+// (vitest.client-env.ts), so a bare `new SearchScreen()` can run them.
 
 import * as api from "./api";
 import type { ErrorBanner } from "./errorBanner.svelte";
 import { applyFandomRename, renameAo3Tag } from "./fandom";
 import { ficSourceAdapter } from "./ficSource";
-import { getSearchFilterPrefs } from "./filterPrefs";
-import { getPinnedFandoms } from "./pinnedFandoms";
+import { getSearchFilterPrefs, saveSearchFilterPrefs } from "./filterPrefs";
+import { getPinnedFandoms, savePinnedFandoms } from "./pinnedFandoms";
 import type { SortBy, StoryRow, StorySource, StoryStatus } from "./types";
 
 export class SearchScreen {
@@ -37,16 +37,11 @@ export class SearchScreen {
   stories = $state<StoryRow[]>([]);
   modalOpen = $state(false);
 
-  // Architecture review candidate 4 (2026-07-21): the single value
-  // +page.svelte's $effect watches to trigger loadStories() — concentrates
-  // the "which fields affect the story list" list here (unit-testable) so
-  // adding a filter field only requires updating this getter, not also a
-  // separate void-list in +page.svelte. A plain getter (not $derived) —
-  // $effect tracks whatever $state fields it reads during its own run, so
-  // reading this getter from inside the effect is enough; $derived would
-  // additionally need a live reactive/effect-root context to ever recompute,
-  // which a bare `new SearchScreen()` in a unit test doesn't have.
-  get reloadTrigger() {
+  // Architecture review candidate 4 (2026-07-21): the one place that lists
+  // which fields affect the story list; `start()`'s reload effect watches it.
+  // $effect tracks whatever $state fields it reads, so reading this getter
+  // inside the effect is enough.
+  private get reloadTrigger() {
     return [
       this.fandom,
       this.sourceFilter,
@@ -63,6 +58,7 @@ export class SearchScreen {
   loadMoreError = $state("");
 
   private banner: ErrorBanner;
+  private stop: (() => void) | undefined;
 
   constructor(banner: ErrorBanner) {
     this.banner = banner;
@@ -71,6 +67,32 @@ export class SearchScreen {
     this.hideDismissed = prefs.hideDismissed;
     this.hideBookmarked = prefs.hideBookmarked;
     this.pinnedFandoms = getPinnedFandoms();
+  }
+
+  /// Starts persisting the filter prefs and pinned fandoms, and reloading the
+  /// list whenever a filter changes (the first run is the initial load).
+  /// Idempotent; `dispose()` stops it.
+  start() {
+    if (this.stop) return;
+    this.stop = $effect.root(() => {
+      $effect(() =>
+        saveSearchFilterPrefs({
+          hideRead: this.hideRead,
+          hideDismissed: this.hideDismissed,
+          hideBookmarked: this.hideBookmarked
+        })
+      );
+      $effect(() => savePinnedFandoms(this.pinnedFandoms));
+      $effect(() => {
+        void this.reloadTrigger;
+        this.loadStories();
+      });
+    });
+  }
+
+  dispose() {
+    this.stop?.();
+    this.stop = undefined;
   }
 
   async loadFandoms() {

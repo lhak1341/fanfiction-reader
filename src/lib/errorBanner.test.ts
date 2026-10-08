@@ -10,9 +10,6 @@ vi.mock("./api", () => ({
   getContinueReading: vi.fn(),
   fetchChapterAndWait: vi.fn()
 }));
-vi.mock("./ficSource", () => ({
-  ficSourceAdapter: vi.fn()
-}));
 
 import * as api from "./api";
 import { BookmarksScreen } from "./bookmarksScreen.svelte";

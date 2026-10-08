@@ -85,8 +85,8 @@
     "semantic_hash": ""
   },
   "src/lib/bookmarksScreen.svelte.ts": {
-    "mtime": 1791468896.2694464,
-    "ast_hash": "d1ca1ad234008eb4b44a73a41ad7dbb2",
+    "mtime": 1791480531.7508018,
+    "ast_hash": "4b877584976eba824a0c302ed0a0bdfa",
     "semantic_hash": ""
   },
   "src/lib/components/FandomPicker.svelte": {
@@ -105,8 +105,8 @@
     "semantic_hash": ""
   },
   "src/lib/components/SearchModal.svelte": {
-    "mtime": 1791461590.1454072,
-    "ast_hash": "ac9048babacef6034ff56119db71ef07",
+    "mtime": 1791480015.01868,
+    "ast_hash": "05405a2a2316f939e7ee3dd43e5667b8",
     "semantic_hash": ""
   },
   "src/lib/components/StatusBadges.svelte": {
@@ -120,8 +120,8 @@
     "semantic_hash": "262e29e8f443bb366673aa63ac7b087c"
   },
   "src/lib/components/StoryList.svelte": {
-    "mtime": 1791461590.1423402,
-    "ast_hash": "725a0ee22aa5bb713ccc5e2d8202482b",
+    "mtime": 1791480015.017477,
+    "ast_hash": "3d08720b6e63a5d5ca6eb1b28eb8217a",
     "semantic_hash": ""
   },
   "src/lib/components/ThemeToggle.svelte": {
@@ -185,13 +185,13 @@
     "semantic_hash": ""
   },
   "src/lib/searchModalScreen.svelte.ts": {
-    "mtime": 1791461818.8577967,
-    "ast_hash": "3413feb853e94e87756bb2dac8d6cafb",
+    "mtime": 1791480029.5837224,
+    "ast_hash": "7c2d6a2682a2ae7bafb22ce022097904",
     "semantic_hash": ""
   },
   "src/lib/searchScreen.svelte.ts": {
-    "mtime": 1791468890.5612705,
-    "ast_hash": "f2428b7e23d938fb1caaca0dea2e8c56",
+    "mtime": 1791478864.987543,
+    "ast_hash": "5b8036c7f8b150566be179ee42714c21",
     "semantic_hash": ""
   },
   "src/lib/storyFlagActions.ts": {
@@ -235,13 +235,13 @@
     "semantic_hash": "6fcc01a9e86b5ac2814ef7b2e6831657"
   },
   "src/routes/+page.svelte": {
-    "mtime": 1791473213.4820535,
-    "ast_hash": "dd7312fdf6c229364a1b4548d23975d5",
+    "mtime": 1791480015.0180511,
+    "ast_hash": "4ca2d56aaf29a03b551f63cab0b04578",
     "semantic_hash": ""
   },
   "src/routes/debug/+page.svelte": {
-    "mtime": 1791471305.4272296,
-    "ast_hash": "fd1566240cb6e6e5baf336fa493ec7c7",
+    "mtime": 1791480874.445486,
+    "ast_hash": "9e9b98a68ab2a53bd746f00fd461317b",
     "semantic_hash": ""
   },
   "svelte.config.js": {
@@ -260,9 +260,9 @@
     "semantic_hash": "e41ab3670e7a8e85acb7cf054675bf7c"
   },
   "vitest.config.ts": {
-    "mtime": 1784596598.4971988,
-    "ast_hash": "c3d54ccee9bf23eb15ee480f57068775",
-    "semantic_hash": "c3d54ccee9bf23eb15ee480f57068775"
+    "mtime": 1791478834.4739702,
+    "ast_hash": "7414773201cd703388b0b887d2fe51c1",
+    "semantic_hash": ""
   },
   "CLAUDE.md": {
     "mtime": 1791474710.0571666,
@@ -270,8 +270,8 @@
     "semantic_hash": ""
   },
   "CONTEXT.md": {
-    "mtime": 1791470630.7703516,
-    "ast_hash": "dad14c7b5b9ffec8f18fd13cd51f7a80",
+    "mtime": 1791478939.150342,
+    "ast_hash": "9d5e6d90f68d28ba68447e4f2b4bb8c6",
     "semantic_hash": ""
   },
   "README.md": {
@@ -280,8 +280,8 @@
     "semantic_hash": "2787283facf1123fe6c06de5e0de8013"
   },
   "docs/SPEC.md": {
-    "mtime": 1791474493.6211975,
-    "ast_hash": "ed79b31e9e57ac30bffb312d23ea4f85",
+    "mtime": 1791480531.751298,
+    "ast_hash": "c8812c7e21cf3c72c839571d6f9b4abe",
     "semantic_hash": ""
   },
   "docs/wayfinder/map.md": {
@@ -445,8 +445,8 @@
     "semantic_hash": ""
   },
   "docs/TESTING.md": {
-    "mtime": 1791393480.9700716,
-    "ast_hash": "8f5d95be3377eefc292f72cf3e66255f",
+    "mtime": 1791478939.1516187,
+    "ast_hash": "524fc23e35b303c0d830e2851e973755",
     "semantic_hash": ""
   },
   "src-tauri/CLAUDE.md": {
@@ -455,8 +455,8 @@
     "semantic_hash": ""
   },
   "src/CLAUDE.md": {
-    "mtime": 1791474493.6206777,
-    "ast_hash": "545484a341071bb7a0ffebab097926d5",
+    "mtime": 1791478939.1512213,
+    "ast_hash": "5bda8a0284689cbf7f7cff2ac7f3caba",
     "semantic_hash": ""
   },
   "src-tauri/icons/icon.svg": {
@@ -477,6 +477,16 @@
   "src/lib/errorBanner.svelte.ts": {
     "mtime": 1791468876.515769,
     "ast_hash": "e74b5d4eb3faca2468d3c763b3772ec6",
+    "semantic_hash": ""
+  },
+  "src/lib/filterOptions.ts": {
+    "mtime": 1791480014.9941921,
+    "ast_hash": "da832990aa779444c37cee5d2e287ff3",
+    "semantic_hash": ""
+  },
+  "vitest.client-env.ts": {
+    "mtime": 1791478834.4712465,
+    "ast_hash": "feee7938477f7917c6583180f538af6a",
     "semantic_hash": ""
   }
 }

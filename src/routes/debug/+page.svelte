@@ -81,10 +81,12 @@
   async function runPrefetch(event: Event) {
     event.preventDefault();
     try {
-      const all = await invoke<StoryRow[]>("list_stories", { filters: {} });
-      const target = all.find((s) => s.sourceStoryId === Number(prefetchFfnStoryId));
+      // source_story_id is only unique per Source (an AO3 work can share an
+      // FFN story's number), so narrow to FFN before matching it.
+      const ffnStories = await invoke<StoryRow[]>("list_stories", { filters: { source: "ffn" } });
+      const target = ffnStories.find((s) => s.sourceStoryId === Number(prefetchFfnStoryId));
       if (!target) {
-        prefetchStatus = `No story with ffn_story_id ${prefetchFfnStoryId} in the DB yet — fetch chapter 1 first.`;
+        prefetchStatus = `No FFN story with ffn_story_id ${prefetchFfnStoryId} in the DB yet — fetch chapter 1 first.`;
         return;
       }
       for (let num = prefetchFrom; num <= prefetchTo; num++) {

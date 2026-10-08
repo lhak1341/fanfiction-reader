@@ -4,6 +4,7 @@
   // (Bookmarks spans fandoms; Search is already fandom-scoped) and whether
   // dismiss is offered (not meaningful on an already-bookmarked row).
   import { CloudCheck, Heart, WholeWord } from "lucide-svelte";
+  import { SOURCE_LABELS } from "$lib/filterOptions";
   import { fmt } from "$lib/format";
   import RowActions from "$lib/components/RowActions.svelte";
   import StatusBadges from "$lib/components/StatusBadges.svelte";
@@ -77,7 +78,7 @@
           <button class="t link" title={story.title} onclick={() => onOpenStory(story)}>{story.title}</button>
           <div class="meta-line">
             <span>{showFandom ? `${story.author} · ${story.fandom}` : story.author}</span>
-            <span class="source-badge" class:ao3={story.source === "ao3"}>{story.source === "ao3" ? "AO3" : "FFN"}</span>
+            <span class="source-badge" class:ao3={story.source === "ao3"}>{SOURCE_LABELS[story.source]}</span>
             {#if onDownloadAll && isFullyDownloaded(story)}
               <span class="offline-badge" title="All chapters downloaded — readable offline"><CloudCheck size={11} /> Offline</span>
             {/if}
@@ -107,7 +108,7 @@
           {#if onDownloadAll && isFullyDownloaded(story)}
             <span class="offline-badge" title="All chapters downloaded — readable offline"><CloudCheck size={11} /> Offline</span>
           {/if}
-          <span class="source-badge" class:ao3={story.source === "ao3"}>{story.source === "ao3" ? "AO3" : "FFN"}</span>
+          <span class="source-badge" class:ao3={story.source === "ao3"}>{SOURCE_LABELS[story.source]}</span>
         </div>
         <h4><button class="link" onclick={() => onOpenStory(story)}>{story.title}</button></h4>
         <p class="summary" title={story.summary ?? undefined}>{story.summary ?? ""}</p>

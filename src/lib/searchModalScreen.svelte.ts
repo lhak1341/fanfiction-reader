@@ -1,18 +1,26 @@
-// SearchModal's async orchestration, split out of SearchModal.svelte
-// (architecture review candidate 8, 2026-07-24) so it's reachable from
-// Vitest — same rationale and shape as searchScreen.svelte.ts/
-// bookmarksScreen.svelte.ts/readerScreen.svelte.ts. Dropdown/DOM-coupled UI
-// state (dropdownOpen, dropdownEl, fandomQuery, filteredOptions,
-// selectFandom) and both $effects (ao3 tag autofill, category-change reset)
-// stay in the component — no async in them, and $effect needs a live
-// component/effect-root context a bare `new SearchModalScreen()` doesn't
-// have. Errors stay local to the modal (no onError callback) — unlike
+// SearchModal's state, async orchestration and reactive rules, split out of
+// SearchModal.svelte (architecture review candidate 8, 2026-07-24) so it's
+// reachable from Vitest — same rationale and shape as searchScreen.svelte.ts/
+// bookmarksScreen.svelte.ts/readerScreen.svelte.ts. Only DOM-coupled UI
+// state (dropdownOpen, dropdownEl) stays in the component.
+//
+// Reopened 2026-10-08: the two $effects (AO3 tag autofill, category-change
+// reset) used to stay in the component on the premise that $effect needs a
+// live component/effect-root context. `start()` supplies one ($effect.root,
+// stopped by `dispose()`), and vitest runs client-compiled runes
+// (vitest.client-env.ts), so the "fandom name decides the tag" rule and the
+// category reset are tested here.
+//
+// Errors stay local to the modal (no onError callback) — unlike
 // SearchScreen/ReaderScreen, nothing here needs to reach +page.svelte's
 // shared error banner; the modal already shows its own inline error and
 // just closes on success.
 
+import { untrack } from "svelte";
 import * as api from "./api";
-import { saveAo3Tag } from "./fandom";
+import { getAo3Tag, saveAo3Tag } from "./fandom";
+import { SEARCH_STATUSES } from "./filterOptions";
+import { fold } from "./normalize";
 import { describeFailures, runPacedBestEffort } from "./pacedLoop";
 import { FFN_CATEGORIES } from "./types";
 import type { FandomIndexEntry, StorySource, StoryStatus } from "./types";
@@ -32,6 +40,8 @@ export class SearchModalScreen {
   url = $state("");
 
   category = $state<string>(ALL);
+  // The FFN fandom picker's text box; `filteredOptions` narrows by it.
+  fandomQuery = $state("");
   fandomOptions = $state<FandomIndexEntry[]>([]);
   selectedFandom = $state<FandomIndexEntry | undefined>(undefined);
   indexing = $state(false);
@@ -46,6 +56,14 @@ export class SearchModalScreen {
 
   searching = $state(false);
   error = $state("");
+
+  // The tag `syncAo3Tag` last filled in, so a later rename can tell an
+  // autofilled tag (replaceable) from one the user typed (never touched).
+  private autofilledTag: string | undefined;
+  // Bumped per `loadFandomOptions` and on `dispose()`; a response for a
+  // superseded category is dropped.
+  private optionsGen = 0;
+  private stop: (() => void) | undefined;
 
   private onImported: (fandom: string, source: StorySource) => void;
   private onStoryAdded: () => void;
@@ -63,11 +81,69 @@ export class SearchModalScreen {
     return this.mode === "ffn" ? !!this.selectedFandom : !!this.ao3FandomName.trim() && !!this.ao3Tag.trim();
   }
 
+  /// Statuses the current mode's Source can narrow a new search by (none for
+  /// "By URL", which ignores the filters). Switching to a Source that doesn't offer the selected status
+  /// clears it (`start()`), so a hidden choice never reaches `runSearch`.
+  get statusOptions(): StoryStatus[] {
+    return this.mode === "url" ? [] : SEARCH_STATUSES[this.mode];
+  }
+
+  get filteredOptions(): FandomIndexEntry[] {
+    const q = fold(this.fandomQuery);
+    return this.fandomOptions.filter((f) => fold(f.fandom).includes(q));
+  }
+
+  selectFandom(f: FandomIndexEntry) {
+    this.selectedFandom = f;
+    this.fandomQuery = f.fandom;
+  }
+
+  /// Starts the reactive rules: AO3 tag autofill, the status clamp and the
+  /// category-change reset. Idempotent; `dispose()` stops them.
+  start() {
+    if (this.stop) return;
+    this.stop = $effect.root(() => {
+      $effect(() => this.syncAo3Tag());
+      $effect(() => {
+        if (this.mode !== "url" && this.status && !this.statusOptions.includes(this.status)) this.status = undefined;
+      });
+      $effect(() => {
+        void this.category;
+        untrack(() => this.resetForCategory());
+      });
+    });
+  }
+
+  dispose() {
+    this.stop?.();
+    this.stop = undefined;
+    this.optionsGen++;
+  }
+
+  /// A fandom name decides its AO3 tag: fill in the saved tag while the tag
+  /// box is empty or still holds what we last filled in. A tag the user typed
+  /// is never replaced; a name with no saved tag clears an autofilled one.
+  syncAo3Tag() {
+    if (this.ao3Tag && this.ao3Tag !== this.autofilledTag) return;
+    const saved = getAo3Tag(this.ao3FandomName);
+    this.ao3Tag = saved ?? "";
+    this.autofilledTag = saved;
+  }
+
+  private resetForCategory() {
+    this.selectedFandom = undefined;
+    this.fandomQuery = "";
+    this.fandomOptions = [];
+    this.loadFandomOptions();
+  }
+
   async loadFandomOptions() {
+    const gen = ++this.optionsGen;
     try {
-      this.fandomOptions = await api.listFandomIndex(this.category === ALL ? undefined : this.category);
+      const options = await api.listFandomIndex(this.category === ALL ? undefined : this.category);
+      if (gen === this.optionsGen) this.fandomOptions = options;
     } catch (e) {
-      this.indexError = e instanceof Error ? e.message : String(e);
+      if (gen === this.optionsGen) this.indexError = e instanceof Error ? e.message : String(e);
     }
   }
 

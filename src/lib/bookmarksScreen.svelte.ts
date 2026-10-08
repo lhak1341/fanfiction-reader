@@ -8,6 +8,7 @@
 
 import * as api from "./api";
 import type { ErrorBanner } from "./errorBanner.svelte";
+import { saveBookmarksHideRead } from "./filterPrefs";
 import { describeFailures, PauseGate, runPacedBestEffort } from "./pacedLoop";
 import type { SortBy, StoryRow } from "./types";
 
@@ -35,10 +36,9 @@ export class BookmarksScreen {
   stories = $state<StoryRow[]>([]);
   continueReading = $state<StoryRow[]>([]);
 
-  // Architecture review candidate 4 (2026-07-21): the single value
-  // +page.svelte's $effect watches to trigger loadStories() — see
-  // SearchScreen.reloadTrigger for why this is a plain getter, not $derived.
-  get reloadTrigger() {
+  // Architecture review candidate 4 (2026-07-21): the one place that lists
+  // which fields affect the story list; `start()`'s reload effect watches it.
+  private get reloadTrigger() {
     return [this.fandom, this.sortBy, this.hideRead];
   }
 
@@ -57,6 +57,7 @@ export class BookmarksScreen {
   }
 
   private banner: ErrorBanner;
+  private stop: (() => void) | undefined;
 
   // The bulk loops below keep running when +page.svelte swaps Reader in (this
   // instance lives in the page script, not in the list screens), where they
@@ -68,6 +69,25 @@ export class BookmarksScreen {
   constructor(banner: ErrorBanner, initialHideRead: boolean) {
     this.banner = banner;
     this.hideRead = initialHideRead;
+  }
+
+  /// Starts persisting `hideRead` and reloading the list whenever a filter
+  /// changes (the first run is the initial load). Idempotent; `dispose()`
+  /// stops it.
+  start() {
+    if (this.stop) return;
+    this.stop = $effect.root(() => {
+      $effect(() => saveBookmarksHideRead(this.hideRead));
+      $effect(() => {
+        void this.reloadTrigger;
+        this.loadStories();
+      });
+    });
+  }
+
+  dispose() {
+    this.stop?.();
+    this.stop = undefined;
   }
 
   pauseBackgroundFetches() {
@@ -106,6 +126,11 @@ export class BookmarksScreen {
   // pick up any new chapters, same as any other story-page fetch. Skips
   // stories already marked complete locally (SPEC.md §6) — those don't
   // change.
+  //
+  // Architecture review candidate 5 (2026-10-09), rejected: a Rust
+  // `refresh_story` would be `fetch_chapter(id, 1, true)` renamed — the same
+  // chapter-1 page is fetched either way — and this pacing/pause/progress
+  // loop would stay here, so it fails the deletion test.
   async refresh() {
     if (this.job) return;
     this.job = { kind: "refresh" };

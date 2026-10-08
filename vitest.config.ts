@@ -7,7 +7,7 @@ export default defineConfig({
     conditions: ["browser"]
   },
   test: {
-    environment: "node",
+    environment: "./vitest.client-env.ts",
     include: ["src/**/*.test.ts"]
   }
 });

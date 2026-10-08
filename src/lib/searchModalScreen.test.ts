@@ -1,3 +1,4 @@
+import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./api", () => ({
@@ -9,11 +10,12 @@ vi.mock("./api", () => ({
   toggleBookmarked: vi.fn()
 }));
 vi.mock("./fandom", () => ({
-  saveAo3Tag: vi.fn()
+  saveAo3Tag: vi.fn(),
+  getAo3Tag: vi.fn()
 }));
 
 import * as api from "./api";
-import { saveAo3Tag } from "./fandom";
+import { getAo3Tag, saveAo3Tag } from "./fandom";
 import { ALL, SearchModalScreen } from "./searchModalScreen.svelte";
 import { FFN_CATEGORIES } from "./types";
 import type { FandomIndexEntry } from "./types";
@@ -29,6 +31,7 @@ function fandomEntry(overrides: Partial<FandomIndexEntry> = {}): FandomIndexEntr
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(api.listFandomIndex).mockResolvedValue([]);
+  vi.mocked(getAo3Tag).mockReturnValue(undefined);
 });
 
 describe("SearchModalScreen.refreshIndex", () => {
@@ -241,5 +244,156 @@ describe("SearchModalScreen.runSearch (url)", () => {
     expect(api.toggleBookmarked).not.toHaveBeenCalled();
     expect(onStoryAdded).not.toHaveBeenCalled();
     expect(screen.searching).toBe(false);
+  });
+});
+
+describe("SearchModalScreen AO3 tag autofill", () => {
+  const SAVED: Record<string, string> = { Naruto: "naruto-tag", Bleach: "bleach-tag" };
+
+  beforeEach(() => {
+    vi.mocked(getAo3Tag).mockImplementation((name) => SAVED[name]);
+  });
+
+  function started() {
+    const screen = makeScreen();
+    screen.mode = "ao3";
+    screen.start();
+    flushSync();
+    return screen;
+  }
+
+  it("fills in the saved tag for the typed fandom name", () => {
+    const screen = started();
+    screen.ao3FandomName = "Naruto";
+    flushSync();
+    expect(screen.ao3Tag).toBe("naruto-tag");
+    screen.dispose();
+  });
+
+  it("replaces an autofilled tag when the name changes to another saved fandom", () => {
+    const screen = started();
+    screen.ao3FandomName = "Naruto";
+    flushSync();
+    screen.ao3FandomName = "Bleach";
+    flushSync();
+    expect(screen.ao3Tag).toBe("bleach-tag");
+    screen.dispose();
+  });
+
+  it("clears an autofilled tag when the new name has none saved", () => {
+    const screen = started();
+    screen.ao3FandomName = "Naruto";
+    flushSync();
+    screen.ao3FandomName = "Unknown";
+    flushSync();
+    expect(screen.ao3Tag).toBe("");
+    screen.dispose();
+  });
+
+  it("never replaces a tag the user typed", () => {
+    const screen = started();
+    screen.ao3FandomName = "Naruto";
+    flushSync();
+    screen.ao3Tag = "my-own-tag";
+    flushSync();
+    screen.ao3FandomName = "Bleach";
+    flushSync();
+    expect(screen.ao3Tag).toBe("my-own-tag");
+    screen.dispose();
+  });
+});
+
+describe("SearchModalScreen category change", () => {
+  it("clears the picker and reloads options for the new category", async () => {
+    vi.mocked(api.listFandomIndex).mockResolvedValue([fandomEntry()]);
+    const screen = makeScreen();
+    screen.start();
+    flushSync();
+    await vi.waitFor(() => expect(screen.fandomOptions).toHaveLength(1));
+    screen.selectFandom(fandomEntry());
+    expect(screen.fandomQuery).toBe("Naruto");
+
+    vi.mocked(api.listFandomIndex).mockResolvedValue([]);
+    screen.category = "book";
+    flushSync();
+
+    expect(screen.selectedFandom).toBeUndefined();
+    expect(screen.fandomQuery).toBe("");
+    expect(api.listFandomIndex).toHaveBeenLastCalledWith("book");
+    screen.dispose();
+  });
+
+  it("drops a slow response for a category the user already left", async () => {
+    let resolveSlow!: (v: FandomIndexEntry[]) => void;
+    vi.mocked(api.listFandomIndex).mockImplementationOnce(() => new Promise((r) => (resolveSlow = r)));
+    const screen = makeScreen();
+    screen.start();
+    flushSync();
+
+    vi.mocked(api.listFandomIndex).mockResolvedValue([fandomEntry({ fandom: "Bleach", category: "book" })]);
+    screen.category = "book";
+    flushSync();
+    await vi.waitFor(() => expect(screen.fandomOptions.map((f) => f.fandom)).toEqual(["Bleach"]));
+
+    resolveSlow([fandomEntry()]);
+    await Promise.resolve();
+    expect(screen.fandomOptions.map((f) => f.fandom)).toEqual(["Bleach"]);
+    screen.dispose();
+  });
+});
+
+describe("SearchModalScreen.filteredOptions", () => {
+  it("narrows by the accent-folded query", async () => {
+    vi.mocked(api.listFandomIndex).mockResolvedValue([
+      fandomEntry({ fandom: "Pokémon" }),
+      fandomEntry({ fandom: "Naruto" })
+    ]);
+    const screen = makeScreen();
+    await screen.loadFandomOptions();
+    screen.fandomQuery = "pokemon";
+    expect(screen.filteredOptions.map((f) => f.fandom)).toEqual(["Pokémon"]);
+  });
+});
+
+describe("SearchModalScreen status options", () => {
+  it("offers Done for FFN, Done + Ongoing for AO3, and nothing for By URL", () => {
+    const screen = makeScreen();
+    screen.mode = "ffn";
+    expect(screen.statusOptions).toEqual(["complete"]);
+    screen.mode = "ao3";
+    expect(screen.statusOptions).toEqual(["complete", "in_progress"]);
+    screen.mode = "url";
+    expect(screen.statusOptions).toEqual([]);
+  });
+
+  it("clears Ongoing when switching from AO3 to FFN", () => {
+    const screen = makeScreen();
+    screen.mode = "ao3";
+    screen.start();
+    screen.status = "in_progress";
+    flushSync();
+    expect(screen.status).toBe("in_progress");
+
+    screen.mode = "ffn";
+    flushSync();
+
+    expect(screen.status).toBeUndefined();
+    screen.dispose();
+  });
+
+  it("keeps a status that the new mode still offers, and through By URL", () => {
+    const screen = makeScreen();
+    screen.mode = "ao3";
+    screen.start();
+    screen.status = "complete";
+    flushSync();
+
+    screen.mode = "url";
+    flushSync();
+    screen.mode = "ffn";
+    flushSync();
+
+    expect(screen.status).toBe("complete");
+    screen.dispose();
   });
 });

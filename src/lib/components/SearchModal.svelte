@@ -7,10 +7,10 @@
   // has neither, robots.txt blocks its /autocomplete/ endpoint) — that's
   // deliberately the *only* thing that differs; word-count/status filters
   // and the submit flow are shared.
+  import { onDestroy } from "svelte";
   import { X } from "lucide-svelte";
+  import { STATUS_LABELS, WORD_COUNT_PRESETS } from "$lib/filterOptions";
   import { fmtCompact } from "$lib/format";
-  import { fold } from "$lib/normalize";
-  import { getAo3Tag } from "$lib/fandom";
   import { ALL, SearchModalScreen } from "$lib/searchModalScreen.svelte";
   import { FFN_CATEGORIES } from "$lib/types";
   import type { FandomIndexEntry, StorySource } from "$lib/types";
@@ -32,41 +32,25 @@
   // svelte-ignore state_referenced_locally
   const screen = new SearchModalScreen(onImported, onStoryAdded);
 
-  let fandomQuery = $state("");
   let dropdownOpen = $state(false);
   let dropdownEl = $state<HTMLDivElement | undefined>(undefined);
 
   // No cached tag index exists (unlike FFN's fandom_index) — the fandom
   // name is typed free text, and its AO3 tag is looked up from a small
-  // user-maintained map (fandom.ts), auto-filled once saved. A typo here
-  // fails the same way typing it into AO3's own search would (empty/wrong
-  // results), not a silent 404.
-  $effect(() => {
-    const saved = getAo3Tag(screen.ao3FandomName);
-    if (saved && !screen.ao3Tag) screen.ao3Tag = saved;
-  });
-
-  let filteredOptions = $derived(
-    screen.fandomOptions.filter((f) => fold(f.fandom).includes(fold(fandomQuery)))
-  );
+  // user-maintained map (fandom.ts) by the screen's autofill rule. A typo
+  // here fails the same way typing it into AO3's own search would
+  // (empty/wrong results), not a silent 404.
+  screen.start();
+  onDestroy(() => screen.dispose());
 
   function categoryLabel(value: string) {
     return FFN_CATEGORIES.find((c) => c.value === value)?.label ?? value;
   }
 
   function selectFandom(f: FandomIndexEntry) {
-    screen.selectedFandom = f;
-    fandomQuery = f.fandom;
+    screen.selectFandom(f);
     dropdownOpen = false;
   }
-
-  $effect(() => {
-    void screen.category;
-    screen.selectedFandom = undefined;
-    fandomQuery = "";
-    screen.fandomOptions = [];
-    screen.loadFandomOptions();
-  });
 </script>
 
 <svelte:window
@@ -111,13 +95,13 @@
           <div class="fandom-dd" bind:this={dropdownEl}>
             <input
               placeholder="Type to search, or leave blank to browse…"
-              bind:value={fandomQuery}
+              bind:value={screen.fandomQuery}
               onfocus={() => (dropdownOpen = true)}
               onclick={() => (dropdownOpen = true)}
             />
             {#if dropdownOpen}
               <ul class="fandom-list">
-                {#each filteredOptions.slice(0, 50) as f (`${f.category}:${f.fandom}`)}
+                {#each screen.filteredOptions.slice(0, 50) as f (`${f.category}:${f.fandom}`)}
                   <li>
                     <button
                       type="button"
@@ -129,7 +113,7 @@
                     </button>
                   </li>
                 {/each}
-                {#if filteredOptions.length === 0}
+                {#if screen.filteredOptions.length === 0}
                   <li class="empty">No matches</li>
                 {/if}
               </ul>
@@ -170,8 +154,9 @@
       <span>Minimum length</span>
       <div class="seg">
         <button type="button" class:active={screen.minWordCount === undefined} onclick={() => (screen.minWordCount = undefined)}>Any</button>
-        <button type="button" class:active={screen.minWordCount === 40000} onclick={() => (screen.minWordCount = 40000)}>40K+</button>
-        <button type="button" class:active={screen.minWordCount === 100000} onclick={() => (screen.minWordCount = 100000)}>100K+</button>
+        {#each WORD_COUNT_PRESETS as preset}
+          <button type="button" class:active={screen.minWordCount === preset.value} onclick={() => (screen.minWordCount = preset.value)}>{preset.label}</button>
+        {/each}
       </div>
     </label>
 
@@ -179,10 +164,9 @@
       <span>Status</span>
       <div class="seg">
         <button type="button" class:active={screen.status === undefined} onclick={() => (screen.status = undefined)}>Any</button>
-        <button type="button" class:active={screen.status === "complete"} onclick={() => (screen.status = "complete")}>Done</button>
-        {#if screen.mode === "ao3"}
-          <button type="button" class:active={screen.status === "in_progress"} onclick={() => (screen.status = "in_progress")}>Ongoing</button>
-        {/if}
+        {#each screen.statusOptions as status}
+          <button type="button" class:active={screen.status === status} onclick={() => (screen.status = status)}>{STATUS_LABELS[status]}</button>
+        {/each}
       </div>
     </label>
 

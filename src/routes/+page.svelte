@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { ChevronDown, LayoutGrid, List, RefreshCw } from "lucide-svelte";
   import FandomPicker from "$lib/components/FandomPicker.svelte";
   import Reader from "$lib/components/Reader.svelte";
@@ -9,10 +10,10 @@
   import { SearchScreen } from "$lib/searchScreen.svelte";
   import { BookmarksScreen } from "$lib/bookmarksScreen.svelte";
   import { toggleReadAndRefresh, toggleDismissedAndRefresh, toggleBookmarkedAndRefresh } from "$lib/storyFlagActions";
+  import { SORT_OPTIONS, STATUS_LABELS, WORD_COUNT_PRESETS } from "$lib/filterOptions";
   import { getViewMode, saveViewMode } from "$lib/viewMode";
-  import { saveSearchFilterPrefs, getBookmarksHideRead, saveBookmarksHideRead } from "$lib/filterPrefs";
-  import { savePinnedFandoms } from "$lib/pinnedFandoms";
-  import type { StoryRow } from "$lib/types";
+  import { getBookmarksHideRead } from "$lib/filterPrefs";
+  import type { StoryRow, StoryStatus } from "$lib/types";
 
   let screen = $state<"search" | "bookmarks" | "reader">("search");
   let lastListScreen = $state<"search" | "bookmarks">("search");
@@ -35,15 +36,14 @@
   let viewMode = $state<"list" | "card">(getViewMode());
   $effect(() => saveViewMode(viewMode));
 
-  // Reactive auto-reload and pref persistence live here rather than inside
-  // SearchScreen/BookmarksScreen's constructors — `$effect` needs a live
-  // component/effect-root context, which the classes don't have when
-  // constructed directly in a unit test (see searchScreen.svelte.ts).
-  $effect(() => saveSearchFilterPrefs({ hideRead: search.hideRead, hideDismissed: search.hideDismissed, hideBookmarked: search.hideBookmarked }));
-  $effect(() => savePinnedFandoms(search.pinnedFandoms));
-  $effect(() => {
-    void search.reloadTrigger;
-    search.loadStories();
+  // Reload-on-filter-change and pref persistence live in the Screens'
+  // `start()`. What stays here is state no single Screen owns: the view mode
+  // shared by both lists, and the pause rule driven by page navigation.
+  search.start();
+  bookmarks.start();
+  onDestroy(() => {
+    search.dispose();
+    bookmarks.dispose();
   });
 
   // Bookmark refresh/download loops keep running behind Reader (see
@@ -52,11 +52,6 @@
     if (screen === "reader") bookmarks.pauseBackgroundFetches();
     else bookmarks.resumeBackgroundFetches();
   });
-  $effect(() => saveBookmarksHideRead(bookmarks.hideRead));
-  $effect(() => {
-    void bookmarks.reloadTrigger;
-    bookmarks.loadStories();
-  });
 
   search.loadFandoms();
   bookmarks.loadFandoms();
@@ -64,10 +59,10 @@
 
   // Architecture review candidate 2 (2026-10-07), rejected: extracting
   // navigation + the reconcile sequences below into an AppShell module fails
-  // the deletion test — ~30 lines, one caller, and the `$effect` wiring above
-  // (the hard-to-test part) can't leave a component anyway. Navigation state
-  // hasn't changed since the initial commit; reopen only if the reconcile
-  // sequences start growing.
+  // the deletion test — ~30 lines, one caller. Navigation state hasn't
+  // changed since the initial commit; reopen only if the reconcile sequences
+  // start growing. (Its other reason, that the `$effect` wiring can't leave a
+  // component, was reopened 2026-10-08: the Screens' `start()` took it.)
   //
   // Any toggle can affect both lists (a story visible in Search may be the
   // one just bookmarked/unbookmarked) plus the bookmarked-fandoms scope and
@@ -170,9 +165,9 @@
 
         <div class="sort-select-wrap">
           <select class="sort-select" bind:value={search.sortBy}>
-            <option value="favorites">Sort: Favorites</option>
-            <option value="fetched">Sort: Recently fetched</option>
-            <option value="words">Sort: Word count</option>
+            {#each SORT_OPTIONS as [value, label]}
+              <option {value}>Sort: {label}</option>
+            {/each}
           </select>
           <ChevronDown size={13} class="sort-caret" />
         </div>
@@ -192,14 +187,16 @@
 
         <div class="field-group" role="group" aria-label="Minimum word count">
           <button class:active={search.minWordCount === undefined} onclick={() => (search.minWordCount = undefined)}>Any length</button>
-          <button class:active={search.minWordCount === 40000} onclick={() => (search.minWordCount = 40000)}>40K+</button>
-          <button class:active={search.minWordCount === 100000} onclick={() => (search.minWordCount = 100000)}>100K+</button>
+          {#each WORD_COUNT_PRESETS as preset}
+            <button class:active={search.minWordCount === preset.value} onclick={() => (search.minWordCount = preset.value)}>{preset.label}</button>
+          {/each}
         </div>
 
         <div class="field-group" role="group" aria-label="Status">
           <button class:active={search.status === undefined} onclick={() => (search.status = undefined)}>Any status</button>
-          <button class:active={search.status === "complete"} onclick={() => (search.status = "complete")}>Done</button>
-          <button class:active={search.status === "in_progress"} onclick={() => (search.status = "in_progress")}>Ongoing</button>
+          {#each Object.entries(STATUS_LABELS) as [value, label]}
+            <button class:active={search.status === value} onclick={() => (search.status = value as StoryStatus)}>{label}</button>
+          {/each}
         </div>
 
         <label class="hide-toggle">
@@ -272,9 +269,9 @@
 
         <div class="sort-select-wrap">
           <select class="sort-select" bind:value={bookmarks.sortBy}>
-            <option value="favorites">Sort: Favorites</option>
-            <option value="fetched">Sort: Recently fetched</option>
-            <option value="words">Sort: Word count</option>
+            {#each SORT_OPTIONS as [value, label]}
+              <option {value}>Sort: {label}</option>
+            {/each}
           </select>
           <ChevronDown size={13} class="sort-caret" />
         </div>

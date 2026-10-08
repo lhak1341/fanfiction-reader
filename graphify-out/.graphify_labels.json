@@ -8,6 +8,7 @@
   "6": "Query Layer (queries.rs)",
   "7": "AO3 URL Locator Parsing",
   "8": "Frontend API/Event Bindings",
+  "9": "$lib/errorBanner.svelte",
   "10": "App Icons & Tauri Config",
   "11": "UI List/Search Components",
   "12": "+page.svelte",
@@ -22,7 +23,6 @@
   "21": "Bookmarks Screen State",
   "22": "Read/Bookmark Flag Schema",
   "23": "BookmarksScreen",
-  "24": "Fandom Picker Component",
   "25": "Story Flag Reconciliation",
   "26": "AO3 No-Merge Ranking Decision",
   "27": "Blocked-Page Detection Fix",
@@ -136,9 +136,5 @@
   "135": "CLAUDE.md",
   "136": "CLAUDE.md",
   "137": "fetch_session.rs",
-  "138": "$lib/filterPrefs",
-  "139": "readerPrefs.ts",
-  "140": "BookmarksScreen",
-  "141": "typography.ts",
-  "142": "Stepper.svelte"
+  "140": "BookmarksScreen"
 }
