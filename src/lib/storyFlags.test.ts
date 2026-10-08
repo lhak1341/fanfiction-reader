@@ -29,6 +29,7 @@ const story: StoryRow = {
   dismissed: false,
   bookmarked: false,
   lastChapterNum: null,
+  lastScrollPct: null,
   ffnUpdatedAt: null,
   source: "ffn",
   cachedChapterCount: 0

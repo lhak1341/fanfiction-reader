@@ -11,6 +11,7 @@
     onDownloadAll,
     downloadingStoryId,
     downloadProgress,
+    busy,
     fullyDownloaded
   }: {
     story: StoryRow;
@@ -21,6 +22,7 @@
     onDownloadAll?: (s: StoryRow) => void;
     downloadingStoryId: number | null;
     downloadProgress: string;
+    busy: boolean;
     fullyDownloaded: boolean;
   } = $props();
 </script>
@@ -38,8 +40,12 @@
       class="icon-btn"
       class:spinning={downloadingStoryId === story.id}
       onclick={() => onDownloadAll(story)}
-      disabled={downloadingStoryId !== null}
-      title={downloadingStoryId === story.id ? downloadProgress : "Download all chapters for offline reading"}
+      disabled={busy}
+      title={downloadingStoryId === story.id
+        ? downloadProgress
+        : busy
+          ? "Wait for the current refresh/download to finish"
+          : "Download all chapters for offline reading"}
     >
       <Download size={13} />
     </button>

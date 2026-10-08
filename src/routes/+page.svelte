@@ -125,10 +125,14 @@
     <div class="top-shell-right">
       <button
         class="refresh-btn"
-        class:spinning={bookmarks.refreshing}
+        class:spinning={bookmarks.job?.kind === "refresh"}
         onclick={handleRefreshBookmarks}
-        disabled={bookmarks.refreshing || bookmarks.downloadingStoryId !== null}
-        title={bookmarks.refreshing ? bookmarks.refreshProgress : "Refresh bookmarked stories (in-progress only)"}
+        disabled={bookmarks.busy}
+        title={bookmarks.job?.kind === "refresh"
+          ? bookmarks.progress.label
+          : bookmarks.busy
+            ? "Wait for the current download to finish"
+            : "Refresh bookmarked stories (in-progress only)"}
       >
         <RefreshCw size={15} />
       </button>
@@ -141,11 +145,11 @@
     <p class="error">{errorMessage}</p>
   {/if}
 
-  {#if bookmarks.downloadingStoryId !== null}
+  {#if bookmarks.job?.kind === "download"}
     <div class="download-banner">
-      <span class="download-banner-text">Downloading "{bookmarks.downloadingStoryTitle}" — {bookmarks.downloadProgress}</span>
+      <span class="download-banner-text">Downloading "{bookmarks.job.title}" — {bookmarks.progress.label}</span>
       <div class="download-banner-track">
-        <div class="download-banner-fill" style="width: {bookmarks.downloadTotal ? (bookmarks.downloadDone / bookmarks.downloadTotal) * 100 : 0}%"></div>
+        <div class="download-banner-fill" style="width: {bookmarks.progress.total ? (bookmarks.progress.done / bookmarks.progress.total) * 100 : 0}%"></div>
       </div>
     </div>
   {/if}
@@ -300,8 +304,9 @@
         onToggleDismissed={handleToggleDismissed}
         onToggleBookmarked={handleToggleBookmarked}
         onDownloadAll={handleDownloadAllChapters}
-        downloadingStoryId={bookmarks.downloadingStoryId}
-        downloadProgress={bookmarks.downloadDone && bookmarks.downloadTotal ? `Downloading ${bookmarks.downloadDone} of ${bookmarks.downloadTotal}…` : bookmarks.downloadProgress}
+        downloadingStoryId={bookmarks.job?.kind === "download" ? bookmarks.job.storyId : null}
+        downloadProgress={bookmarks.progress.label}
+        busy={bookmarks.busy}
       />
     {/if}
   {/if}
@@ -311,7 +316,6 @@
     onClose={() => (search.modalOpen = false)}
     onImported={(fandom, source) => search.handleImported(fandom, source)}
     onStoryAdded={handleStoryAdded}
-    urlImportBlocked={bookmarks.refreshing || bookmarks.downloadingStoryId !== null}
   />
 {/if}
 {/if}

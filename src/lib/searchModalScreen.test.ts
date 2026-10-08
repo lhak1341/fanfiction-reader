@@ -192,9 +192,8 @@ describe("SearchModalScreen.canSubmit", () => {
 });
 
 describe("SearchModalScreen.runSearch (url)", () => {
-  it("adds the story by URL, bookmarks it, and reports it added", async () => {
-    vi.mocked(api.addStoryByUrl).mockResolvedValue({ storyId: 7, chapterNum: 1 });
-    vi.mocked(api.toggleBookmarked).mockResolvedValue(undefined);
+  it("adds the story by URL and reports it added, without bookmarking it itself", async () => {
+    vi.mocked(api.addStoryByUrl).mockResolvedValue({ storyId: 7, chapterNum: 1, chapterCount: 1 });
     const onImported = vi.fn();
     const onStoryAdded = vi.fn();
     const screen = new SearchModalScreen(onImported, onStoryAdded);
@@ -204,7 +203,8 @@ describe("SearchModalScreen.runSearch (url)", () => {
     await screen.runSearch();
 
     expect(api.addStoryByUrl).toHaveBeenCalledWith("https://www.fanfiction.net/s/14583034/1/Harry-Potter-The-Game");
-    expect(api.toggleBookmarked).toHaveBeenCalledWith(7, true);
+    // The command bookmarks it (Rust); the modal makes no second call.
+    expect(api.toggleBookmarked).not.toHaveBeenCalled();
     expect(onStoryAdded).toHaveBeenCalledTimes(1);
     expect(onImported).not.toHaveBeenCalled();
     expect(screen.searching).toBe(false);
@@ -239,21 +239,6 @@ describe("SearchModalScreen.runSearch (url)", () => {
 
     expect(screen.error).toBe("not a valid URL");
     expect(api.toggleBookmarked).not.toHaveBeenCalled();
-    expect(onStoryAdded).not.toHaveBeenCalled();
-    expect(screen.searching).toBe(false);
-  });
-
-  it("says the import succeeded when only the bookmark step fails, and does not report an add", async () => {
-    vi.mocked(api.addStoryByUrl).mockResolvedValue({ storyId: 7, chapterNum: 1 });
-    vi.mocked(api.toggleBookmarked).mockRejectedValue(new Error("db locked"));
-    const onStoryAdded = vi.fn();
-    const screen = new SearchModalScreen(vi.fn(), onStoryAdded);
-    screen.mode = "url";
-    screen.url = "https://www.fanfiction.net/s/1/1/x";
-
-    await screen.runSearch();
-
-    expect(screen.error).toBe("Imported, but couldn't bookmark it: db locked");
     expect(onStoryAdded).not.toHaveBeenCalled();
     expect(screen.searching).toBe(false);
   });

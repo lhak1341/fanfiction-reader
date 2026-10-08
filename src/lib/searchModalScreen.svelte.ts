@@ -50,7 +50,7 @@ export class SearchModalScreen {
   private onImported: (fandom: string, source: StorySource) => void;
   private onStoryAdded: () => void;
 
-  /// `onStoryAdded` fires after a "By URL" import has bookmarked the story —
+  /// `onStoryAdded` fires after a "By URL" import (which bookmarks the story) —
   /// a pasted URL is deliberate intent to keep that one story, so it lands in
   /// Bookmarks rather than at the bottom of its fandom's Search list.
   constructor(onImported: (fandom: string, source: StorySource) => void, onStoryAdded: () => void = () => {}) {
@@ -110,16 +110,8 @@ export class SearchModalScreen {
     try {
       if (this.mode === "url") {
         if (!this.url.trim()) return;
-        const { storyId } = await api.addStoryByUrl(this.url.trim());
-        try {
-          await api.toggleBookmarked(storyId, true);
-        } catch (e) {
-          // The import itself succeeded — say so, and stay in the modal so the
-          // message isn't lost (onStoryAdded would close it and jump to
-          // Bookmarks, where this story isn't listed).
-          this.error = `Imported, but couldn't bookmark it: ${e instanceof Error ? e.message : String(e)}`;
-          return;
-        }
+        // The command bookmarks the story it imports (`add_story_by_url`).
+        await api.addStoryByUrl(this.url.trim());
         this.onStoryAdded();
       } else if (this.mode === "ffn") {
         if (!this.selectedFandom) return;

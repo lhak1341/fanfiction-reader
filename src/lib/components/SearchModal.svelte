@@ -18,17 +18,12 @@
   let {
     onClose,
     onImported,
-    onStoryAdded,
-    urlImportBlocked = false
+    onStoryAdded
   }: {
     onClose: () => void;
     onImported: (fandom: string, source: StorySource) => void;
     // "By URL" bookmarks the story it adds, then calls this (not `onImported`).
     onStoryAdded: () => void;
-    // True while a bookmark refresh/download is running: "By URL" waits for
-    // the next chapter event with no way to tell its own from theirs
-    // (`api.addStoryByUrl`), so submit stays disabled until they finish.
-    urlImportBlocked?: boolean;
   } = $props();
 
   // +page.svelte mounts this behind `{#if search.modalOpen}`, so it always
@@ -169,9 +164,6 @@
         A FanFiction.net story/chapter link or an AO3 work link. Adds that one story, with its full
         chapter list, to your Bookmarks.
       </p>
-      {#if urlImportBlocked}
-        <p class="note">Wait for the bookmark refresh/download to finish first.</p>
-      {/if}
     {/if}
     {#if screen.mode !== "url"}
     <label class="field">
@@ -211,7 +203,7 @@
     <button
       type="submit"
       class="submit"
-      disabled={screen.searching || !screen.canSubmit || (screen.mode === "url" && urlImportBlocked)}
+      disabled={screen.searching || !screen.canSubmit}
     >
       {screen.searching ? (screen.mode === "url" ? "Adding…" : "Searching…") : screen.mode === "url" ? "Add story" : "Search"}
     </button>

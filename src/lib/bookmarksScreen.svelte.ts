@@ -7,12 +7,23 @@
 // architecture review candidate 3 grill, "cross-cutting logic" decision).
 
 import * as api from "./api";
-import { ensureChapterCached } from "./chapterCache";
 import { describeFailures, PauseGate, runPacedBestEffort } from "./pacedLoop";
 import type { SortBy, StoryRow } from "./types";
 
 // Failed download chapters get this many extra passes (pacing: pacedLoop.ts).
 const DOWNLOAD_RETRY_ROUNDS = 2;
+
+export type BulkJob = { kind: "refresh" } | { kind: "download"; storyId: number; title: string };
+
+/// `label` is what the banner, the row tooltip and the refresh button title
+/// show; `done`/`total` drive the download bar.
+export interface BulkProgress {
+  label: string;
+  done: number;
+  total: number;
+}
+
+const NO_PROGRESS: BulkProgress = { label: "", done: 0, total: 0 };
 
 export class BookmarksScreen {
   fandom = $state<string | undefined>(undefined);
@@ -30,29 +41,27 @@ export class BookmarksScreen {
     return [this.fandom, this.sortBy, this.hideRead];
   }
 
-  // Paced the same way as bulk chapter prefetch/discovery: a burst of
-  // requests with no gaps reads as bot traffic to Cloudflare.
-  refreshing = $state(false);
-  refreshProgress = $state("");
-
-  // Force-fetches every not-yet-cached chapter of one bookmarked story, so
-  // it's fully readable offline ahead of time rather than filling in as you
+  // The one bulk job running, if any — refresh and Download-all are mutually
+  // exclusive (one FFN webview; paced like bulk chapter prefetch/discovery, since
+  // a burst with no gaps reads as bot traffic to Cloudflare). `busy` is the
+  // single "is a job running" question every button and guard asks.
+  // Download-all force-fetches every not-yet-cached chapter of one bookmarked
+  // story so it's fully readable offline, rather than filling in as you
   // navigate (Reader's own prefetch only ever looks 2 chapters ahead).
-  // Scoped to one story at a time (`downloadingStoryId` gates concurrent
-  // clicks).
-  downloadingStoryId = $state<number | null>(null);
-  downloadingStoryTitle = $state("");
-  downloadProgress = $state("");
-  downloadDone = $state(0);
-  downloadTotal = $state(0);
+  job = $state<BulkJob | null>(null);
+  progress = $state<BulkProgress>(NO_PROGRESS);
+
+  get busy() {
+    return this.job !== null;
+  }
 
   private onError: (message: string) => void;
 
   // The bulk loops below keep running when +page.svelte swaps Reader in (this
   // instance lives in the page script, not in the list screens), where they
   // would compete with Reader's own fetches for the one FFN webview. The page
-  // pauses them while Reader is shown; `refreshing`/`downloadingStoryId` stay
-  // set meanwhile, so their buttons stay disabled.
+  // pauses them while Reader is shown; `job` stays set meanwhile, so the
+  // buttons stay disabled.
   private gate = new PauseGate();
 
   constructor(onError: (message: string) => void, initialHideRead: boolean) {
@@ -104,15 +113,16 @@ export class BookmarksScreen {
   // stories already marked complete locally (SPEC.md §6) — those don't
   // change.
   async refresh() {
-    if (this.refreshing || this.downloadingStoryId !== null) return;
-    this.refreshing = true;
-    this.refreshProgress = "";
+    if (this.job) return;
+    this.job = { kind: "refresh" };
+    this.progress = NO_PROGRESS;
     try {
       const targets = await api.listBookmarks({ status: "in_progress" });
       // Best-effort — one story failing (e.g. taken down) shouldn't stop the
       // rest. No retry rounds: a removed story fails every time.
       const { failed } = await runPacedBestEffort(targets, (story) => api.fetchChapterAndWait(story.id, 1, true), {
-        onProgress: ({ index, total }) => (this.refreshProgress = `Refreshing ${index + 1} of ${total}…`),
+        onProgress: ({ index, total }) =>
+          (this.progress = { label: `Refreshing ${index + 1} of ${total}…`, done: index, total }),
         gate: this.gate
       });
       await this.reloadAll();
@@ -122,46 +132,41 @@ export class BookmarksScreen {
         );
       }
     } finally {
-      this.refreshing = false;
-      this.refreshProgress = "";
+      this.job = null;
+      this.progress = NO_PROGRESS;
     }
   }
 
   async downloadAllChapters(story: StoryRow) {
-    if (this.downloadingStoryId !== null) return;
-    if (this.refreshing) {
-      this.onError("Wait for the bookmark refresh to finish before downloading — both use the one fetch window.");
-      return;
-    }
-    this.downloadingStoryId = story.id;
-    this.downloadingStoryTitle = story.title;
-    this.downloadProgress = "";
-    this.downloadDone = 0;
-    this.downloadTotal = 0;
+    if (this.job) return;
+    this.job = { kind: "download", storyId: story.id, title: story.title };
+    this.progress = NO_PROGRESS;
     try {
       const chapters = await api.listChapters(story.id);
       const missing = chapters.filter((c) => !c.isCached).map((c) => c.chapterNum);
-      this.downloadTotal = missing.length;
+      this.progress = { label: "", done: 0, total: missing.length };
 
       // A failed chapter (Cloudflare page, interrupted, timeout, empty
-      // result) is retried after a longer pause rather than left as a hole.
+      // page) is retried after a longer pause rather than left as a hole.
       let firstPassFailures = 0;
+      let done = 0;
       const { failed } = await runPacedBestEffort(
         missing,
         async (num) => {
-          const result = await ensureChapterCached(story.id, num, { background: true });
-          if (!result.content?.isCached) throw new Error("fetched, but the chapter came back empty");
+          // Resolves only once the chapter is cached — an empty page rejects.
+          await api.ensureChapter(story.id, num, true);
         },
         {
           retryRounds: DOWNLOAD_RETRY_ROUNDS,
           gate: this.gate,
           onProgress: ({ round, index, total, result }) => {
-            if (!(result instanceof Error)) this.downloadDone++;
+            if (!(result instanceof Error)) done++;
             else if (round === 0) firstPassFailures++;
-            this.downloadProgress =
+            const label =
               round === 0
                 ? `Downloading ${index + 1} of ${total}${firstPassFailures ? ` (${firstPassFailures} failed)` : ""}…`
                 : `Retry ${index + 1} of ${total} (round ${round} of ${DOWNLOAD_RETRY_ROUNDS})…`;
+            this.progress = { label, done, total: missing.length };
           }
         }
       );
@@ -173,8 +178,8 @@ export class BookmarksScreen {
         );
       }
     } finally {
-      this.downloadingStoryId = null;
-      this.downloadProgress = "";
+      this.job = null;
+      this.progress = NO_PROGRESS;
     }
   }
 }

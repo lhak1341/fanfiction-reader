@@ -9,7 +9,7 @@ mod queries;
 mod scrape;
 mod source;
 
-use fetch::{add_story_by_url, fetch_ao3_page, fetch_chapter, fetch_page, index_ffn_category, report_fetch_result, search_ao3, search_ffn};
+use fetch::{add_story_by_url, ensure_chapter, fetch_ao3_page, fetch_chapter, fetch_page, index_ffn_category, report_fetch_result, search_ao3, search_ffn};
 use fetch_session::FetchSession;
 use tauri::Manager;
 
@@ -68,8 +68,8 @@ fn toggle_bookmarked(db: tauri::State<db::Db>, story_id: i64, value: bool) -> Re
 }
 
 #[tauri::command]
-fn set_resume_chapter(db: tauri::State<db::Db>, story_id: i64, chapter_num: i64) -> Result<(), String> {
-    db.run(|conn| queries::set_resume_chapter(conn, story_id, chapter_num))
+fn set_resume_chapter(db: tauri::State<db::Db>, story_id: i64, chapter_num: i64, scroll_pct: i64) -> Result<(), String> {
+    db.run(|conn| queries::set_resume_chapter(conn, story_id, chapter_num, scroll_pct))
 }
 
 #[tauri::command]
@@ -125,7 +125,8 @@ pub fn run() {
             fetch_ao3_page,
             search_ao3,
             add_story_by_url,
-            fetch_chapter
+            fetch_chapter,
+            ensure_chapter
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

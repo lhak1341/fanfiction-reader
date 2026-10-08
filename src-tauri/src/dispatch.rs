@@ -12,13 +12,72 @@
 //! `FicSource` (`source.rs`).
 
 use crate::db;
-use crate::source::{self, ChapterInfo, FicSource};
+use crate::queries::{self, ChapterContent, ChapterListItem};
+use crate::source::{self, ChapterInfo, FicSource, StorySource};
 
 #[derive(Debug, serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ChapterFetched {
     pub story_id: i64,
     pub chapter_num: i64,
+    /// `stories.chapter_count` after this fetch — it can grow on an
+    /// in-progress fic, and a caller holding the story row (the Reader)
+    /// bounds navigation on it. Read inside the persist transaction.
+    pub chapter_count: i64,
+}
+
+/// `ensure_chapter`'s result: the chapter is cached and `content` is its body.
+/// `chapter_count` and `chapters` are `Some` only when this call fetched
+/// (`was_fetched`) — on a cache hit nothing changed, so the caller keeps what
+/// it holds. A successful fetch implies the chapter is cached
+/// (`persist_page` refuses an empty body), so there is no `is_cached` to check.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsuredChapter {
+    pub was_fetched: bool,
+    pub chapter_count: Option<i64>,
+    pub chapters: Option<Vec<ChapterListItem>>,
+    pub content: ChapterContent,
+}
+
+/// "A pasted URL means keep it" (`add_story_by_url`): bookmarks the story it
+/// just imported. Only the bookmark flag is touched — `isRead`/`dismissed` stay
+/// as they were, so re-adding a story you dismissed bookmarks it but leaves it
+/// dismissed. Not part of the persist transaction: a failure here leaves the
+/// story imported, and re-pasting the URL (idempotent) retries it.
+pub fn bookmark_imported_story(db: &db::Db, story_id: i64) -> Result<(), String> {
+    db.run(|conn| queries::set_bookmarked(conn, story_id, true))
+}
+
+/// `ensure_chapter`'s cache check: the chapter's body if it is already cached.
+/// `None` means fetch it (never registered, or a TOC stub).
+pub fn cached_chapter(db: &db::Db, story_id: i64, chapter_num: i64) -> Result<Option<EnsuredChapter>, String> {
+    let content = db.run(|conn| queries::get_chapter(conn, story_id, chapter_num))?;
+    Ok(content.filter(|c| c.is_cached).map(|content| EnsuredChapter {
+        was_fetched: false,
+        chapter_count: None,
+        chapters: None,
+        content,
+    }))
+}
+
+/// `ensure_chapter`'s result after a fetch of `(story_id, chapter_num)`
+/// persisted: the fresh chapter list and the story's chapter count alongside
+/// the body. Errors if the requested chapter still isn't cached — the fetched
+/// page was for a different chapter than the one asked for.
+pub fn ensured_after_fetch(
+    db: &db::Db,
+    story_id: i64,
+    chapter_num: i64,
+    fetched: &ChapterFetched,
+) -> Result<EnsuredChapter, String> {
+    let (content, chapters) = db.run(|conn| {
+        Ok((queries::get_chapter(conn, story_id, chapter_num)?, queries::list_chapters(conn, story_id)?))
+    })?;
+    let content = content.filter(|c| c.is_cached).ok_or_else(|| {
+        format!("fetched chapter {} of story {}, but chapter {chapter_num} is still not cached", fetched.chapter_num, fetched.story_id)
+    })?;
+    Ok(EnsuredChapter { was_fetched: true, chapter_count: Some(fetched.chapter_count), chapters: Some(chapters), content })
 }
 
 #[derive(Debug, serde::Serialize, Clone)]
@@ -110,20 +169,13 @@ pub fn classify_page<S: FicSource>(url: &str) -> Result<PageShape<S>, String> {
     Ok(PageShape::Unknown)
 }
 
-/// Which source a user-supplied story URL belongs to — see `story_url_source`.
-#[derive(Debug, PartialEq)]
-pub enum StoryUrlSource {
-    Ffn,
-    Ao3,
-}
-
 /// Validates a URL a user typed to add one story, and says which source
 /// fetches it. Accepts only an http(s) URL on that source's own host whose
 /// path classifies (`classify_page`) as a `Chapter` shape — a listing or
 /// category URL would otherwise import a whole page of stories as a side
 /// effect. The locators themselves only look at the path (`ffn.rs`/`ao3.rs`),
 /// so the host check lives here, not in them.
-pub fn story_url_source(url: &str) -> Result<StoryUrlSource, String> {
+pub fn story_url_source(url: &str) -> Result<StorySource, String> {
     let parsed = url::Url::parse(url.trim()).map_err(|_| "not a valid URL".to_string())?;
     if !matches!(parsed.scheme(), "http" | "https") {
         return Err("not a valid URL (expected http or https)".to_string());
@@ -132,11 +184,11 @@ pub fn story_url_source(url: &str) -> Result<StoryUrlSource, String> {
     let url = parsed.as_str();
     match host.as_str() {
         "fanfiction.net" | "www.fanfiction.net" => match classify_page::<source::Ffn>(url) {
-            Ok(PageShape::Chapter(_)) => Ok(StoryUrlSource::Ffn),
+            Ok(PageShape::Chapter(_)) => Ok(StorySource::Ffn),
             _ => Err("not a FanFiction.net story URL — expected https://www.fanfiction.net/s/{id}/{chapter}/…".to_string()),
         },
         "archiveofourown.org" | "www.archiveofourown.org" => match classify_page::<source::Ao3>(url) {
-            Ok(PageShape::Chapter(_)) => Ok(StoryUrlSource::Ao3),
+            Ok(PageShape::Chapter(_)) => Ok(StorySource::Ao3),
             _ => Err("not an AO3 work URL — expected https://archiveofourown.org/works/{id}".to_string()),
         },
         _ => Err("only fanfiction.net and archiveofourown.org story URLs are supported".to_string()),
@@ -147,19 +199,15 @@ pub fn story_url_source(url: &str) -> Result<StoryUrlSource, String> {
 /// that fetches it — the one place a chapter fetch learns its URL, so callers
 /// (`fetch::fetch_chapter`) need only `(story_id, chapter_num)`. Errors when
 /// the story isn't in the DB, before any fetch starts.
-pub fn chapter_fetch_url(db: &db::Db, story_id: i64, chapter_num: i64) -> Result<(StoryUrlSource, String), String> {
+pub fn chapter_fetch_url(db: &db::Db, story_id: i64, chapter_num: i64) -> Result<(StorySource, String), String> {
     let (source, source_story_id, source_chapter_id) = db
         .run(|conn| db::chapter_fetch_target(conn, story_id, chapter_num))?
         .ok_or_else(|| format!("no story with id {story_id}"))?;
-    match source.as_str() {
-        source::Ffn::SOURCE_TAG => {
-            Ok((StoryUrlSource::Ffn, source::Ffn::chapter_url(source_story_id, chapter_num, source_chapter_id)))
-        }
-        source::Ao3::SOURCE_TAG => {
-            Ok((StoryUrlSource::Ao3, source::Ao3::chapter_url(source_story_id, chapter_num, source_chapter_id)))
-        }
-        other => Err(format!("unknown story source {other:?}")),
-    }
+    let url = match source {
+        StorySource::Ffn => source::Ffn::chapter_url(source_story_id, chapter_num, source_chapter_id),
+        StorySource::Ao3 => source::Ao3::chapter_url(source_story_id, chapter_num, source_chapter_id),
+    };
+    Ok((source, url))
 }
 
 /// Parse + persist a fetched page for any `FicSource`. Called by the fetch
@@ -189,6 +237,13 @@ pub fn persist_page<S: FicSource>(
         PageShape::Chapter(locator) => {
             let (meta, chapters) = S::parse_work(html, &locator)?;
             let content = S::parse_chapter_content(html)?;
+            // A chapter with no body would be stored as a TOC stub's `''` —
+            // indistinguishable from "never fetched", so it would retry forever
+            // while every fetch reported success. Refuse it here, once, for both
+            // sources (CONTEXT.md "Cached chapter").
+            if content.trim().is_empty() {
+                return Err("chapter page has no content — not a chapter, or the layout changed".to_string());
+            }
             let chapter_num = S::resolve_chapter_num(&chapters, &locator)?;
             let matched = chapters.iter().find(|c| c.chapter_num() == chapter_num);
             let chapter_title = matched.map(|c| c.title()).unwrap_or_else(|| S::metadata_title(&meta));
@@ -212,7 +267,7 @@ pub fn persist_page<S: FicSource>(
             // later calls — and atomicity is already covered by
             // `chapter_page_failing_mid_toc_leaves_no_story_behind`. Reopen if a
             // third caller needs the same write.
-            let story_id = db.run_mut(|conn| {
+            let (story_id, chapter_count) = db.run_mut(|conn| {
                 let tx = conn.transaction()?;
                 let story_id = S::persist_story(&tx, &meta)?;
                 db::ensure_read_state(&tx, story_id)?;
@@ -224,11 +279,13 @@ pub fn persist_page<S: FicSource>(
                     db::upsert_chapter_stub(&tx, story_id, c.chapter_num(), c.title(), c.source_chapter_id())?;
                 }
                 db::upsert_chapter_content(&tx, story_id, chapter_num, chapter_title, &content, source_chapter_id)?;
+                let chapter_count: i64 =
+                    tx.query_row("SELECT chapter_count FROM stories WHERE id = ?1", [story_id], |row| row.get(0))?;
                 tx.commit()?;
-                Ok(story_id)
+                Ok((story_id, chapter_count))
             })?;
 
-            Ok(FetchOutcome::Chapter(ChapterFetched { story_id, chapter_num }))
+            Ok(FetchOutcome::Chapter(ChapterFetched { story_id, chapter_num, chapter_count }))
         }
         PageShape::Listing(locator) => {
             let mut summaries = S::parse_listing(html, &locator)?;
@@ -310,6 +367,97 @@ mod tests {
         }
     }
 
+
+    const FFN_CHAPTER_URL: &str = "https://www.fanfiction.net/s/13493099/34/Welcome-to-the-insane-world-of-Pok-mon";
+
+    fn persist_fixture_chapter(dbh: &db::Db) -> ChapterFetched {
+        persist_page::<source::Ffn>(dbh, FFN_STORY_PAGE, FFN_CHAPTER_URL, None, None).unwrap().into_chapter().unwrap()
+    }
+
+    #[test]
+    fn chapter_fetched_carries_the_stories_chapter_count() {
+        let dbh = test_db();
+
+        let fetched = persist_fixture_chapter(&dbh);
+
+        let stored: i64 = dbh
+            .run(|conn| conn.query_row("SELECT chapter_count FROM stories WHERE id = ?1", [fetched.story_id], |r| r.get(0)))
+            .unwrap();
+        assert_eq!(fetched.chapter_count, stored);
+        assert!(fetched.chapter_count >= 34, "the fixture is a 144-chapter story viewed at chapter 34");
+    }
+
+    #[test]
+    fn chapter_page_with_an_empty_body_is_rejected_and_stores_nothing() {
+        let dbh = test_db();
+        // Blank the #storytext element's contents in the raw page (the body has
+        // no nested <div>, so the first </div> after the open tag closes it).
+        let open = FFN_STORY_PAGE.find("id=\"storytext\">").expect("fixture has #storytext");
+        let body_start = open + FFN_STORY_PAGE[open..].find('>').unwrap() + 1;
+        let body_end = body_start + FFN_STORY_PAGE[body_start..].find("</div>").unwrap();
+        let emptied = format!("{}  {}", &FFN_STORY_PAGE[..body_start], &FFN_STORY_PAGE[body_end..]);
+        assert_eq!(ffn::parse_chapter_content(&emptied).unwrap().trim(), "", "fixture edit must empty #storytext");
+
+        let err = persist_page::<source::Ffn>(&dbh, &emptied, FFN_CHAPTER_URL, None, None).unwrap_err();
+
+        assert!(err.contains("no content"), "got: {err}");
+        let stories: i64 = dbh.run(|conn| conn.query_row("SELECT COUNT(*) FROM stories", [], |r| r.get(0))).unwrap();
+        assert_eq!(stories, 0, "a rejected page must not leave a story or TOC stubs behind");
+    }
+
+    #[test]
+    fn bookmark_imported_story_bookmarks_only_that_flag() {
+        let dbh = test_db();
+        let fetched = persist_fixture_chapter(&dbh);
+        dbh.run(|conn| queries::set_dismissed(conn, fetched.story_id, true)).unwrap();
+
+        bookmark_imported_story(&dbh, fetched.story_id).unwrap();
+        bookmark_imported_story(&dbh, fetched.story_id).unwrap(); // re-adding is idempotent
+
+        let row = dbh.run(|conn| queries::get_story(conn, fetched.story_id)).unwrap().unwrap();
+        assert!(row.bookmarked);
+        assert!(row.dismissed && !row.is_read, "flags are independent");
+    }
+
+    #[test]
+    fn cached_chapter_misses_a_toc_stub_and_hits_a_fetched_chapter() {
+        let dbh = test_db();
+        let fetched = persist_fixture_chapter(&dbh);
+
+        // Chapter 1 is only a TOC stub; chapter 34 has its body.
+        assert!(cached_chapter(&dbh, fetched.story_id, 1).unwrap().is_none());
+        assert!(cached_chapter(&dbh, fetched.story_id, 9999).unwrap().is_none(), "unregistered chapter");
+        let hit = cached_chapter(&dbh, fetched.story_id, 34).unwrap().expect("chapter 34 is cached");
+        assert!(!hit.was_fetched);
+        assert!(hit.chapter_count.is_none() && hit.chapters.is_none(), "nothing changed on a hit");
+        assert!(hit.content.is_cached && hit.content.content.len() > 500);
+    }
+
+    #[test]
+    fn ensured_after_fetch_returns_body_chapter_list_and_count() {
+        let dbh = test_db();
+        let fetched = persist_fixture_chapter(&dbh);
+
+        let ensured = ensured_after_fetch(&dbh, fetched.story_id, 34, &fetched).unwrap();
+
+        assert!(ensured.was_fetched);
+        assert_eq!(ensured.chapter_count, Some(fetched.chapter_count));
+        let chapters = ensured.chapters.expect("a fetch returns the refreshed list");
+        assert_eq!(chapters.len() as i64, fetched.chapter_count);
+        assert_eq!(chapters.iter().filter(|c| c.is_cached).map(|c| c.chapter_num).collect::<Vec<_>>(), vec![34]);
+        assert!(ensured.content.is_cached);
+    }
+
+    #[test]
+    fn ensured_after_fetch_errors_when_the_requested_chapter_is_still_not_cached() {
+        let dbh = test_db();
+        let fetched = persist_fixture_chapter(&dbh);
+
+        // Asked for chapter 1 but the page that came back was chapter 34.
+        let err = ensured_after_fetch(&dbh, fetched.story_id, 1, &fetched).unwrap_err();
+
+        assert!(err.contains("chapter 1 is still not cached"), "got: {err}");
+    }
 
     #[test]
     fn ffn_listing_url_dispatches_to_browse_branch() {
@@ -460,7 +608,7 @@ mod tests {
 
     #[test]
     fn into_chapter_unwraps_a_chapter_outcome_and_rejects_the_other_shapes() {
-        let chapter = FetchOutcome::Chapter(ChapterFetched { story_id: 7, chapter_num: 2 });
+        let chapter = FetchOutcome::Chapter(ChapterFetched { story_id: 7, chapter_num: 2, chapter_count: 9 });
         assert_eq!(chapter.into_chapter().unwrap().story_id, 7);
 
         let browse = FetchOutcome::Browse(BrowseFetched { fandom: "x".to_string(), count: 1 });
@@ -472,14 +620,14 @@ mod tests {
         let index = FetchOutcome::FandomIndex(FandomIndexFetched { category: "anime".to_string(), count: 3 });
         assert_eq!(index.into_browse().unwrap_err(), "expected a browse listing, got a category index");
 
-        let chapter = FetchOutcome::Chapter(ChapterFetched { story_id: 1, chapter_num: 1 });
+        let chapter = FetchOutcome::Chapter(ChapterFetched { story_id: 1, chapter_num: 1, chapter_count: 1 });
         assert_eq!(chapter.into_fandom_index().unwrap_err(), "expected a category index, got a chapter page");
     }
 
     #[test]
     fn fetch_outcome_serializes_with_a_kind_tag_the_debug_page_can_read() {
-        let json = serde_json::to_value(FetchOutcome::Chapter(ChapterFetched { story_id: 7, chapter_num: 2 })).unwrap();
-        assert_eq!(json, serde_json::json!({ "kind": "chapter", "storyId": 7, "chapterNum": 2 }));
+        let json = serde_json::to_value(FetchOutcome::Chapter(ChapterFetched { story_id: 7, chapter_num: 2, chapter_count: 9 })).unwrap();
+        assert_eq!(json, serde_json::json!({ "kind": "chapter", "storyId": 7, "chapterNum": 2, "chapterCount": 9 }));
     }
 
     #[test]
@@ -493,7 +641,7 @@ mod tests {
 
         let (src, fetch_url) = chapter_fetch_url(&dbh, story_id, 7).unwrap();
 
-        assert_eq!(src, StoryUrlSource::Ffn);
+        assert_eq!(src, StorySource::Ffn);
         assert_eq!(fetch_url, "https://www.fanfiction.net/s/13493099/7/");
     }
 
@@ -516,7 +664,7 @@ mod tests {
         let (src, with_id) = chapter_fetch_url(&dbh, story_id, known).unwrap();
         let (_, without_id) = chapter_fetch_url(&dbh, story_id, 9999).unwrap();
 
-        assert_eq!(src, StoryUrlSource::Ao3);
+        assert_eq!(src, StorySource::Ao3);
         assert_eq!(with_id, "https://archiveofourown.org/works/85954646/chapters/227238471");
         assert_eq!(without_id, "https://archiveofourown.org/works/85954646");
     }
@@ -589,14 +737,14 @@ mod tests {
             "https://fanfiction.net/s/14583034/3/",
             "  https://www.fanfiction.net/s/14583034/1/Slug  ",
         ] {
-            assert_eq!(story_url_source(url), Ok(StoryUrlSource::Ffn), "{url}");
+            assert_eq!(story_url_source(url), Ok(StorySource::Ffn), "{url}");
         }
         for url in [
             "https://archiveofourown.org/works/85954646",
             "https://archiveofourown.org/works/85954646/chapters/227238471",
             "https://www.archiveofourown.org/works/85954646",
         ] {
-            assert_eq!(story_url_source(url), Ok(StoryUrlSource::Ao3), "{url}");
+            assert_eq!(story_url_source(url), Ok(StorySource::Ao3), "{url}");
         }
     }
 

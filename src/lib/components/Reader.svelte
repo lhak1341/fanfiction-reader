@@ -68,6 +68,7 @@
     if (!scrollEl) return;
     const max = scrollEl.scrollHeight - scrollEl.clientHeight;
     scrollPct = max <= 0 ? 100 : Math.round((scrollEl.scrollTop / max) * 100);
+    screen.reportScroll(scrollPct);
   }
 
   // ReaderScreen owns the generation-token/prefetch/scroll-position-map
@@ -81,7 +82,10 @@
     // get silently clamped back to whatever height was measured yet.
     requestAnimationFrame(() => {
       if (!scrollEl) return;
-      scrollEl.scrollTop = screen.scrollPositions.get(num) ?? 0;
+      // This session's exact pixel position if there is one, else the saved
+      // percentage for the chapter you last read (0 — the top — for any other).
+      const max = scrollEl.scrollHeight - scrollEl.clientHeight;
+      scrollEl.scrollTop = screen.scrollPositions.get(num) ?? (max > 0 ? (screen.resumePctFor(num) / 100) * max : 0);
       scrollEl.focus({ preventScroll: true });
       handleScroll();
     });
@@ -128,6 +132,9 @@
     return Math.max(0.25, 1 - dist * 0.16);
   }
 </script>
+
+<!-- Save the reading position when the window is hidden: quitting from the Reader leaves no other hook. -->
+<svelte:document onvisibilitychange={() => document.hidden && screen.flush()} />
 
 <svelte:window
   bind:innerHeight={viewportHeight}

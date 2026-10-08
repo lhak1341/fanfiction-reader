@@ -68,11 +68,6 @@ pub trait FicSource {
     type ChapterLocator;
     type ListingLocator;
 
-    /// Matches `stories.source` (`db.rs` schema) — lets `dispatch::chapter_fetch_url`
-    /// pick this source's impl for a stored story generically instead of
-    /// hand-matching a runtime `FetchSource` enum.
-    const SOURCE_TAG: &'static str;
-
     /// Prefix for this source's `println!`/`eprintln!` lines in `dispatch.rs`/
     /// `fetch.rs` — replaces the runtime `FetchSource` enum that existed only
     /// to pick between these two strings.
@@ -170,6 +165,50 @@ impl ListingStatus {
             ListingStatus::Any => "any",
         }
     }
+
+    /// Every variant, for the `types.ts` spelling guard (`queries.rs` tests).
+    #[cfg(test)]
+    pub const ALL: [ListingStatus; 3] = [ListingStatus::Complete, ListingStatus::InProgress, ListingStatus::Any];
+}
+
+/// Which source a story belongs to: the one value type for "ffn or ao3" —
+/// the story-list filter (`StoryFilters::source`), a user-pasted URL's source
+/// (`dispatch::story_url_source`), and a stored story's source
+/// (`db::chapter_fetch_target`, parsed from `stories.source` via `FromSql`).
+/// The spelling is the `stories.source` value, and it is written once, here;
+/// the upsert SQL's `'ffn'`/`'ao3'` literals are tied to it by the
+/// persist-then-`chapter_fetch_url` tests in `dispatch.rs`. An unknown
+/// spelling is rejected (at deserialization, or as a conversion error when
+/// read from the DB, which its `CHECK` makes unreachable) rather than
+/// matching no rows. Mirrors `StorySource` in `types.ts` (guarded by a test
+/// in `queries.rs`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StorySource {
+    Ffn,
+    Ao3,
+}
+
+impl StorySource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StorySource::Ffn => "ffn",
+            StorySource::Ao3 => "ao3",
+        }
+    }
+
+    #[cfg(test)]
+    pub const ALL: [StorySource; 2] = [StorySource::Ffn, StorySource::Ao3];
+}
+
+impl rusqlite::types::FromSql for StorySource {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        match value.as_str()? {
+            "ffn" => Ok(StorySource::Ffn),
+            "ao3" => Ok(StorySource::Ao3),
+            other => Err(rusqlite::types::FromSqlError::Other(format!("unknown story source {other:?}").into())),
+        }
+    }
 }
 
 /// `Deserialize` so `lib.rs::fetch_page` (a `#[tauri::command]`) can accept
@@ -192,7 +231,6 @@ impl FicSource for Ffn {
     type ChapterLocator = FfnChapterLocator;
     type ListingLocator = FfnListingLocator;
 
-    const SOURCE_TAG: &'static str = "ffn";
     const LOG_PREFIX: &'static str = "[fetch]";
 
     fn category_from_index_url(url: &str) -> Option<String> {
@@ -293,7 +331,6 @@ impl FicSource for Ao3 {
     type ChapterLocator = Ao3ChapterLocator;
     type ListingLocator = Ao3ListingLocator;
 
-    const SOURCE_TAG: &'static str = "ao3";
     const LOG_PREFIX: &'static str = "[ao3-fetch]";
 
     fn chapter_locator_from_url(url: &str) -> Result<Option<Self::ChapterLocator>, String> {
@@ -392,6 +429,19 @@ mod tests {
         assert!(parse("inProgress").is_err());
         assert!(parse("finished").is_err());
         assert!(parse("").is_err());
+    }
+
+    #[test]
+    fn story_source_reads_only_its_two_spellings_from_a_sql_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        let read = |v: &str| conn.query_row("SELECT ?1", [v], |row| row.get::<_, StorySource>(0));
+
+        assert_eq!(read("ffn").unwrap(), StorySource::Ffn);
+        assert_eq!(read("ao3").unwrap(), StorySource::Ao3);
+        // The stories.source CHECK forbids these; the parse refuses them too.
+        assert!(read("FFN").is_err());
+        assert!(read("").is_err());
+        assert!(read("wattpad").is_err());
     }
 
     #[test]

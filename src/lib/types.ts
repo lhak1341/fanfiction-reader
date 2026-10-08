@@ -5,6 +5,10 @@
 // review, 2026-07-29) fails `cargo test` if the two sides' field sets drift
 // — see its own doc comment for exactly which structs it covers and why.
 
+// StoryStatus, ListingStatus, SortBy and StorySource below are the exact
+// spellings the Rust enums accept (queries.rs/source.rs reject anything else) —
+// `queries::tests::types_ts_unions_match_the_rust_wire_enums` reads these
+// literals, so keep each union a plain `"a" | "b"` list (or another exported union).
 export type StoryStatus = "complete" | "in_progress";
 // What a listing search asks for — a filter, not a story's status (Rust: `ListingStatus`, source.rs).
 export type ListingStatus = StoryStatus | "any";
@@ -30,6 +34,8 @@ export interface StoryRow {
   dismissed: boolean;
   bookmarked: boolean;
   lastChapterNum: number | null;
+  /** How far down `lastChapterNum` you were, 0–100; `null` if never recorded. */
+  lastScrollPct: number | null;
   /** Raw "Updated:" text from FFN's metadata line, verbatim. `null` for
    * one-shots or stories imported before this field existed. */
   ffnUpdatedAt: string | null;
@@ -90,6 +96,17 @@ export const FFN_CATEGORIES = [
 export interface ChapterFetched {
   storyId: number;
   chapterNum: number;
+  /** `stories.chapter_count` after the fetch (it can grow on an in-progress fic). */
+  chapterCount: number;
+}
+
+/** `ensure_chapter`'s result. `chapterCount`/`chapters` are `null` on a cache
+ * hit (`wasFetched: false`) — nothing changed, so the caller keeps what it holds. */
+export interface EnsuredChapter {
+  wasFetched: boolean;
+  chapterCount: number | null;
+  chapters: ChapterListItem[] | null;
+  content: ChapterContent;
 }
 
 export interface BrowseFetched {

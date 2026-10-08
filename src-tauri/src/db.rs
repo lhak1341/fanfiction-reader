@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS read_state (
     is_read          INTEGER NOT NULL DEFAULT 0,
     marked_at        TEXT,
     last_chapter_num INTEGER,
+    last_scroll_pct  INTEGER,
     last_opened_at   TEXT,
     dismissed        INTEGER NOT NULL DEFAULT 0,
     dismissed_at     TEXT,
@@ -258,14 +259,14 @@ pub fn table_row_counts(conn: &Connection) -> rusqlite::Result<Vec<String>> {
         .collect()
 }
 
-/// What a chapter fetch needs to build its URL: the story's `source` and own-
-/// site id, plus the chapter's `source_chapter_id` if a prior fetch recorded
+/// What a chapter fetch needs to build its URL: the story's `source` (parsed
+/// to a `StorySource` here, where the row is read) and own-site id, plus the chapter's `source_chapter_id` if a prior fetch recorded
 /// one. `None` when the story isn't in the DB.
 pub fn chapter_fetch_target(
     conn: &Connection,
     story_id: i64,
     chapter_num: i64,
-) -> rusqlite::Result<Option<(String, i64, Option<i64>)>> {
+) -> rusqlite::Result<Option<(crate::source::StorySource, i64, Option<i64>)>> {
     conn.query_row(
         "SELECT s.source, s.source_story_id,
                 (SELECT c.source_chapter_id FROM chapters c WHERE c.story_id = s.id AND c.chapter_num = ?2) AS source_chapter_id
@@ -279,6 +280,18 @@ pub fn chapter_fetch_target(
 /// Creates the read_state row for a story if it doesn't already have one.
 /// `DO NOTHING` on conflict is the point — an existing story's manual
 /// is_read/dismissed/bookmarked flags must never be reset by a refetch.
+///
+/// Architecture review candidate 7 (2026-10-08), rejected: folding this into
+/// `upsert_story`/`upsert_ao3_story` (or an `AFTER INSERT` trigger on `stories`,
+/// which interacts badly with `migrations.rs`'s rename-and-rebuild), and making
+/// the flag setters in `queries.rs` error on a zero-row `UPDATE`. The invariant
+/// "every story has a `read_state` row" is held by exactly two adjacent calls in
+/// `dispatch::persist_page` (chapter and listing arms), each in the same
+/// transaction as the upsert, and no failure has been observed (live DB:
+/// 470 stories, 470 rows). The inner `JOIN`s in `get_continue_reading` /
+/// `list_bookmarked_fandoms` vs the `LEFT JOIN`s elsewhere are therefore a
+/// harmless inconsistency, not a bug. Reopen if a third place starts creating
+/// `stories` rows (e.g. a file import) or a story-delete feature appears.
 pub fn ensure_read_state(conn: &Connection, story_id: i64) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO read_state (story_id) VALUES (?1) ON CONFLICT(story_id) DO NOTHING",

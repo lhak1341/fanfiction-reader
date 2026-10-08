@@ -24,4 +24,5 @@ commands.allow = [
     "search_ao3",
     "add_story_by_url",
     "fetch_chapter",
+    "ensure_chapter",
 ]

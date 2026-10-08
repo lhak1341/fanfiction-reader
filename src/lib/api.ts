@@ -7,6 +7,7 @@ import type {
   ChapterContent,
   ChapterFetched,
   ChapterListItem,
+  EnsuredChapter,
   FandomIndexEntry,
   FandomIndexFetched,
   ListingStatus,
@@ -53,8 +54,11 @@ export function toggleBookmarked(storyId: number, value: boolean): Promise<void>
   return invoke("toggle_bookmarked", { storyId, value });
 }
 
-export function setResumeChapter(storyId: number, chapterNum: number): Promise<void> {
-  return invoke("set_resume_chapter", { storyId, chapterNum });
+/// One resume point: the chapter and how far down it you are (0–100). Always
+/// written as a pair, so a late save for an earlier chapter can't attach its
+/// position to a newer one.
+export function setResumeChapter(storyId: number, chapterNum: number, scrollPct: number): Promise<void> {
+  return invoke("set_resume_chapter", { storyId, chapterNum, scrollPct });
 }
 
 export function listChapters(storyId: number): Promise<ChapterListItem[]> {
@@ -87,10 +91,20 @@ export function fetchChapterAndWait(storyId: number, chapterNum: number, backgro
   return invoke<ChapterFetched>("fetch_chapter", { storyId, chapterNum, background }).then(() => {});
 }
 
+/// Makes chapter `chapterNum` cached and returns it — the stored body on a
+/// cache hit, else a fetch (same `background` rules as `fetchChapterAndWait`)
+/// plus the refreshed chapter list and story chapter count. `chapterCount` and
+/// `chapters` are `null` on a hit: nothing changed, keep what you hold.
+export function ensureChapter(storyId: number, chapterNum: number, background = false): Promise<EnsuredChapter> {
+  return invoke<EnsuredChapter>("ensure_chapter", { storyId, chapterNum, background });
+}
+
 /// Adds one story from a pasted URL (`add_story_by_url` validates it and picks
-/// the source). A bad URL rejects immediately, before any fetch starts. Like
-/// any FFN fetch it can be interrupted by a newer one, so callers still avoid
-/// running it alongside a bookmark refresh/download (the modal blocks submit).
+/// the source) and bookmarks it — a pasted URL is intent to keep the story. A
+/// bad URL rejects immediately, before any fetch starts. A
+/// foreground fetch: it supersedes a running bookmark refresh/download item
+/// (which fails and is retried or reported) rather than waiting for it, and
+/// like any FFN fetch a newer foreground one can interrupt it.
 export function addStoryByUrl(url: string): Promise<ChapterFetched> {
   return invoke("add_story_by_url", { url });
 }

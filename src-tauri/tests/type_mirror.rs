@@ -37,6 +37,7 @@ const MIRRORED_STRUCTS: &[&str] = &[
     "ChapterContent",
     "FandomIndexEntry",
     "ChapterFetched",
+    "EnsuredChapter",
     "BrowseFetched",
     "FandomIndexFetched",
 ];

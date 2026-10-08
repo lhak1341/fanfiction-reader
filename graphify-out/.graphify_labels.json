@@ -11,6 +11,7 @@
   "9": "FFN Parsing & Scraping",
   "10": "App Icons & Tauri Config",
   "11": "UI List/Search Components",
+  "12": "+page.svelte",
   "13": "Fandom & Search State Concepts",
   "14": "Fetch-Page Tauri Capability",
   "15": "TypeScript Config",
@@ -21,6 +22,7 @@
   "20": "Story Flag Actions",
   "21": "Bookmarks Screen State",
   "22": "Read/Bookmark Flag Schema",
+  "23": "BookmarksScreen",
   "24": "Fandom Picker Component",
   "25": "Story Flag Reconciliation",
   "26": "AO3 No-Merge Ranking Decision",
@@ -135,5 +137,9 @@
   "135": "CLAUDE.md",
   "136": "CLAUDE.md",
   "137": "fetch_session.rs",
-  "140": "BookmarksScreen"
+  "138": "$lib/filterPrefs",
+  "139": "readerPrefs.ts",
+  "140": "BookmarksScreen",
+  "141": "typography.ts",
+  "142": "Stepper.svelte"
 }

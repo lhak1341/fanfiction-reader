@@ -16,10 +16,12 @@
 // scroll or nav bug actually lands in Reader.svelte.
 
 import * as api from "./api";
-import { ensureChapterCached } from "./chapterCache";
 import { jitterDelay, sleep } from "./pacedLoop";
 import { toggleStoryFlag } from "./storyFlags";
 import type { ChapterContent, ChapterListItem, StoryRow } from "./types";
+
+// How long after the last scroll event the position is saved (see `reportScroll`).
+const SCROLL_SAVE_DELAY_MS = 1500;
 
 export class ReaderScreen {
   story = $state<StoryRow | undefined>(undefined);
@@ -34,6 +36,13 @@ export class ReaderScreen {
   // persisted) — so paging back to a chapter you were partway through
   // resumes where you left off, instead of always landing at the top.
   scrollPositions = new Map<number, number>();
+
+  // The latest scroll position of the chapter on screen, waiting to be saved.
+  // It carries its own chapter number: a save is always a complete
+  // (chapter, position) pair, never the current chapter with an older one's
+  // position. Cleared whenever a new chapter lands (that load saves its own pair).
+  private pendingScroll?: { num: number; pct: number };
+  private scrollTimer?: ReturnType<typeof setTimeout>;
 
   // Bumped on every new loadChapter; a superseded load and a running prefetch
   // chain both check it and bail the moment a newer navigation takes over.
@@ -57,6 +66,39 @@ export class ReaderScreen {
   // retries an interrupted chapter.
   dispose() {
     this.loadGen++;
+    void this.flush();
+  }
+
+  // Where to start `num`: the saved position if it is the chapter you last
+  // read and this session hasn't scrolled it yet (the pixel map, which holds
+  // exact positions for chapters visited this session, wins in the Reader),
+  // else the top.
+  resumePctFor(num: number): number {
+    const s = this.story;
+    return s && s.lastChapterNum === num && !this.scrollPositions.has(num) ? (s.lastScrollPct ?? 0) : 0;
+  }
+
+  // Called by the Reader on every scroll of the chapter on screen. Debounced:
+  // one save once you pause, not one per scroll event.
+  reportScroll(pct: number) {
+    if (!this.content) return;
+    this.pendingScroll = { num: this.currentChapterNum, pct };
+    clearTimeout(this.scrollTimer);
+    this.scrollTimer = setTimeout(() => void this.flush(), SCROLL_SAVE_DELAY_MS);
+  }
+
+  // Saves the pending position now (chapter change, Reader closing, window
+  // hidden). Best-effort: a failed save only means reopening lands a bit earlier.
+  async flush() {
+    clearTimeout(this.scrollTimer);
+    const pending = this.pendingScroll;
+    this.pendingScroll = undefined;
+    if (!pending) return;
+    try {
+      await api.setResumeChapter(this.storyId, pending.num, pending.pct);
+    } catch (e) {
+      console.error("could not save scroll position:", e);
+    }
   }
 
   // Never rejects: `loading` starts `true` and only `runLoad` clears it, so a
@@ -83,13 +125,12 @@ export class ReaderScreen {
   }
 
   // A fetch can grow the story's metadata (new chapters on an in-progress
-  // fic), and `goToChapter`/prefetch bound on `story.chapterCount` — re-read
-  // the row after every fetch so those bounds don't go stale. Only
-  // `chapterCount` is merged in: replacing the whole row could clobber a
-  // flag toggle that landed while this read was in flight.
-  private async refreshStory() {
-    const fresh = await api.getStory(this.storyId);
-    if (fresh && this.story) this.story = { ...this.story, chapterCount: fresh.chapterCount };
+  // fic), and `goToChapter`/prefetch bound on `story.chapterCount`, so the
+  // fetch result carries the new count (`null` on a cache hit — unchanged).
+  // Only `chapterCount` is merged in: replacing the whole row could clobber a
+  // flag toggle that landed while the fetch was in flight.
+  private mergeChapterCount(chapterCount: number | null) {
+    if (chapterCount !== null && this.story) this.story = { ...this.story, chapterCount };
   }
 
   // Quietly warms the two chapters on either side of wherever you land, so
@@ -107,10 +148,10 @@ export class ReaderScreen {
       if (gen !== this.loadGen) return;
       let wasFetched = true;
       try {
-        const result = await ensureChapterCached(this.storyId, n, { background: true });
+        const result = await api.ensureChapter(this.storyId, n, true);
         if (result.chapters) this.chapters = result.chapters;
         wasFetched = result.wasFetched;
-        if (wasFetched) await this.refreshStory();
+        this.mergeChapterCount(result.chapterCount);
       } catch {
         // Best-effort — a failed prefetch just means that chapter fetches
         // normally (foreground) whenever it's actually opened. Treated as
@@ -154,13 +195,15 @@ export class ReaderScreen {
     }
     let rendered = false;
     try {
-      const result = await ensureChapterCached(this.storyId, num);
+      const result = await api.ensureChapter(this.storyId, num);
       if (myGen !== this.loadGen) return;
-      if (result.wasFetched) await this.refreshStory();
-      if (myGen !== this.loadGen) return;
+      this.mergeChapterCount(result.chapterCount);
       if (result.chapters) this.chapters = result.chapters;
-      this.content = result.content ?? undefined;
+      this.content = result.content;
       this.currentChapterNum = num;
+      // A position reported for the previous chapter must not be saved against this one.
+      clearTimeout(this.scrollTimer);
+      this.pendingScroll = undefined;
       rendered = true;
     } catch (e) {
       if (myGen !== this.loadGen) return;
@@ -174,7 +217,7 @@ export class ReaderScreen {
     // to tell the caller must not replace it with an error banner (the
     // template shows `fetchError` instead of `content`) or skip the prefetch.
     try {
-      await api.setResumeChapter(this.storyId, num);
+      await api.setResumeChapter(this.storyId, num, this.resumePctFor(num));
     } catch (e) {
       console.error("could not save resume position:", e);
     }

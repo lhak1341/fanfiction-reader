@@ -5,7 +5,7 @@ A local-first reader for fanfiction imported from multiple sources (FanFiction.n
 ## Language
 
 **Source**:
-One of the two origin sites a Story can be imported from — FanFiction.net (`ffn`) or Archive of Our Own (`ao3`). Each has its own markup, tagging vocabulary, and fetch mechanics.
+One of the two origin sites a Story can be imported from — FanFiction.net (`ffn`) or Archive of Our Own (`ao3`). Each has its own markup, tagging vocabulary, and fetch mechanics. In Rust it is the `StorySource` enum (`source.rs`) — the one value for a story's, a filter's and a pasted URL's source; in TS, the `StorySource` union (`types.ts`).
 
 **Fandom**:
 The canonical grouping a Story belongs to (e.g. "Naruto", "Harry Potter"), stored as `stories.fandom` — one label per Story, not per Source. The same fandom can be searched and imported from either Source; sources don't always agree on the fandom's exact label, which is why import force-applies one chosen label per search rather than trusting each Source's own text.
@@ -22,3 +22,7 @@ _Avoid_: pending fetch, fetch lock (the old names for the pre-session bookkeepin
 
 **Story flag**:
 One of a Story's three independent, manually-toggled per-row booleans — `isRead`, `dismissed` (not-for-me), `bookmarked` — stored on `read_state`. Toggling one flag is `storyFlags.ts`'s pure `toggleStoryFlag(story, flag)`, which persists via `api.ts` and returns the patched row; it deliberately has no opinion on what a caller does afterward, since `+page.svelte` (refresh both Search and Bookmarks lists) and `ReaderScreen` (patch its one held-onto `StoryRow`) need different reconciliation strategies. `storyFlagActions.ts` is the composition root's own strategy — `toggleReadAndRefresh`/`toggleDismissedAndRefresh`/`toggleBookmarkedAndRefresh`, each wrapping the toggle in error-handling and a caller-supplied `refreshAll`.
+
+**Cached chapter**:
+A chapter whose body is stored locally (`chapters.content <> ''`). A TOC stub — registered with every fetch of the story so titles stay browsable — has `content = ''` and is *not* cached. A fetch that parses to empty content is a persist error, never a stored empty row, so "fetched" and "cached" mean the same thing. `ensure_chapter` returns the cached chapter or fetches it; `fetch_chapter` always fetches (the debug page's bulk prefetch relies on that).
+_Avoid_: downloaded, fetched (for the stored state).

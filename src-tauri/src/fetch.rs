@@ -13,9 +13,9 @@
 //! command registration in `lib.rs` stays a thin list instead of
 //! interleaving with ~750 lines of fetch machinery.
 
-use crate::dispatch::{self, BrowseFetched, ChapterFetched, FandomIndexFetched, FetchOutcome, StoryUrlSource};
+use crate::dispatch::{self, BrowseFetched, ChapterFetched, EnsuredChapter, FandomIndexFetched, FetchOutcome};
 use crate::fetch_session::{FetchSession, Priority, FETCH_TIMEOUT};
-use crate::source::{self, ListingStatus};
+use crate::source::{self, ListingStatus, StorySource};
 use crate::{ao3, db, ffn};
 use tauri::Manager;
 
@@ -374,19 +374,23 @@ async fn fetch_by_source(
     app: &tauri::AppHandle,
     db: &db::Db,
     session: &FetchSession,
-    source: StoryUrlSource,
+    source: StorySource,
     url: String,
     priority: Priority,
 ) -> Result<FetchOutcome, String> {
     match source {
-        StoryUrlSource::Ffn => fetch_ffn(app, db, session, url, None, priority).await,
-        StoryUrlSource::Ao3 => fetch_ao3(app, db, &url, None).await,
+        StorySource::Ffn => fetch_ffn(app, db, session, url, None, priority).await,
+        StorySource::Ao3 => fetch_ao3(app, db, &url, None).await,
     }
 }
 
-/// Adds one story by pasted URL (`StoryUrlSource`, `dispatch.rs`, validates it
+/// Adds one story by pasted URL (`StorySource`, `dispatch.rs`, validates it
 /// and picks the source). Routes to the same fetch path a chapter fetch
-/// already uses. A bad URL fails here, before any fetch starts.
+/// already uses. A bad URL fails here, before any fetch starts. A pasted URL
+/// is explicit intent to keep that story, so a successful import also
+/// bookmarks it (`dispatch::bookmark_imported_story`) — always, with no
+/// opt-out: this is the one place a story is bookmarked without the user
+/// toggling the flag.
 #[tauri::command]
 pub async fn add_story_by_url(
     app: tauri::AppHandle,
@@ -396,7 +400,9 @@ pub async fn add_story_by_url(
 ) -> Result<ChapterFetched, String> {
     let url = url.trim().to_string();
     let source = dispatch::story_url_source(&url)?;
-    fetch_by_source(&app, &db, &session, source, url, Priority::Foreground).await?.into_chapter()
+    let fetched = fetch_by_source(&app, &db, &session, source, url, Priority::Foreground).await?.into_chapter()?;
+    dispatch::bookmark_imported_story(&db, fetched.story_id)?;
+    Ok(fetched)
 }
 
 /// Fetches one chapter of an already-imported story — the source, URL and (AO3)
@@ -415,9 +421,43 @@ pub async fn fetch_chapter(
     chapter_num: i64,
     background: bool,
 ) -> Result<ChapterFetched, String> {
-    let (source, url) = dispatch::chapter_fetch_url(&db, story_id, chapter_num)?;
+    fetch_chapter_page(&app, &db, &session, story_id, chapter_num, background).await
+}
+
+async fn fetch_chapter_page(
+    app: &tauri::AppHandle,
+    db: &db::Db,
+    session: &FetchSession,
+    story_id: i64,
+    chapter_num: i64,
+    background: bool,
+) -> Result<ChapterFetched, String> {
+    let (source, url) = dispatch::chapter_fetch_url(db, story_id, chapter_num)?;
     let priority = if background { Priority::Background } else { Priority::Foreground };
-    fetch_by_source(&app, &db, &session, source, url, priority).await?.into_chapter()
+    fetch_by_source(app, db, session, source, url, priority).await?.into_chapter()
+}
+
+/// Makes one chapter of an already-imported story cached and returns it: the
+/// stored body on a cache hit (no fetch, no `chapter_count`/`chapters`), else
+/// a fetch (`fetch_chapter`'s path, same `background` rules and `BUSY`/
+/// interrupted/timeout rejections) followed by the fresh chapter list and the
+/// story's chapter count. Prefer this over `fetch_chapter` + read-back;
+/// `fetch_chapter` stays for callers that must fetch unconditionally (the
+/// debug page's bulk prefetch).
+#[tauri::command]
+pub async fn ensure_chapter(
+    app: tauri::AppHandle,
+    db: tauri::State<'_, db::Db>,
+    session: tauri::State<'_, FetchSession>,
+    story_id: i64,
+    chapter_num: i64,
+    background: bool,
+) -> Result<EnsuredChapter, String> {
+    if let Some(hit) = dispatch::cached_chapter(&db, story_id, chapter_num)? {
+        return Ok(hit);
+    }
+    let fetched = fetch_chapter_page(&app, &db, &session, story_id, chapter_num, background).await?;
+    dispatch::ensured_after_fetch(&db, story_id, chapter_num, &fetched)
 }
 
 /// FFN discovery (SPEC.md §6): fetches the next page of a browse/category
@@ -676,6 +716,33 @@ mod tests {
         assert_eq!(outcome.into_chapter().unwrap().chapter_num, 34);
         assert_eq!(*webview.navigations.lock().unwrap(), vec![CHAPTER_URL.to_string()]);
         assert_eq!(webview.dumps.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn ensure_after_a_fetch_miss_returns_the_fetched_chapter_with_its_list() {
+        let (dbh, session) = (test_db(), Arc::new(FetchSession::new()));
+        let webview = FakeWebview::new(&session, vec![real_page()]);
+        let fetched = run_fetch(&webview, &dbh, &session, Priority::Foreground).unwrap().into_chapter().unwrap();
+
+        let ensured = dispatch::ensured_after_fetch(&dbh, fetched.story_id, 34, &fetched).unwrap();
+
+        assert!(ensured.was_fetched);
+        assert!(ensured.content.is_cached);
+        assert_eq!(ensured.chapter_count, Some(fetched.chapter_count));
+        assert_eq!(ensured.chapters.unwrap().len() as i64, fetched.chapter_count);
+    }
+
+    #[test]
+    fn a_story_imported_through_the_fetch_path_is_bookmarked_by_the_add_by_url_step() {
+        let (dbh, session) = (test_db(), Arc::new(FetchSession::new()));
+        let webview = FakeWebview::new(&session, vec![real_page()]);
+        let fetched = run_fetch(&webview, &dbh, &session, Priority::Foreground).unwrap().into_chapter().unwrap();
+        let bookmarked = |id| dbh.run(|conn| crate::queries::get_story(conn, id)).unwrap().unwrap().bookmarked;
+        assert!(!bookmarked(fetched.story_id), "a plain chapter fetch never bookmarks");
+
+        dispatch::bookmark_imported_story(&dbh, fetched.story_id).unwrap();
+
+        assert!(bookmarked(fetched.story_id));
     }
 
     #[test]

@@ -40,8 +40,8 @@
     "semantic_hash": ""
   },
   "src-tauri/src/db.rs": {
-    "mtime": 1791379665.524452,
-    "ast_hash": "6dc8bf23a57f1c659563536d8bc35d49",
+    "mtime": 1791466476.8109486,
+    "ast_hash": "f61d4a7d59d361e4548767c44d01ec8d",
     "semantic_hash": ""
   },
   "src-tauri/src/ffn.rs": {
@@ -50,8 +50,8 @@
     "semantic_hash": ""
   },
   "src-tauri/src/lib.rs": {
-    "mtime": 1791376661.2122498,
-    "ast_hash": "57db69dd241a163970fc58f5be7d66d4",
+    "mtime": 1791466476.8104868,
+    "ast_hash": "006ba3dd9894dbd92c659439abd42954",
     "semantic_hash": ""
   },
   "src-tauri/src/main.rs": {
@@ -60,8 +60,8 @@
     "semantic_hash": "84d6270fa0d45211c1386bd04bb002e8"
   },
   "src-tauri/src/queries.rs": {
-    "mtime": 1791380114.24625,
-    "ast_hash": "f98659fa2b3a4e18ec3856d4d7a8cb5f",
+    "mtime": 1791466485.6256564,
+    "ast_hash": "fea91d9d87263a422b8f469bf0a65119",
     "semantic_hash": ""
   },
   "src-tauri/src/scrape.rs": {
@@ -70,8 +70,8 @@
     "semantic_hash": "e38046f98ee4ca3c409b57bea2a2d8d5"
   },
   "src-tauri/src/source.rs": {
-    "mtime": 1791392893.4761448,
-    "ast_hash": "fb6068e212c2f85a91243a0d0503acaf",
+    "mtime": 1791465884.278806,
+    "ast_hash": "7f7e3673210ae37880487b784827a83f",
     "semantic_hash": ""
   },
   "src-tauri/tauri.conf.json": {
@@ -80,18 +80,13 @@
     "semantic_hash": "852f81e2873351cfe5a8798aa94b1c28"
   },
   "src/lib/api.ts": {
-    "mtime": 1791392904.4030557,
-    "ast_hash": "ad46791d26e4abe33d44dd309b2eb4b6",
+    "mtime": 1791466543.022967,
+    "ast_hash": "5389195fcd1e766abbf35464e83dccce",
     "semantic_hash": ""
   },
   "src/lib/bookmarksScreen.svelte.ts": {
-    "mtime": 1791390669.2945027,
-    "ast_hash": "3b68717f5b1e12139bdcea9ecd8a4eda",
-    "semantic_hash": ""
-  },
-  "src/lib/chapterCache.ts": {
-    "mtime": 1791390669.2942011,
-    "ast_hash": "e94810e6c916a62adda4da54f73ce219",
+    "mtime": 1791461576.7281868,
+    "ast_hash": "e53bbfd2a93d685a6e88bc4f471bfe6d",
     "semantic_hash": ""
   },
   "src/lib/components/FandomPicker.svelte": {
@@ -100,18 +95,18 @@
     "semantic_hash": "179a6b08c00873bec40a77d201f93831"
   },
   "src/lib/components/Reader.svelte": {
-    "mtime": 1791390009.0959013,
-    "ast_hash": "7afbc0d3b8cc7fbcc703fe5a1852cf37",
+    "mtime": 1791466552.4832888,
+    "ast_hash": "945ad46f067e07472042a7f8e32a9c8c",
     "semantic_hash": ""
   },
   "src/lib/components/RowActions.svelte": {
-    "mtime": 1785305779.2535958,
-    "ast_hash": "e472098c4a2b676ad60e640485e26a0c",
-    "semantic_hash": "e472098c4a2b676ad60e640485e26a0c"
+    "mtime": 1791461590.144725,
+    "ast_hash": "e13f64329502b49029aa7d08e3a43224",
+    "semantic_hash": ""
   },
   "src/lib/components/SearchModal.svelte": {
-    "mtime": 1791337225.6112103,
-    "ast_hash": "27f30dea55e3ec9af22a239c29b6ffd8",
+    "mtime": 1791461590.1454072,
+    "ast_hash": "ac9048babacef6034ff56119db71ef07",
     "semantic_hash": ""
   },
   "src/lib/components/StatusBadges.svelte": {
@@ -125,9 +120,9 @@
     "semantic_hash": "262e29e8f443bb366673aa63ac7b087c"
   },
   "src/lib/components/StoryList.svelte": {
-    "mtime": 1785338291.0934515,
-    "ast_hash": "58010e2e0261ca69b7fd63cc82f31a27",
-    "semantic_hash": "58010e2e0261ca69b7fd63cc82f31a27"
+    "mtime": 1791461590.1423402,
+    "ast_hash": "725a0ee22aa5bb713ccc5e2d8202482b",
+    "semantic_hash": ""
   },
   "src/lib/components/ThemeToggle.svelte": {
     "mtime": 1784851882.0523539,
@@ -185,13 +180,13 @@
     "semantic_hash": "1cfb03fd99516b2939f44857ff7d5667"
   },
   "src/lib/readerScreen.svelte.ts": {
-    "mtime": 1791390669.2948492,
-    "ast_hash": "4e92eacdaf445d7f3d988b9961a4305c",
+    "mtime": 1791466552.4827826,
+    "ast_hash": "68b39524a7d5225de5904c1233f0c3f0",
     "semantic_hash": ""
   },
   "src/lib/searchModalScreen.svelte.ts": {
-    "mtime": 1791389132.817521,
-    "ast_hash": "e23590009726dd40df96e0c34da037b0",
+    "mtime": 1791461818.8577967,
+    "ast_hash": "3413feb853e94e87756bb2dac8d6cafb",
     "semantic_hash": ""
   },
   "src/lib/searchScreen.svelte.ts": {
@@ -215,8 +210,8 @@
     "semantic_hash": "c089381d52a14265d104c4385c9ba23e"
   },
   "src/lib/types.ts": {
-    "mtime": 1791392893.476745,
-    "ast_hash": "ebc3dd86f3c210525fcbe6139fd7a43d",
+    "mtime": 1791466543.0225968,
+    "ast_hash": "8b7e1a93af26d2ff6bccf382c0dfaa56",
     "semantic_hash": ""
   },
   "src/lib/typography.ts": {
@@ -240,8 +235,8 @@
     "semantic_hash": "6fcc01a9e86b5ac2814ef7b2e6831657"
   },
   "src/routes/+page.svelte": {
-    "mtime": 1791386073.5640645,
-    "ast_hash": "4a1eff9159cf7fa0a016b0950b74d0f3",
+    "mtime": 1791461590.1418061,
+    "ast_hash": "45114d95dd22b35e42052e82a049029c",
     "semantic_hash": ""
   },
   "src/routes/debug/+page.svelte": {
@@ -270,13 +265,13 @@
     "semantic_hash": "c3d54ccee9bf23eb15ee480f57068775"
   },
   "CLAUDE.md": {
-    "mtime": 1791393480.9691556,
-    "ast_hash": "60fe499cb451c225822f4ab495a64966",
+    "mtime": 1791466809.1545208,
+    "ast_hash": "49fb4ad509fe9f9beed3fcca4b319dc2",
     "semantic_hash": ""
   },
   "CONTEXT.md": {
-    "mtime": 1791393480.9707854,
-    "ast_hash": "da0404a514c239a75acdb10e4727d795",
+    "mtime": 1791465922.0595474,
+    "ast_hash": "996c752594cb9ecc2c006aac4f3701d5",
     "semantic_hash": ""
   },
   "README.md": {
@@ -285,8 +280,8 @@
     "semantic_hash": "2787283facf1123fe6c06de5e0de8013"
   },
   "docs/SPEC.md": {
-    "mtime": 1791393480.9715075,
-    "ast_hash": "c52aa11d1b9c74d312e2ae4e5cef9e75",
+    "mtime": 1791466593.146816,
+    "ast_hash": "3093f279e12e35dc7377fad30e21636a",
     "semantic_hash": ""
   },
   "docs/wayfinder/map.md": {
@@ -325,8 +320,8 @@
     "semantic_hash": "91baf8024c006e814c54d85a56e4efdd"
   },
   "src-tauri/src/fetch.rs": {
-    "mtime": 1791392861.0681124,
-    "ast_hash": "1f9b59f4cb496f871d8258b4228abd2d",
+    "mtime": 1791465884.2786067,
+    "ast_hash": "e68d52640e606d28843d426894248b33",
     "semantic_hash": ""
   },
   "src-tauri/src/fetch_page_init.js": {
@@ -435,13 +430,13 @@
     "semantic_hash": ""
   },
   "src-tauri/src/dispatch.rs": {
-    "mtime": 1791392861.0679908,
-    "ast_hash": "0da041779dcb840d24fa2b17517e1962",
+    "mtime": 1791465876.7817004,
+    "ast_hash": "64e30bd1e7440e7ff627bf32ddedb670",
     "semantic_hash": ""
   },
   "src-tauri/src/migrations.rs": {
-    "mtime": 1791307566.4636822,
-    "ast_hash": "35d4dd6217b097d7724b6a2c1d318f68",
+    "mtime": 1791466494.5819278,
+    "ast_hash": "3c536ce34e23798eb24d3d3f8beb1085",
     "semantic_hash": ""
   },
   "docs/FETCH_TESTING.md": {

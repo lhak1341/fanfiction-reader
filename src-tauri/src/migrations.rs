@@ -207,6 +207,7 @@ fn fix_ao3_landmark_heading_in_chapters(conn: &Connection) -> rusqlite::Result<(
 // becomes the pain point — not before.
 const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
     |c| add_column_if_missing(c, "read_state", "last_opened_at", "TEXT"),
+    |c| add_column_if_missing(c, "read_state", "last_scroll_pct", "INTEGER"),
     |c| add_column_if_missing(c, "stories", "tags", "TEXT"),
     |c| add_column_if_missing(c, "stories", "ffn_updated_at", "TEXT"),
     |c| add_column_if_missing(c, "chapters", "source_chapter_id", "INTEGER"),
@@ -301,6 +302,29 @@ mod tests {
 
         // Idempotent: running it again on an already-fixed DB is a no-op.
         fix_dangling_stories_fk(&conn).unwrap();
+    }
+
+    #[test]
+    fn migrate_adds_last_scroll_pct_to_an_existing_read_state_and_keeps_its_rows() {
+        let conn = crate::db::tests::memory_conn();
+        conn.execute_batch(
+            "INSERT INTO stories (id, source, source_story_id, title, author, fandom, rating, status, word_count,
+                 favorite_count, chapter_count, last_fetched_at)
+             VALUES (1, 'ffn', 11, 't', 'a', 'f', 'K', 'complete', 1, 1, 1, '2026-01-01');
+             INSERT INTO read_state (story_id, last_chapter_num) VALUES (1, 7);
+             ALTER TABLE read_state DROP COLUMN last_scroll_pct;",
+        )
+        .unwrap();
+
+        migrate(&conn).unwrap();
+
+        let (chapter, pct): (i64, Option<i64>) = conn
+            .query_row("SELECT last_chapter_num, last_scroll_pct FROM read_state WHERE story_id = 1", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!((chapter, pct), (7, None), "an existing resume point reopens at the top, not lost");
+        migrate(&conn).unwrap(); // idempotent
     }
 
     #[test]

@@ -20,7 +20,8 @@
     onToggleBookmarked,
     onDownloadAll,
     downloadingStoryId = null,
-    downloadProgress = ""
+    downloadProgress = "",
+    busy = false
   }: {
     stories: StoryRow[];
     viewMode: "list" | "card";
@@ -34,6 +35,8 @@
     onDownloadAll?: (s: StoryRow) => void;
     downloadingStoryId?: number | null;
     downloadProgress?: string;
+    // A bulk job (refresh or any download) is running — Download stays disabled.
+    busy?: boolean;
   } = $props();
 
   // AO3 rows can carry a dozen+ freeform tags — capping the chip count
@@ -61,6 +64,7 @@
     {onDownloadAll}
     {downloadingStoryId}
     {downloadProgress}
+    {busy}
     fullyDownloaded={isFullyDownloaded(story)}
   />
 {/snippet}

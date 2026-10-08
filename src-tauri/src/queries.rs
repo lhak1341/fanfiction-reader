@@ -2,6 +2,7 @@
 //! Search and Bookmarks, toggle the three read_state flags, and serve
 //! chapters to the Reader. Built on the persistence primitives in `db.rs`.
 
+use crate::source::StorySource;
 use rusqlite::Connection;
 
 #[derive(Debug, serde::Serialize)]
@@ -27,6 +28,9 @@ pub struct StoryRow {
     pub dismissed: bool,
     pub bookmarked: bool,
     pub last_chapter_num: Option<i64>,
+    /// How far down `last_chapter_num` you had scrolled, 0–100, or `None` if
+    /// never recorded (reopens at the top). Only meaningful for that one chapter.
+    pub last_scroll_pct: Option<i64>,
     /// Raw "Updated:" text from FFN's metadata line, verbatim — see
     /// `StoryMetadata::updated_at`. `None` for one-shots or stories
     /// imported before this field existed.
@@ -35,10 +39,58 @@ pub struct StoryRow {
     /// The Reader needs this to know which fetch command/URL shape to use
     /// for an uncached chapter.
     pub source: String,
-    /// How many of `chapter_count` chapters already have `content <> ''`.
+    /// How many of `chapter_count` chapters are cached (`cached_chapter_sql!`).
     /// `== chapter_count` means the story is fully cached (offline-ready) —
     /// drives Bookmarks' "downloaded" badge (SPEC.md §6).
     pub cached_chapter_count: i64,
+}
+
+/// A story's `stories.status`, as a list filter. Unknown spellings (and `""`)
+/// are rejected at deserialization instead of silently matching no rows.
+/// Mirrors `StoryStatus` in `types.ts` (guarded by a test below).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StoryStatus {
+    Complete,
+    InProgress,
+}
+
+impl StoryStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StoryStatus::Complete => "complete",
+            StoryStatus::InProgress => "in_progress",
+        }
+    }
+
+    #[cfg(test)]
+    pub const ALL: [StoryStatus; 2] = [StoryStatus::Complete, StoryStatus::InProgress];
+}
+
+/// How a story list is ordered. An absent `sortBy` is `Favorites`; an unknown
+/// spelling (and `""`) is rejected at deserialization instead of silently
+/// falling back to it. Mirrors `SortBy` in `types.ts` (guarded by a test below).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortBy {
+    #[default]
+    Favorites,
+    Updated,
+    Words,
+}
+
+impl SortBy {
+    #[cfg(test)]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SortBy::Favorites => "favorites",
+            SortBy::Updated => "updated",
+            SortBy::Words => "words",
+        }
+    }
+
+    #[cfg(test)]
+    pub const ALL: [SortBy; 3] = [SortBy::Favorites, SortBy::Updated, SortBy::Words];
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -46,19 +98,18 @@ pub struct StoryRow {
 pub struct StoryFilters {
     /// `None` or empty means no fandom filter.
     pub fandom: Option<String>,
-    /// `"ffn"` | `"ao3"` | `None` for both — SPEC.md §8's locked "sources
-    /// aren't merged into one ranking" means sort-by-favorites only makes
-    /// sense scoped to one source at a time; this is that scope control.
-    pub source: Option<String>,
+    /// `None` for both sources — SPEC.md §8's locked "sources aren't merged
+    /// into one ranking" means sort-by-favorites only makes sense scoped to
+    /// one source at a time; this is that scope control.
+    pub source: Option<StorySource>,
     /// Matched against title, author, and summary — never fandom (locked in
     /// the UI/UX ticket: fandom has its own picker, separate from search).
     pub search: Option<String>,
     pub min_word_count: Option<i64>,
-    /// `"complete"` | `"in_progress"` | `None` for either.
-    pub status: Option<String>,
-    /// `"favorites"` (default) | `"updated"` | `"words"`.
+    /// `None` for either.
+    pub status: Option<StoryStatus>,
     #[serde(default)]
-    pub sort_by: String,
+    pub sort_by: SortBy,
     #[serde(default)]
     pub hide_read: bool,
     #[serde(default)]
@@ -97,10 +148,22 @@ fn row_to_story(row: &rusqlite::Row) -> rusqlite::Result<StoryRow> {
         dismissed: row.get::<_, i64>("dismissed")? != 0,
         bookmarked: row.get::<_, i64>("bookmarked")? != 0,
         last_chapter_num: row.get("last_chapter_num")?,
+        last_scroll_pct: row.get("last_scroll_pct")?,
         ffn_updated_at: row.get("ffn_updated_at")?,
         source: row.get("source")?,
         cached_chapter_count: row.get("cached_chapter_count")?,
     })
+}
+
+/// The one definition of a cached chapter (CONTEXT.md "Cached chapter"): the
+/// body is stored. A TOC stub (`upsert_chapter_stub`) has `content = ''`, and
+/// `dispatch::persist_page` refuses to store an empty parse, so no fetched
+/// chapter can look like a stub. A macro, not a `const`, so `concat!` can
+/// splice it into the `const` SQL below.
+macro_rules! cached_chapter_sql {
+    () => {
+        "content <> ''"
+    };
 }
 
 /// The `s.source, s.source_story_id, ...` column list shared by every
@@ -108,14 +171,15 @@ fn row_to_story(row: &rusqlite::Row) -> rusqlite::Result<StoryRow> {
 /// `row_to_story` looks these up by name (every expression carries an
 /// explicit `AS`), not position — reordering this list can't silently
 /// mismap a field the way positional `row.get(N)` could.
-const STORY_COLUMNS: &str = "s.id AS id, s.source_story_id AS source_story_id, s.title AS title, s.author AS author,
+const STORY_COLUMNS: &str = concat!("s.id AS id, s.source_story_id AS source_story_id, s.title AS title, s.author AS author,
                 s.fandom AS fandom, s.rating AS rating, s.genre AS genre, s.language AS language, s.tags AS tags,
                 s.status AS status, s.word_count AS word_count, s.favorite_count AS favorite_count,
                 s.chapter_count AS chapter_count, s.summary AS summary,
                 COALESCE(rs.is_read, 0) AS is_read, COALESCE(rs.dismissed, 0) AS dismissed,
                 COALESCE(rs.bookmarked, 0) AS bookmarked,
-                rs.last_chapter_num AS last_chapter_num, s.ffn_updated_at AS ffn_updated_at, s.source AS source,
-                (SELECT COUNT(*) FROM chapters c WHERE c.story_id = s.id AND c.content <> '') AS cached_chapter_count";
+                rs.last_chapter_num AS last_chapter_num, rs.last_scroll_pct AS last_scroll_pct,
+                s.ffn_updated_at AS ffn_updated_at, s.source AS source,
+                (SELECT COUNT(*) FROM chapters c WHERE c.story_id = s.id AND ", cached_chapter_sql!(), ") AS cached_chapter_count");
 
 pub fn list_stories(conn: &Connection, filters: &StoryFilters, scope: Scope) -> rusqlite::Result<Vec<StoryRow>> {
     let mut sql = format!(
@@ -130,9 +194,9 @@ pub fn list_stories(conn: &Connection, filters: &StoryFilters, scope: Scope) -> 
         sql.push_str(" AND s.fandom = ?");
         params.push(Box::new(fandom.to_string()));
     }
-    if let Some(source) = filters.source.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(source) = filters.source {
         sql.push_str(" AND s.source = ?");
-        params.push(Box::new(source.to_string()));
+        params.push(Box::new(source.as_str()));
     }
     // Text search is folded (accent/case-insensitive, e.g. "poke" matches
     // "Poké") in Rust below rather than pushed into SQL — SQLite's LIKE has
@@ -143,9 +207,9 @@ pub fn list_stories(conn: &Connection, filters: &StoryFilters, scope: Scope) -> 
         sql.push_str(" AND s.word_count >= ?");
         params.push(Box::new(min_words));
     }
-    if let Some(status) = filters.status.as_deref().filter(|s| !s.is_empty()) {
+    if let Some(status) = filters.status {
         sql.push_str(" AND s.status = ?");
-        params.push(Box::new(status.to_string()));
+        params.push(Box::new(status.as_str()));
     }
     if filters.hide_read {
         sql.push_str(" AND COALESCE(rs.is_read, 0) = 0");
@@ -159,10 +223,10 @@ pub fn list_stories(conn: &Connection, filters: &StoryFilters, scope: Scope) -> 
     if scope == Scope::BookmarksOnly {
         sql.push_str(" AND COALESCE(rs.bookmarked, 0) = 1");
     }
-    sql.push_str(match filters.sort_by.as_str() {
-        "updated" => " ORDER BY s.last_fetched_at DESC",
-        "words" => " ORDER BY s.word_count DESC",
-        _ => " ORDER BY s.favorite_count DESC",
+    sql.push_str(match filters.sort_by {
+        SortBy::Updated => " ORDER BY s.last_fetched_at DESC",
+        SortBy::Words => " ORDER BY s.word_count DESC",
+        SortBy::Favorites => " ORDER BY s.favorite_count DESC",
     });
 
     let mut stmt = conn.prepare(&sql)?;
@@ -281,10 +345,16 @@ pub fn set_bookmarked(conn: &Connection, story_id: i64, value: bool) -> rusqlite
 /// Also stamps `last_opened_at`, independent of `is_read` — that's what lets
 /// [`get_continue_reading`] answer "what was I reading?" without requiring
 /// the user to have finished (and marked read) anything.
-pub fn set_resume_chapter(conn: &Connection, story_id: i64, chapter_num: i64) -> rusqlite::Result<()> {
+///
+/// `scroll_pct` (clamped to 0–100) is how far down that chapter you are. The
+/// chapter and position are one resume point written together, so a late save
+/// for an earlier chapter can't pair its position with the newer chapter. The
+/// Reader also calls this (debounced) while you scroll, so `last_opened_at`
+/// means "last read", not "first opened".
+pub fn set_resume_chapter(conn: &Connection, story_id: i64, chapter_num: i64, scroll_pct: i64) -> rusqlite::Result<()> {
     conn.execute(
-        "UPDATE read_state SET last_chapter_num = ?1, last_opened_at = datetime('now') WHERE story_id = ?2",
-        rusqlite::params![chapter_num, story_id],
+        "UPDATE read_state SET last_chapter_num = ?1, last_scroll_pct = ?2, last_opened_at = datetime('now') WHERE story_id = ?3",
+        rusqlite::params![chapter_num, scroll_pct.clamp(0, 100), story_id],
     )?;
     Ok(())
 }
@@ -323,9 +393,11 @@ pub struct ChapterListItem {
 /// fetched yet (`is_cached: false`) — the Reader's chapter drawer needs the
 /// whole list to be browsable even before every chapter has been opened.
 pub fn list_chapters(conn: &Connection, story_id: i64) -> rusqlite::Result<Vec<ChapterListItem>> {
-    let mut stmt = conn.prepare(
-        "SELECT chapter_num, title, content <> '', source_chapter_id FROM chapters WHERE story_id = ?1 ORDER BY chapter_num",
-    )?;
+    let mut stmt = conn.prepare(concat!(
+        "SELECT chapter_num, title, ",
+        cached_chapter_sql!(),
+        ", source_chapter_id FROM chapters WHERE story_id = ?1 ORDER BY chapter_num"
+    ))?;
     let rows = stmt.query_map(rusqlite::params![story_id], |row| {
         Ok(ChapterListItem {
             chapter_num: row.get(0)?,
@@ -351,7 +423,7 @@ pub struct ChapterContent {
 /// about it but its page hasn't been fetched.
 pub fn get_chapter(conn: &Connection, story_id: i64, chapter_num: i64) -> rusqlite::Result<Option<ChapterContent>> {
     conn.query_row(
-        "SELECT title, content, content <> '' FROM chapters WHERE story_id = ?1 AND chapter_num = ?2",
+        concat!("SELECT title, content, ", cached_chapter_sql!(), " FROM chapters WHERE story_id = ?1 AND chapter_num = ?2"),
         rusqlite::params![story_id, chapter_num],
         |row| {
             Ok(ChapterContent {
@@ -427,7 +499,7 @@ mod tests {
         let all = list_stories(&conn, &StoryFilters::default(), Scope::All).unwrap();
         assert_eq!(all.len(), 2);
 
-        let ao3_only = list_stories(&conn, &StoryFilters { source: Some("ao3".to_string()), ..Default::default() }, Scope::All).unwrap();
+        let ao3_only = list_stories(&conn, &StoryFilters { source: Some(StorySource::Ao3), ..Default::default() }, Scope::All).unwrap();
         assert_eq!(ao3_only.len(), 1);
         assert_eq!(ao3_only[0].source, "ao3");
     }
@@ -448,6 +520,7 @@ mod tests {
                 s.favorite_count AS favorite_count, s.chapter_count AS chapter_count, s.summary AS summary,
                 COALESCE(rs.bookmarked, 0) AS bookmarked, COALESCE(rs.is_read, 0) AS is_read,
                 COALESCE(rs.dismissed, 0) AS dismissed, rs.last_chapter_num AS last_chapter_num,
+                rs.last_scroll_pct AS last_scroll_pct,
                 s.ffn_updated_at AS ffn_updated_at,
                 (SELECT COUNT(*) FROM chapters c WHERE c.story_id = s.id AND c.content <> '') AS cached_chapter_count
              FROM stories s LEFT JOIN read_state rs ON rs.story_id = s.id WHERE s.id = ?1";
@@ -567,8 +640,8 @@ mod tests {
     #[test]
     fn list_stories_sorts_by_words_and_by_last_fetched() {
         let conn = seeded();
-        assert_eq!(ids(&conn, StoryFilters { sort_by: "words".into(), ..filters() }, Scope::All), [1, 6, 5, 3, 2, 4]);
-        assert_eq!(ids(&conn, StoryFilters { sort_by: "updated".into(), ..filters() }, Scope::All), [5, 4, 2, 3, 1, 6]);
+        assert_eq!(ids(&conn, StoryFilters { sort_by: SortBy::Words, ..filters() }, Scope::All), [1, 6, 5, 3, 2, 4]);
+        assert_eq!(ids(&conn, StoryFilters { sort_by: SortBy::Updated, ..filters() }, Scope::All), [5, 4, 2, 3, 1, 6]);
     }
 
     #[test]
@@ -578,8 +651,8 @@ mod tests {
         assert_eq!(ids(&conn, fandom("Naruto"), Scope::All), [3, 1, 6]);
         // An empty fandom is "no filter", not "fandom equals empty string".
         assert_eq!(ids(&conn, fandom(""), Scope::All), [3, 5, 1, 6, 2, 4]);
-        assert_eq!(ids(&conn, StoryFilters { source: Some("ao3".into()), ..filters() }, Scope::All), [3, 6, 4]);
-        assert_eq!(ids(&conn, StoryFilters { status: Some("complete".into()), ..filters() }, Scope::All), [5, 1, 6, 4]);
+        assert_eq!(ids(&conn, StoryFilters { source: Some(StorySource::Ao3), ..filters() }, Scope::All), [3, 6, 4]);
+        assert_eq!(ids(&conn, StoryFilters { status: Some(StoryStatus::Complete), ..filters() }, Scope::All), [5, 1, 6, 4]);
         assert_eq!(ids(&conn, StoryFilters { min_word_count: Some(50000), ..filters() }, Scope::All), [3, 5, 1, 6]);
     }
 
@@ -597,7 +670,7 @@ mod tests {
         let conn = seeded();
         let f = StoryFilters {
             fandom: Some("Naruto".into()),
-            status: Some("complete".into()),
+            status: Some(StoryStatus::Complete),
             hide_read: true,
             ..filters()
         };
@@ -614,7 +687,7 @@ mod tests {
             StoryFilters { hide_read: true, ..filters() },
             StoryFilters { hide_dismissed: true, ..filters() },
             StoryFilters { fandom: Some("Bleach".into()), ..filters() },
-            StoryFilters { sort_by: "words".into(), ..filters() },
+            StoryFilters { sort_by: SortBy::Words, ..filters() },
             StoryFilters { search: Some("a".into()), ..filters() },
         ];
         for combo in combos {
@@ -679,10 +752,119 @@ mod tests {
         let conn = seeded();
         assert!(get_continue_reading(&conn, 10).unwrap().is_empty());
 
-        set_resume_chapter(&conn, 5, 3).unwrap();
+        set_resume_chapter(&conn, 5, 3, 0).unwrap();
 
         let rows = get_continue_reading(&conn, 10).unwrap();
         assert_eq!(rows.iter().map(|s| s.id).collect::<Vec<_>>(), [5]);
         assert_eq!(rows[0].last_chapter_num, Some(3));
+    }
+
+    #[test]
+    fn set_resume_chapter_records_the_scroll_position_with_the_chapter_and_clamps_it() {
+        let conn = seeded();
+        let pos = |conn: &Connection| {
+            let s = get_story(conn, 5).unwrap().unwrap();
+            (s.last_chapter_num, s.last_scroll_pct)
+        };
+        assert_eq!(pos(&conn), (None, None), "never read: no position");
+
+        set_resume_chapter(&conn, 5, 3, 43).unwrap();
+        assert_eq!(pos(&conn), (Some(3), Some(43)));
+
+        // Moving to another chapter replaces the pair, never mixing chapter 3's position into chapter 4.
+        set_resume_chapter(&conn, 5, 4, 0).unwrap();
+        assert_eq!(pos(&conn), (Some(4), Some(0)));
+
+        set_resume_chapter(&conn, 5, 4, 250).unwrap();
+        assert_eq!(pos(&conn).1, Some(100));
+        set_resume_chapter(&conn, 5, 4, -7).unwrap();
+        assert_eq!(pos(&conn).1, Some(0));
+    }
+
+    // ---- Wire enums (StoryFilters) ----
+
+    fn parse_filters(json: &str) -> Result<StoryFilters, serde_json::Error> {
+        serde_json::from_str(json)
+    }
+
+    #[test]
+    fn filter_enums_deserialize_only_their_wire_spellings() {
+        let f = parse_filters(r#"{"sortBy":"words","status":"in_progress","source":"ao3"}"#).unwrap();
+        assert_eq!((f.sort_by, f.status, f.source), (SortBy::Words, Some(StoryStatus::InProgress), Some(StorySource::Ao3)));
+
+        // Each of these used to silently sort by favorites / match no rows.
+        for bad in [
+            r#"{"sortBy":"newest"}"#,
+            r#"{"sortBy":""}"#,
+            r#"{"sortBy":"Words"}"#,
+            r#"{"status":"finished"}"#,
+            r#"{"status":""}"#,
+            r#"{"status":"inProgress"}"#,
+            r#"{"source":"AO3"}"#,
+            r#"{"source":""}"#,
+        ] {
+            assert!(parse_filters(bad).is_err(), "{bad} must be rejected");
+        }
+    }
+
+    #[test]
+    fn absent_or_null_filters_mean_no_filter_and_favorites() {
+        for json in ["{}", r#"{"status":null,"source":null}"#] {
+            let f = parse_filters(json).unwrap();
+            assert_eq!((f.sort_by, f.status, f.source), (SortBy::Favorites, None, None), "{json}");
+        }
+    }
+
+    #[test]
+    fn filter_enum_as_str_round_trips_through_its_wire_spelling() {
+        fn round_trips<T: serde::de::DeserializeOwned + PartialEq + std::fmt::Debug + Copy>(all: &[T], as_str: fn(T) -> &'static str) {
+            for v in all {
+                assert_eq!(serde_json::from_str::<T>(&format!("\"{}\"", as_str(*v))).unwrap(), *v);
+            }
+        }
+        round_trips(&SortBy::ALL, SortBy::as_str);
+        round_trips(&StoryStatus::ALL, StoryStatus::as_str);
+        round_trips(&StorySource::ALL, StorySource::as_str);
+        round_trips(&crate::source::ListingStatus::ALL, crate::source::ListingStatus::as_str);
+    }
+
+    /// The members of `export type {name} = …;` in `types.ts`, following a
+    /// reference to another exported union (`ListingStatus = StoryStatus | "any"`).
+    /// Panics on anything it can't read, so a syntax change fails the guard
+    /// instead of silently checking nothing.
+    fn ts_union_members(ts: &str, name: &str) -> std::collections::BTreeSet<String> {
+        let head = format!("export type {name} =");
+        let start = ts.find(&head).unwrap_or_else(|| panic!("types.ts has no `{head}`")) + head.len();
+        let end = start + ts[start..].find(';').unwrap_or_else(|| panic!("`{head}` has no closing `;`"));
+        let mut members = std::collections::BTreeSet::new();
+        for part in ts[start..end].split('|').map(str::trim) {
+            if let Some(literal) = part.strip_prefix('"').and_then(|p| p.strip_suffix('"')) {
+                members.insert(literal.to_string());
+            } else if !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric()) {
+                members.extend(ts_union_members(ts, part));
+            } else {
+                panic!("can't read `{part}` in `{head}` — expected a string literal or another exported type");
+            }
+        }
+        assert!(!members.is_empty(), "`{head}` parsed to no members");
+        members
+    }
+
+    /// Guard (architecture review candidate 4, 2026-10-08): the TS unions the
+    /// frontend sends must be exactly the spellings the Rust enums accept —
+    /// otherwise a value added on one side only fails at runtime, on use.
+    #[test]
+    fn types_ts_unions_match_the_rust_wire_enums() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/lib/types.ts");
+        let ts = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let spellings = |all: &[&'static str]| all.iter().map(|s| s.to_string()).collect::<std::collections::BTreeSet<_>>();
+
+        assert_eq!(ts_union_members(&ts, "SortBy"), spellings(&SortBy::ALL.map(SortBy::as_str)));
+        assert_eq!(ts_union_members(&ts, "StoryStatus"), spellings(&StoryStatus::ALL.map(StoryStatus::as_str)));
+        assert_eq!(ts_union_members(&ts, "StorySource"), spellings(&StorySource::ALL.map(StorySource::as_str)));
+        assert_eq!(
+            ts_union_members(&ts, "ListingStatus"),
+            spellings(&crate::source::ListingStatus::ALL.map(crate::source::ListingStatus::as_str))
+        );
     }
 }
