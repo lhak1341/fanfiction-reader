@@ -1,8 +1,8 @@
 //! Fetch session: the one in-flight FFN webview fetch and its lifecycle —
 //! start, supersede, deliver, time out. It hands the rendered page to the
 //! command waiting on it and never persists: parsing and the DB write happen
-//! in that waiting command (`fetch.rs`), the same shape `fetch_ao3_page`
-//! already has. AO3's direct HTTP fetch does not use it.
+//! in that waiting command (`fetch.rs`), the same shape AO3's
+//! fetch (`fetch_ao3_via`) already has. AO3's direct HTTP fetch does not use it.
 //!
 //! Replaces the old `FetchLock` + `emit_*` event fan-out, where the trigger
 //! command returned at once and the result came back as one of six events

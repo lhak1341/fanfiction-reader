@@ -50,7 +50,7 @@ const MIRRORED_STRUCTS: &[&str] = &[
 const UNMIRRORED_TYPES: &[(&str, &str)] = &[
     (
         "FetchOutcome",
-        "dispatch.rs: only the raw-URL `fetch_page`/`fetch_ao3_page` (debug page) return it, and nothing there reads the payload; every typed fetch command returns one of the mirrored `*Fetched` structs instead",
+        "dispatch.rs: only the raw-URL `fetch_page` (debug page) returns it, and nothing there reads the payload; every typed fetch command returns one of the mirrored `*Fetched` structs instead",
     ),
     (
         "StoryMetadata",

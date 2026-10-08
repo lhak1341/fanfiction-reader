@@ -6,6 +6,7 @@
 // context, which a bare `new SearchScreen()` in a unit test doesn't have.
 
 import * as api from "./api";
+import type { ErrorBanner } from "./errorBanner.svelte";
 import { applyFandomRename, renameAo3Tag } from "./fandom";
 import { ficSourceAdapter } from "./ficSource";
 import { getSearchFilterPrefs } from "./filterPrefs";
@@ -61,10 +62,10 @@ export class SearchScreen {
   loadingMore = $state(false);
   loadMoreError = $state("");
 
-  private onError: (message: string) => void;
+  private banner: ErrorBanner;
 
-  constructor(onError: (message: string) => void) {
-    this.onError = onError;
+  constructor(banner: ErrorBanner) {
+    this.banner = banner;
     const prefs = getSearchFilterPrefs();
     this.hideRead = prefs.hideRead;
     this.hideDismissed = prefs.hideDismissed;
@@ -73,15 +74,13 @@ export class SearchScreen {
   }
 
   async loadFandoms() {
-    try {
+    await this.banner.run("search.fandoms", "Could not load fandoms", async () => {
       this.fandoms = await api.listFandoms();
-    } catch (e) {
-      this.onError(`Could not load fandoms: ${e}`);
-    }
+    });
   }
 
   async loadStories() {
-    try {
+    await this.banner.run("search.stories", "Could not load stories", async () => {
       this.stories = await api.listStories({
         fandom: this.fandom,
         source: this.sourceFilter,
@@ -93,10 +92,7 @@ export class SearchScreen {
         hideDismissed: this.hideDismissed,
         hideBookmarked: this.hideBookmarked
       });
-      this.onError("");
-    } catch (e) {
-      this.onError(`Could not load stories: ${e}`);
-    }
+    });
   }
 
   /// Continues paging the current fandom search. Which source to continue
@@ -132,7 +128,7 @@ export class SearchScreen {
   /// showing the same stories under their new fandom name, and moves a pin
   /// to the new name rather than dropping it.
   async renameFandom(oldFandom: string, newFandom: string) {
-    try {
+    await this.banner.run("search.rename", "Could not rename fandom", async () => {
       await api.renameFandom(oldFandom, newFandom);
       renameAo3Tag(oldFandom, newFandom);
       ({ pinnedFandoms: this.pinnedFandoms, searchFandom: this.fandom } = applyFandomRename(
@@ -143,8 +139,6 @@ export class SearchScreen {
       ));
       await this.loadFandoms();
       await this.loadStories();
-    } catch (e) {
-      this.onError(`Could not rename fandom: ${e}`);
-    }
+    });
   }
 }

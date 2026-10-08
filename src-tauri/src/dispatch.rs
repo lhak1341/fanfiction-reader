@@ -98,8 +98,8 @@ pub struct FandomIndexFetched {
 /// §8): `Ao3` never classifies a page as one (`FicSource::category_from_index_url`
 /// defaults to `None`), so no caller needs an `unreachable!()` for it.
 ///
-/// Crosses to the frontend only as the raw-URL `fetch_page`/`fetch_ao3_page`
-/// return (the debug page); every typed command unwraps it with `into_*`.
+/// Crosses to the frontend only as the raw-URL `fetch_page` return (the
+/// debug page); every typed command unwraps it with `into_*`.
 #[derive(Debug, serde::Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum FetchOutcome {
@@ -222,7 +222,7 @@ pub fn persist_page<S: FicSource>(
     html: &str,
     page_url: &str,
     fandom_override: Option<&str>,
-    external_listing_locator: Option<S::ListingLocator>,
+    requested_listing_locator: Option<S::ListingLocator>,
 ) -> Result<FetchOutcome, String> {
     match classify_page::<S>(page_url)? {
         PageShape::FandomIndex(category) => {
@@ -299,19 +299,19 @@ pub fn persist_page<S: FicSource>(
             }
             let fandom = S::metadata_fandom(&summaries[0]).to_string();
             let prefix = S::LOG_PREFIX;
-            // `resolve_listing_record_locator` picks which locator (if any) gets
-            // persisted — `Ffn` prefers the stashed pre-fetch request locator
-            // over `locator` (decoded from the fetched URL, lossy for status);
-            // `Ao3` always keeps `locator` (its own URL round-trips cleanly).
-            // See `FetchedPage`'s doc comment (`fetch_session.rs`) for why the decode
-            // alone isn't enough.
+            // Recorded under the locator the *request* carried, never the one
+            // decoded from the fetched URL (`locator`, which only feeds
+            // `parse_listing`): FFN's URL encoding is lossy for status, and a
+            // redirected AO3 URL needn't carry the tag that was asked for. No
+            // requested locator (a raw-URL debug fetch) means no search
+            // session worth bookkeeping. See `FetchedPage` (`fetch_session.rs`).
             let recorded_page = db.run_mut(|conn| {
                 let tx = conn.transaction()?;
                 for meta in &summaries {
                     let story_id = S::persist_story(&tx, meta)?;
                     db::ensure_read_state(&tx, story_id)?;
                 }
-                let page = match S::resolve_listing_record_locator(locator, external_listing_locator) {
+                let page = match requested_listing_locator {
                     Some(record_locator) => {
                         let page = S::listing_page(&record_locator);
                         S::record_listing_page(&tx, &record_locator, page)?;
@@ -500,9 +500,38 @@ mod tests {
 
 
     #[test]
-    fn ffn_listing_fetch_with_no_external_locator_does_not_record_browse_state() {
+    fn ao3_listing_records_under_the_requested_tag_even_when_the_fetched_url_names_another() {
+        let dbh = test_db();
+        // AO3 canonicalised the tag: the page that came back says "Naruto (Anime & Manga)".
+        let fetched_url = ao3::build_tag_browse_url("Naruto (Anime & Manga)", "bookmarks_count", 0, crate::source::ListingStatus::Any, 1);
+        let requested = source::Ao3ListingLocator {
+            tag: "Naruto".to_string(),
+            min_word_count: 0,
+            status: crate::source::ListingStatus::Any,
+            page: 1,
+        };
+
+        persist_page::<source::Ao3>(&dbh, AO3_LISTING_PAGE, &fetched_url, None, Some(requested)).unwrap();
+
+        assert_eq!(dbh.run(|c| db::next_ao3_browse_page(c, "Naruto", 0, "any")).unwrap(), 2);
+        assert_eq!(dbh.run(|c| db::next_ao3_browse_page(c, "Naruto (Anime & Manga)", 0, "any")).unwrap(), 1);
+    }
+
+    #[test]
+    fn ao3_listing_fetch_with_no_requested_locator_does_not_record_browse_state() {
+        let dbh = test_db();
+        let url = ao3::build_tag_browse_url("Naruto", "bookmarks_count", 0, crate::source::ListingStatus::Any, 1);
+
+        persist_page::<source::Ao3>(&dbh, AO3_LISTING_PAGE, &url, None, None).unwrap();
+
+        let count: i64 = dbh.run(|c| c.query_row("SELECT COUNT(*) FROM ao3_browse_state", [], |r| r.get(0))).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn ffn_listing_fetch_with_no_requested_locator_does_not_record_browse_state() {
         // The debug harness's raw-URL fetch has no real search session behind
-        // it — see `FicSource::resolve_listing_record_locator`'s doc comment.
+        // it — see the comment in `persist_page`'s listing arm.
         let dbh = test_db();
         let url = ffn::build_browse_url("anime", "Fullmetal Alchemist", 0, crate::source::ListingStatus::Any, 1);
 

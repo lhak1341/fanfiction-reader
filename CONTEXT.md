@@ -26,3 +26,11 @@ One of a Story's three independent, manually-toggled per-row booleans — `isRea
 **Cached chapter**:
 A chapter whose body is stored locally (`chapters.content <> ''`). A TOC stub — registered with every fetch of the story so titles stay browsable — has `content = ''` and is *not* cached. A fetch that parses to empty content is a persist error, never a stored empty row, so "fetched" and "cached" mean the same thing. `ensure_chapter` returns the cached chapter or fetches it; `fetch_chapter` always fetches (the debug page's bulk prefetch relies on that).
 _Avoid_: downloaded, fetched (for the stored state).
+
+**Error banner**:
+The page's list of failure messages (`src/lib/errorBanner.svelte.ts`), one per *operation key* — `search.stories`, `bookmarks.refresh`, `flag`, etc. A message is removed only by the same operation succeeding again (loads), by the same bulk job starting again (Refresh, Download-all — they `report()` their own partial failures), or by the user's ×. A different operation's success never clears it. Covers Search, Bookmarks and Story-flag toggles; `SearchModal` and `Reader` keep their own inline errors.
+_Avoid_: shared error string, `onError` callback (the old shape).
+
+**Fetch environment**:
+The one seam (`FetchEnv`, `src-tauri/src/fetch_env.rs`) between the fetch commands and the outside world: pointing the FFN webview at a URL (`navigate`), one AO3 HTTP GET (`get`), and the best-effort debug dump (`save_debug_page`). `TauriEnv` is the production adapter, `testing::FakeEnv` the test one, so every fetch sequence — either Source — runs without Tauri or a network. AO3's retry policy (`get_with_retry`) sits above it and the `reqwest` adapter only classifies a request as a response, `Retryable` or `Fatal`. Each fetch command is a thin Tauri adapter over a `*_via(env, db, session, …)` function. The **Fetch session** (FFN's in-flight webview fetch) is separate and passed explicitly, not part of the environment.
+_Avoid_: webview adapter (the old `FfnWebview`, FFN-only).

@@ -45,7 +45,7 @@ const story: StoryRow = {
 };
 
 function makeChapters(count: number): ChapterListItem[] {
-  return Array.from({ length: count }, (_, i) => ({ chapterNum: i + 1, title: `Ch ${i + 1}`, isCached: false, sourceChapterId: null }));
+  return Array.from({ length: count }, (_, i) => ({ chapterNum: i + 1, title: `Ch ${i + 1}`, isCached: false }));
 }
 
 // `api.ensureChapter`'s result: a fetch (`wasFetched`) also reports the story's

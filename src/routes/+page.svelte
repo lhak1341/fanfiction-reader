@@ -5,6 +5,7 @@
   import SearchModal from "$lib/components/SearchModal.svelte";
   import StoryList from "$lib/components/StoryList.svelte";
   import ThemeToggle from "$lib/components/ThemeToggle.svelte";
+  import { ErrorBanner } from "$lib/errorBanner.svelte";
   import { SearchScreen } from "$lib/searchScreen.svelte";
   import { BookmarksScreen } from "$lib/bookmarksScreen.svelte";
   import { toggleReadAndRefresh, toggleDismissedAndRefresh, toggleBookmarkedAndRefresh } from "$lib/storyFlagActions";
@@ -25,10 +26,9 @@
     screen = "reader";
   }
 
-  let errorMessage = $state("");
-
-  const search = new SearchScreen((msg) => (errorMessage = msg));
-  const bookmarks = new BookmarksScreen((msg) => (errorMessage = msg), getBookmarksHideRead());
+  const banner = new ErrorBanner();
+  const search = new SearchScreen(banner);
+  const bookmarks = new BookmarksScreen(banner, getBookmarksHideRead());
 
   // Shared between Search and Bookmarks — one persisted preference, not
   // per-screen state.
@@ -98,13 +98,9 @@
     return story.lastChapterNum ? `Ch. ${story.lastChapterNum} of ${story.chapterCount}` : "Not started";
   }
 
-  function setError(msg: string) {
-    errorMessage = msg;
-  }
-
-  const handleToggleRead = (story: StoryRow) => toggleReadAndRefresh(story, setError, refreshAll);
-  const handleToggleDismissed = (story: StoryRow) => toggleDismissedAndRefresh(story, setError, refreshAll);
-  const handleToggleBookmarked = (story: StoryRow) => toggleBookmarkedAndRefresh(story, setError, refreshAll);
+  const handleToggleRead = (story: StoryRow) => toggleReadAndRefresh(story, banner, refreshAll);
+  const handleToggleDismissed = (story: StoryRow) => toggleDismissedAndRefresh(story, banner, refreshAll);
+  const handleToggleBookmarked = (story: StoryRow) => toggleBookmarkedAndRefresh(story, banner, refreshAll);
 </script>
 
 {#if screen === "reader" && readerStoryId !== undefined && readerChapterNum !== undefined}
@@ -141,9 +137,12 @@
     </div>
   </div>
 
-  {#if errorMessage}
-    <p class="error">{errorMessage}</p>
-  {/if}
+  {#each banner.messages as m (m.key)}
+    <p class="error banner-error">
+      <span>{m.text}</span>
+      <button class="error-dismiss" aria-label="Dismiss" onclick={() => banner.dismiss(m.key)}>×</button>
+    </p>
+  {/each}
 
   {#if bookmarks.job?.kind === "download"}
     <div class="download-banner">
@@ -172,7 +171,7 @@
         <div class="sort-select-wrap">
           <select class="sort-select" bind:value={search.sortBy}>
             <option value="favorites">Sort: Favorites</option>
-            <option value="updated">Sort: Updated</option>
+            <option value="fetched">Sort: Recently fetched</option>
             <option value="words">Sort: Word count</option>
           </select>
           <ChevronDown size={13} class="sort-caret" />
@@ -274,7 +273,7 @@
         <div class="sort-select-wrap">
           <select class="sort-select" bind:value={bookmarks.sortBy}>
             <option value="favorites">Sort: Favorites</option>
-            <option value="updated">Sort: Updated</option>
+            <option value="fetched">Sort: Recently fetched</option>
             <option value="words">Sort: Word count</option>
           </select>
           <ChevronDown size={13} class="sort-caret" />
@@ -518,6 +517,20 @@
   .error {
     color: var(--rust);
     padding: 0.8rem 1.5rem 0;
+  }
+  .banner-error {
+    display: flex;
+    gap: 0.6rem;
+    align-items: baseline;
+  }
+  .error-dismiss {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0 0.2rem;
   }
   .download-banner {
     padding: 0.6rem 1.5rem 0;

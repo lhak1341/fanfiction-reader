@@ -9,13 +9,14 @@ vi.mock("./ficSource", () => ({
   ficSourceAdapter: vi.fn()
 }));
 
+import { ErrorBanner } from "./errorBanner.svelte";
 import * as api from "./api";
 import { getAo3Tag, saveAo3Tag } from "./fandom";
 import { ficSourceAdapter } from "./ficSource";
 import { SearchScreen } from "./searchScreen.svelte";
 
 function makeScreen() {
-  return new SearchScreen(() => {});
+  return new SearchScreen(new ErrorBanner());
 }
 
 beforeEach(() => {
@@ -36,7 +37,7 @@ describe("SearchScreen.reloadTrigger", () => {
       () => (search.text = "hello"),
       () => (search.minWordCount = 1000),
       () => (search.status = "complete"),
-      () => (search.sortBy = "updated"),
+      () => (search.sortBy = "fetched"),
       () => (search.hideRead = !search.hideRead),
       () => (search.hideDismissed = !search.hideDismissed),
       () => (search.hideBookmarked = !search.hideBookmarked)

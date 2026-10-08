@@ -4,7 +4,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   BrowseFetched,
-  ChapterContent,
   ChapterFetched,
   ChapterListItem,
   EnsuredChapter,
@@ -63,10 +62,6 @@ export function setResumeChapter(storyId: number, chapterNum: number, scrollPct:
 
 export function listChapters(storyId: number): Promise<ChapterListItem[]> {
   return invoke("list_chapters", { storyId });
-}
-
-export function getChapter(storyId: number, chapterNum: number): Promise<ChapterContent | null> {
-  return invoke("get_chapter", { storyId, chapterNum });
 }
 
 export function getContinueReading(limit: number): Promise<StoryRow[]> {

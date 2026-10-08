@@ -10,6 +10,7 @@ vi.mock("./api", () => ({
   listChapters: vi.fn()
 }));
 
+import { ErrorBanner } from "./errorBanner.svelte";
 import * as api from "./api";
 import { BookmarksScreen } from "./bookmarksScreen.svelte";
 
@@ -48,7 +49,7 @@ const story: StoryRow = {
 };
 
 function makeScreen() {
-  return new BookmarksScreen(() => {}, false);
+  return new BookmarksScreen(new ErrorBanner(), false);
 }
 
 beforeEach(() => {
@@ -65,7 +66,7 @@ describe("BookmarksScreen.reloadTrigger", () => {
     const bookmarks = makeScreen();
     const mutations: Array<() => void> = [
       () => (bookmarks.fandom = "Naruto"),
-      () => (bookmarks.sortBy = "updated"),
+      () => (bookmarks.sortBy = "fetched"),
       () => (bookmarks.hideRead = true)
     ];
 
@@ -116,15 +117,17 @@ describe("BookmarksScreen.refresh failures", () => {
     vi.mocked(api.fetchChapterAndWait).mockImplementation(async (id) => {
       if (id !== 2) throw new Error("fetch timed out");
     });
-    const onError = vi.fn();
-    const bookmarks = new BookmarksScreen(onError, false);
+    const banner = new ErrorBanner();
+    const bookmarks = new BookmarksScreen(banner, false);
 
     const run = bookmarks.refresh();
     await vi.runAllTimersAsync();
     await run;
 
     expect(vi.mocked(api.fetchChapterAndWait)).toHaveBeenCalledTimes(3);
-    expect(onError).toHaveBeenLastCalledWith("2 stories failed to refresh: Last error: fetch timed out");
+    expect(banner.messages).toEqual([
+      { key: "bookmarks.refresh", text: "2 stories failed to refresh: Last error: fetch timed out" }
+    ]);
     expect(bookmarks.job).toBeNull();
     vi.useRealTimers();
   });
@@ -132,9 +135,9 @@ describe("BookmarksScreen.refresh failures", () => {
 
 describe("BookmarksScreen.downloadAllChapters", () => {
   const chapters: ChapterListItem[] = [
-    { chapterNum: 1, title: "Ch 1", isCached: true, sourceChapterId: null },
-    { chapterNum: 2, title: "Ch 2", isCached: false, sourceChapterId: null },
-    { chapterNum: 3, title: "Ch 3", isCached: false, sourceChapterId: null }
+    { chapterNum: 1, title: "Ch 1", isCached: true },
+    { chapterNum: 2, title: "Ch 2", isCached: false },
+    { chapterNum: 3, title: "Ch 3", isCached: false }
   ];
 
   it("fetches in the background so it never interrupts a foreground fetch", async () => {
@@ -178,15 +181,15 @@ describe("BookmarksScreen.downloadAllChapters", () => {
 
 describe("BookmarksScreen.downloadAllChapters failures", () => {
   const chapters: ChapterListItem[] = [
-    { chapterNum: 1, title: "Ch 1", isCached: false, sourceChapterId: null },
-    { chapterNum: 2, title: "Ch 2", isCached: false, sourceChapterId: null }
+    { chapterNum: 1, title: "Ch 1", isCached: false },
+    { chapterNum: 2, title: "Ch 2", isCached: false }
   ];
 
   it("retries a chapter that failed and reports nothing once it lands", async () => {
     vi.useFakeTimers();
     vi.mocked(api.listChapters).mockResolvedValue(chapters);
-    const onError = vi.fn();
-    const bookmarks = new BookmarksScreen(onError, false);
+    const banner = new ErrorBanner();
+    const bookmarks = new BookmarksScreen(banner, false);
     const doneAtCall: number[] = [];
     vi.mocked(api.ensureChapter).mockImplementation(async () => {
       doneAtCall.push(bookmarks.progress.done);
@@ -200,7 +203,7 @@ describe("BookmarksScreen.downloadAllChapters failures", () => {
 
     // ch 1 failed, ch 2 ok, then ch 1 retried.
     expect(vi.mocked(api.ensureChapter).mock.calls.map((c) => c[1])).toEqual([1, 2, 1]);
-    expect(onError.mock.calls.filter(([m]) => m !== "")).toEqual([]);
+    expect(banner.messages).toEqual([]);
     // ch 1 failed (done 0), ch 2 landed (done 1), the retry of ch 1 sees done 1.
     expect(doneAtCall).toEqual([0, 0, 1]);
     expect(bookmarks.job).toBeNull();
@@ -214,22 +217,27 @@ describe("BookmarksScreen.downloadAllChapters failures", () => {
       if (num === 2) throw new Error("interrupted by a newer fetch");
       return fetchedOk(chapters);
     });
-    const onError = vi.fn();
-    const bookmarks = new BookmarksScreen(onError, false);
+    const banner = new ErrorBanner();
+    const bookmarks = new BookmarksScreen(banner, false);
 
     const run = bookmarks.downloadAllChapters(story);
     await vi.advanceTimersByTimeAsync(120_000);
     await run;
 
-    expect(onError).toHaveBeenLastCalledWith(expect.stringContaining("1 chapter failed (2)"));
-    expect(onError).toHaveBeenLastCalledWith(expect.stringContaining("interrupted by a newer fetch"));
+    expect(banner.messages).toEqual([
+      {
+        key: "bookmarks.download",
+        text: expect.stringContaining("1 chapter failed (2)")
+      }
+    ]);
+    expect(banner.messages[0].text).toContain("interrupted by a newer fetch");
     expect(bookmarks.job).toBeNull();
     vi.useRealTimers();
   });
 
   it("is a silent no-op while another job is running", async () => {
-    const onError = vi.fn();
-    const bookmarks = new BookmarksScreen(onError, false);
+    const banner = new ErrorBanner();
+    const bookmarks = new BookmarksScreen(banner, false);
     bookmarks.job = { kind: "refresh" };
 
     await bookmarks.downloadAllChapters(story);
@@ -237,7 +245,7 @@ describe("BookmarksScreen.downloadAllChapters failures", () => {
 
     expect(vi.mocked(api.listChapters)).not.toHaveBeenCalled();
     expect(vi.mocked(api.listBookmarks)).not.toHaveBeenCalled();
-    expect(onError).not.toHaveBeenCalled();
+    expect(banner.messages).toEqual([]);
     expect(bookmarks.job).toEqual({ kind: "refresh" });
   });
 });
@@ -265,8 +273,8 @@ describe("BookmarksScreen job state", () => {
   it("names the story being downloaded and reports done/total, then clears both", async () => {
     vi.useFakeTimers();
     const chapters: ChapterListItem[] = [
-      { chapterNum: 1, title: "Ch 1", isCached: false, sourceChapterId: null },
-      { chapterNum: 2, title: "Ch 2", isCached: false, sourceChapterId: null }
+      { chapterNum: 1, title: "Ch 1", isCached: false },
+      { chapterNum: 2, title: "Ch 2", isCached: false }
     ];
     vi.mocked(api.listChapters).mockResolvedValue(chapters);
     const bookmarks = makeScreen();
@@ -318,8 +326,8 @@ describe("BookmarksScreen background fetch pause", () => {
   it("downloadAllChapters() stops between chapters when paused mid-download, then continues", async () => {
     vi.useFakeTimers();
     const chapters: ChapterListItem[] = [
-      { chapterNum: 1, title: "Ch 1", isCached: false, sourceChapterId: null },
-      { chapterNum: 2, title: "Ch 2", isCached: false, sourceChapterId: null }
+      { chapterNum: 1, title: "Ch 1", isCached: false },
+      { chapterNum: 2, title: "Ch 2", isCached: false }
     ];
     vi.mocked(api.listChapters).mockResolvedValue(chapters);
     vi.mocked(api.ensureChapter).mockResolvedValue(fetchedOk(chapters));

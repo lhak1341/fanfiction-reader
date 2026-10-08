@@ -9,6 +9,7 @@
 // rather than duplicated here since +page.svelte also uses it standalone for
 // <Reader onChanged={refreshAll}>.
 
+import type { ErrorBanner } from "./errorBanner.svelte";
 import { toggleStoryFlag, type StoryFlag } from "./storyFlags";
 import type { StoryRow } from "./types";
 
@@ -21,25 +22,23 @@ const MESSAGES: Record<StoryFlag, string> = {
 async function toggleAndRefresh(
   story: StoryRow,
   flag: StoryFlag,
-  onError: (msg: string) => void,
+  banner: ErrorBanner,
   refreshAll: () => Promise<void>
 ): Promise<void> {
-  try {
+  await banner.run("flag", MESSAGES[flag], async () => {
     await toggleStoryFlag(story, flag);
     await refreshAll();
-  } catch (e) {
-    onError(`${MESSAGES[flag]}: ${e}`);
-  }
+  });
 }
 
-export function toggleReadAndRefresh(story: StoryRow, onError: (msg: string) => void, refreshAll: () => Promise<void>) {
-  return toggleAndRefresh(story, "isRead", onError, refreshAll);
+export function toggleReadAndRefresh(story: StoryRow, banner: ErrorBanner, refreshAll: () => Promise<void>) {
+  return toggleAndRefresh(story, "isRead", banner, refreshAll);
 }
 
-export function toggleDismissedAndRefresh(story: StoryRow, onError: (msg: string) => void, refreshAll: () => Promise<void>) {
-  return toggleAndRefresh(story, "dismissed", onError, refreshAll);
+export function toggleDismissedAndRefresh(story: StoryRow, banner: ErrorBanner, refreshAll: () => Promise<void>) {
+  return toggleAndRefresh(story, "dismissed", banner, refreshAll);
 }
 
-export function toggleBookmarkedAndRefresh(story: StoryRow, onError: (msg: string) => void, refreshAll: () => Promise<void>) {
-  return toggleAndRefresh(story, "bookmarked", onError, refreshAll);
+export function toggleBookmarkedAndRefresh(story: StoryRow, banner: ErrorBanner, refreshAll: () => Promise<void>) {
+  return toggleAndRefresh(story, "bookmarked", banner, refreshAll);
 }

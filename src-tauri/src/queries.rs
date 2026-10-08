@@ -75,7 +75,10 @@ impl StoryStatus {
 pub enum SortBy {
     #[default]
     Favorites,
-    Updated,
+    /// By `stories.last_fetched_at` — when the app last fetched the story
+    /// (import, refresh, any chapter fetch), *not* the story's own update
+    /// time; see SPEC.md "Sort by last fetched".
+    Fetched,
     Words,
 }
 
@@ -84,13 +87,13 @@ impl SortBy {
     pub fn as_str(self) -> &'static str {
         match self {
             SortBy::Favorites => "favorites",
-            SortBy::Updated => "updated",
+            SortBy::Fetched => "fetched",
             SortBy::Words => "words",
         }
     }
 
     #[cfg(test)]
-    pub const ALL: [SortBy; 3] = [SortBy::Favorites, SortBy::Updated, SortBy::Words];
+    pub const ALL: [SortBy; 3] = [SortBy::Favorites, SortBy::Fetched, SortBy::Words];
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -224,7 +227,7 @@ pub fn list_stories(conn: &Connection, filters: &StoryFilters, scope: Scope) -> 
         sql.push_str(" AND COALESCE(rs.bookmarked, 0) = 1");
     }
     sql.push_str(match filters.sort_by {
-        SortBy::Updated => " ORDER BY s.last_fetched_at DESC",
+        SortBy::Fetched => " ORDER BY s.last_fetched_at DESC",
         SortBy::Words => " ORDER BY s.word_count DESC",
         SortBy::Favorites => " ORDER BY s.favorite_count DESC",
     });
@@ -383,10 +386,6 @@ pub struct ChapterListItem {
     pub chapter_num: i64,
     pub title: String,
     pub is_cached: bool,
-    /// AO3's opaque per-chapter id (`chapters.source_chapter_id`, SPEC.md
-    /// §8) — the Reader needs this to build a `/works/{id}/chapters/{id}`
-    /// fetch URL for an AO3 chapter; always `null` for FFN rows.
-    pub source_chapter_id: Option<i64>,
 }
 
 /// Full TOC for a story, including chapters whose content hasn't been
@@ -396,14 +395,13 @@ pub fn list_chapters(conn: &Connection, story_id: i64) -> rusqlite::Result<Vec<C
     let mut stmt = conn.prepare(concat!(
         "SELECT chapter_num, title, ",
         cached_chapter_sql!(),
-        ", source_chapter_id FROM chapters WHERE story_id = ?1 ORDER BY chapter_num"
+        " FROM chapters WHERE story_id = ?1 ORDER BY chapter_num"
     ))?;
     let rows = stmt.query_map(rusqlite::params![story_id], |row| {
         Ok(ChapterListItem {
             chapter_num: row.get(0)?,
             title: row.get(1)?,
             is_cached: row.get(2)?,
-            source_chapter_id: row.get(3)?,
         })
     })?;
     rows.collect()
@@ -533,22 +531,6 @@ mod tests {
     }
 
     #[test]
-    fn chapter_list_item_exposes_source_chapter_id() {
-        let conn = test_conn();
-        let ao3_id = crate::db::upsert_ao3_story(&conn, &sample_ao3(2)).unwrap();
-        crate::db::upsert_chapter_stub(&conn, ao3_id, 1, "Chapter 1", Some(999)).unwrap();
-
-        let ffn_id = crate::db::upsert_story(&conn, &sample_ffn(1)).unwrap();
-        crate::db::upsert_chapter_stub(&conn, ffn_id, 1, "Chapter 1", None).unwrap();
-
-        let ao3_chapters = list_chapters(&conn, ao3_id).unwrap();
-        assert_eq!(ao3_chapters[0].source_chapter_id, Some(999));
-
-        let ffn_chapters = list_chapters(&conn, ffn_id).unwrap();
-        assert_eq!(ffn_chapters[0].source_chapter_id, None);
-    }
-
-    #[test]
     fn rename_fandom_updates_matching_rows_and_merges_into_an_existing_one() {
         let conn = test_conn();
         let mut ao3_meta = sample_ao3(1);
@@ -641,7 +623,7 @@ mod tests {
     fn list_stories_sorts_by_words_and_by_last_fetched() {
         let conn = seeded();
         assert_eq!(ids(&conn, StoryFilters { sort_by: SortBy::Words, ..filters() }, Scope::All), [1, 6, 5, 3, 2, 4]);
-        assert_eq!(ids(&conn, StoryFilters { sort_by: SortBy::Updated, ..filters() }, Scope::All), [5, 4, 2, 3, 1, 6]);
+        assert_eq!(ids(&conn, StoryFilters { sort_by: SortBy::Fetched, ..filters() }, Scope::All), [5, 4, 2, 3, 1, 6]);
     }
 
     #[test]

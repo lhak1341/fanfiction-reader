@@ -7,6 +7,7 @@
 // architecture review candidate 3 grill, "cross-cutting logic" decision).
 
 import * as api from "./api";
+import type { ErrorBanner } from "./errorBanner.svelte";
 import { describeFailures, PauseGate, runPacedBestEffort } from "./pacedLoop";
 import type { SortBy, StoryRow } from "./types";
 
@@ -55,7 +56,7 @@ export class BookmarksScreen {
     return this.job !== null;
   }
 
-  private onError: (message: string) => void;
+  private banner: ErrorBanner;
 
   // The bulk loops below keep running when +page.svelte swaps Reader in (this
   // instance lives in the page script, not in the list screens), where they
@@ -64,8 +65,8 @@ export class BookmarksScreen {
   // buttons stay disabled.
   private gate = new PauseGate();
 
-  constructor(onError: (message: string) => void, initialHideRead: boolean) {
-    this.onError = onError;
+  constructor(banner: ErrorBanner, initialHideRead: boolean) {
+    this.banner = banner;
     this.hideRead = initialHideRead;
   }
 
@@ -78,28 +79,21 @@ export class BookmarksScreen {
   }
 
   async loadFandoms() {
-    try {
+    await this.banner.run("bookmarks.fandoms", "Could not load bookmarked fandoms", async () => {
       this.fandoms = await api.listBookmarkedFandoms();
-    } catch (e) {
-      this.onError(`Could not load bookmarked fandoms: ${e}`);
-    }
+    });
   }
 
   async loadStories() {
-    try {
+    await this.banner.run("bookmarks.list", "Could not load bookmarks", async () => {
       this.stories = await api.listBookmarks({ fandom: this.fandom, sortBy: this.sortBy, hideRead: this.hideRead });
-      this.onError("");
-    } catch (e) {
-      this.onError(`Could not load bookmarks: ${e}`);
-    }
+    });
   }
 
   async loadContinueReading() {
-    try {
+    await this.banner.run("bookmarks.continue", "Could not load continue reading", async () => {
       this.continueReading = await api.getContinueReading(5);
-    } catch (e) {
-      this.onError(`Could not load continue reading: ${e}`);
-    }
+    });
   }
 
   async reloadAll() {
@@ -115,6 +109,7 @@ export class BookmarksScreen {
   async refresh() {
     if (this.job) return;
     this.job = { kind: "refresh" };
+    this.banner.dismiss("bookmarks.refresh");
     this.progress = NO_PROGRESS;
     try {
       const targets = await api.listBookmarks({ status: "in_progress" });
@@ -127,7 +122,8 @@ export class BookmarksScreen {
       });
       await this.reloadAll();
       if (failed.length > 0) {
-        this.onError(
+        this.banner.report(
+          "bookmarks.refresh",
           `${failed.length} ${failed.length === 1 ? "story" : "stories"} failed to refresh: ${describeFailures(failed)}`
         );
       }
@@ -140,6 +136,7 @@ export class BookmarksScreen {
   async downloadAllChapters(story: StoryRow) {
     if (this.job) return;
     this.job = { kind: "download", storyId: story.id, title: story.title };
+    this.banner.dismiss("bookmarks.download");
     this.progress = NO_PROGRESS;
     try {
       const chapters = await api.listChapters(story.id);
@@ -172,7 +169,8 @@ export class BookmarksScreen {
       );
       await this.reloadAll();
       if (failed.length > 0) {
-        this.onError(
+        this.banner.report(
+          "bookmarks.download",
           `Download of "${story.title}" incomplete: ${failed.length} chapter${failed.length === 1 ? "" : "s"} failed ` +
             `${describeFailures(failed, (n) => n)}. Click Download again to retry.`
         );

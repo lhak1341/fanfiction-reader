@@ -15,7 +15,7 @@
     event.preventDefault();
     spikeStatus = "Opening webview — check the Rust terminal for the result…";
     try {
-      const outcome = await invoke("fetch_page", { url: spikeUrl, listingLocator: null });
+      const outcome = await invoke("fetch_page", { url: spikeUrl });
       spikeStatus = `Fetched and persisted: ${JSON.stringify(outcome)}`;
     } catch (e) {
       spikeStatus = `Fetch failed: ${e}`;

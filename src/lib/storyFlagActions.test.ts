@@ -5,6 +5,7 @@ vi.mock("./storyFlags", () => ({
   toggleStoryFlag: vi.fn()
 }));
 
+import { ErrorBanner } from "./errorBanner.svelte";
 import { toggleStoryFlag } from "./storyFlags";
 import { toggleReadAndRefresh, toggleDismissedAndRefresh, toggleBookmarkedAndRefresh } from "./storyFlagActions";
 
@@ -40,68 +41,68 @@ describe("storyFlagActions", () => {
 
   it("toggleReadAndRefresh calls toggleStoryFlag(isRead) then refreshAll", async () => {
     vi.mocked(toggleStoryFlag).mockResolvedValue(story);
-    const onError = vi.fn();
+    const banner = new ErrorBanner();
     const refreshAll = vi.fn().mockResolvedValue(undefined);
 
-    await toggleReadAndRefresh(story, onError, refreshAll);
+    await toggleReadAndRefresh(story, banner, refreshAll);
 
     expect(toggleStoryFlag).toHaveBeenCalledWith(story, "isRead");
     expect(refreshAll).toHaveBeenCalled();
-    expect(onError).not.toHaveBeenCalled();
+    expect(banner.messages).toEqual([]);
   });
 
   it("toggleDismissedAndRefresh calls toggleStoryFlag(dismissed) then refreshAll", async () => {
     vi.mocked(toggleStoryFlag).mockResolvedValue(story);
-    const onError = vi.fn();
+    const banner = new ErrorBanner();
     const refreshAll = vi.fn().mockResolvedValue(undefined);
 
-    await toggleDismissedAndRefresh(story, onError, refreshAll);
+    await toggleDismissedAndRefresh(story, banner, refreshAll);
 
     expect(toggleStoryFlag).toHaveBeenCalledWith(story, "dismissed");
     expect(refreshAll).toHaveBeenCalled();
-    expect(onError).not.toHaveBeenCalled();
+    expect(banner.messages).toEqual([]);
   });
 
   it("toggleBookmarkedAndRefresh calls toggleStoryFlag(bookmarked) then refreshAll", async () => {
     vi.mocked(toggleStoryFlag).mockResolvedValue(story);
-    const onError = vi.fn();
+    const banner = new ErrorBanner();
     const refreshAll = vi.fn().mockResolvedValue(undefined);
 
-    await toggleBookmarkedAndRefresh(story, onError, refreshAll);
+    await toggleBookmarkedAndRefresh(story, banner, refreshAll);
 
     expect(toggleStoryFlag).toHaveBeenCalledWith(story, "bookmarked");
     expect(refreshAll).toHaveBeenCalled();
-    expect(onError).not.toHaveBeenCalled();
+    expect(banner.messages).toEqual([]);
   });
 
   it("reports the read-specific message and skips refreshAll on failure", async () => {
     vi.mocked(toggleStoryFlag).mockRejectedValue(new Error("db locked"));
-    const onError = vi.fn();
+    const banner = new ErrorBanner();
     const refreshAll = vi.fn().mockResolvedValue(undefined);
 
-    await toggleReadAndRefresh(story, onError, refreshAll);
+    await toggleReadAndRefresh(story, banner, refreshAll);
 
-    expect(onError).toHaveBeenCalledWith("Could not update read state: Error: db locked");
+    expect(banner.messages).toEqual([{ key: "flag", text: "Could not update read state: db locked" }]);
     expect(refreshAll).not.toHaveBeenCalled();
   });
 
   it("reports the dismissed-specific message on failure", async () => {
     vi.mocked(toggleStoryFlag).mockRejectedValue(new Error("db locked"));
-    const onError = vi.fn();
+    const banner = new ErrorBanner();
     const refreshAll = vi.fn().mockResolvedValue(undefined);
 
-    await toggleDismissedAndRefresh(story, onError, refreshAll);
+    await toggleDismissedAndRefresh(story, banner, refreshAll);
 
-    expect(onError).toHaveBeenCalledWith("Could not update dismissed state: Error: db locked");
+    expect(banner.messages).toEqual([{ key: "flag", text: "Could not update dismissed state: db locked" }]);
   });
 
   it("reports the bookmark-specific message on failure", async () => {
     vi.mocked(toggleStoryFlag).mockRejectedValue(new Error("db locked"));
-    const onError = vi.fn();
+    const banner = new ErrorBanner();
     const refreshAll = vi.fn().mockResolvedValue(undefined);
 
-    await toggleBookmarkedAndRefresh(story, onError, refreshAll);
+    await toggleBookmarkedAndRefresh(story, banner, refreshAll);
 
-    expect(onError).toHaveBeenCalledWith("Could not update bookmark: Error: db locked");
+    expect(banner.messages).toEqual([{ key: "flag", text: "Could not update bookmark: db locked" }]);
   });
 });

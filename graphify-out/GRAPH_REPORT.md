@@ -1,16 +1,16 @@
 # Graph Report - fanfiction-reader  (2026-10-08)
 
 ## Corpus Check
-- 74 files · ~67,744 words
+- 76 files · ~71,051 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 939 nodes · 1830 edges · 143 communities (34 shown, 109 thin omitted)
-- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 18 edges (avg confidence: 0.8)
+- 1002 nodes · 2041 edges · 142 communities (36 shown, 106 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 26 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `e91e21c7`
+- Built from commit: `572a54fa`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -24,7 +24,6 @@
 - Query Layer (queries.rs)
 - AO3 URL Locator Parsing
 - Frontend API/Event Bindings
-- FFN Parsing & Scraping
 - App Icons & Tauri Config
 - UI List/Search Components
 - +page.svelte
@@ -151,28 +150,28 @@
 - typography.ts
 
 ## God Nodes (most connected - your core abstractions)
-1. `Db` - 46 edges
-2. `$lib/api` - 39 edges
-3. `FetchSession` - 30 edges
+1. `Db` - 52 edges
+2. `$lib/api` - 37 edges
+3. `FetchSession` - 35 edges
 4. `$lib/types` - 28 edges
-5. `$lib/components/Reader.svelte` - 24 edges
-6. `test_db()` - 22 edges
-7. `FetchOutcome` - 17 edges
-8. `fetch_ffn_via()` - 17 edges
-9. `run_fetch()` - 17 edges
-10. `run()` - 17 edges
+5. `fixtures()` - 25 edges
+6. `test_db()` - 24 edges
+7. `$lib/components/Reader.svelte` - 24 edges
+8. `FakeEnv` - 23 edges
+9. `block_on()` - 19 edges
+10. `fetch_ffn_via()` - 17 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `app.html — SvelteKit shell template` --shares_data_with--> `Decision: Svelte + Bun frontend`  [INFERRED]
   src/app.html → docs/wayfinder/tickets/002-frontend-framework-rust-crates.md
-- `parse_story_page()` --calls--> `parse_int()`  [INFERRED]
-  src-tauri/src/ffn.rs → src-tauri/src/scrape.rs
-- `parse_story_page()` --calls--> `text_of()`  [INFERRED]
-  src-tauri/src/ffn.rs → src-tauri/src/scrape.rs
-- `parse_fandom_index()` --calls--> `text_of()`  [INFERRED]
-  src-tauri/src/ffn.rs → src-tauri/src/scrape.rs
-- `parse_browse_page()` --calls--> `parse_int()`  [INFERRED]
-  src-tauri/src/ffn.rs → src-tauri/src/scrape.rs
+- `fetch_ao3_via()` --calls--> `get_with_retry()`  [INFERRED]
+  src-tauri/src/fetch.rs → src-tauri/src/fetch_env.rs
+- `sample_ao3_story()` --references--> `Ao3StoryMetadata`  [EXTRACTED]
+  src-tauri/src/db.rs → src-tauri/src/ao3.rs
+- `upsert_ao3_story()` --references--> `Ao3StoryMetadata`  [EXTRACTED]
+  src-tauri/src/db.rs → src-tauri/src/ao3.rs
+- `sample_ao3()` --references--> `Ao3StoryMetadata`  [EXTRACTED]
+  src-tauri/src/queries.rs → src-tauri/src/ao3.rs
 
 ## Import Cycles
 - None detected.
@@ -182,11 +181,11 @@
 - **Wayfinder tickets feeding the locked SPEC decisions** — docs_wayfinder_map_overview, docs_wayfinder_tickets_001_cloudflare_session_handling_overview, docs_wayfinder_tickets_002_frontend_framework_rust_crates_overview, docs_wayfinder_tickets_003_data_model_sqlite_schema_overview, docs_wayfinder_tickets_004_fanficfare_port_scope_overview, docs_wayfinder_tickets_005_ui_ux_layout_prototype_overview [EXTRACTED 1.00]
 - **Longform's six-table SQLite schema** — docs_spec_stories_table, docs_spec_chapters_table, docs_spec_read_state_table, docs_spec_filter_presets_table, docs_spec_browse_state_table, docs_spec_fandom_index_table [EXTRACTED 1.00]
 
-## Communities (143 total, 109 thin omitted)
+## Communities (142 total, 106 thin omitted)
 
 ### Community 0 - "Chapter/Listing Data Models"
-Cohesion: 0.26
-Nodes (29): FandomIndexEntry, Db, Mutex, count(), db_health_check(), get_chapter(), get_continue_reading(), get_story() (+21 more)
+Cohesion: 0.25
+Nodes (29): FandomIndexEntry, Db, Mutex, count(), bookmarked(), story_count(), db_health_check(), get_continue_reading() (+21 more)
 
 ### Community 1 - "Source Locator Abstraction"
 Cohesion: 0.07
@@ -206,23 +205,23 @@ Nodes (45): jsdom, dependencies, lucide-svelte, @tauri-apps/api, @tauri-apps/plu
 
 ### Community 6 - "Query Layer (queries.rs)"
 Cohesion: 0.09
-Nodes (55): Error, Row, absent_or_null_filters_mean_no_filter_and_favorites(), bookmarks_scope_returns_only_bookmarked_stories_under_every_filter(), chapter_list_item_exposes_source_chapter_id(), ChapterContent, ChapterListItem, continue_reading_lists_unfinished_opened_stories_newest_first_and_honours_limit() (+47 more)
+Nodes (54): Error, Row, absent_or_null_filters_mean_no_filter_and_favorites(), bookmarks_scope_returns_only_bookmarked_stories_under_every_filter(), ChapterContent, ChapterListItem, continue_reading_lists_unfinished_opened_stories_newest_first_and_honours_limit(), filter_enums_deserialize_only_their_wire_spellings() (+46 more)
 
 ### Community 7 - "AO3 URL Locator Parsing"
-Cohesion: 0.13
-Nodes (32): Selector, ao3_locator_from_url(), ao3_locator_from_url_does_not_false_positive_on_a_listing_url(), ao3_locator_from_url_malformed_for_non_numeric_chapter_id(), ao3_locator_from_url_malformed_for_non_numeric_work_id(), ao3_locator_from_url_matches_a_one_shot_url(), ao3_locator_from_url_matches_a_real_chapter_url(), ao3_locator_from_url_no_match_for_a_user_profile_url() (+24 more)
+Cohesion: 0.08
+Nodes (59): Selector, ao3_locator_from_url(), ao3_locator_from_url_does_not_false_positive_on_a_listing_url(), ao3_locator_from_url_malformed_for_non_numeric_chapter_id(), ao3_locator_from_url_malformed_for_non_numeric_work_id(), ao3_locator_from_url_matches_a_one_shot_url(), ao3_locator_from_url_matches_a_real_chapter_url(), ao3_locator_from_url_no_match_for_a_user_profile_url() (+51 more)
 
-### Community 9 - "FFN Parsing & Scraping"
-Cohesion: 0.18
-Nodes (27): build_browse_url(), category_from_index_url(), extract_labeled(), extract_trailing_tags(), ffn_locator_from_url(), ffn_locator_from_url_malformed_for_non_numeric_chapter_num(), ffn_locator_from_url_malformed_for_non_numeric_story_id(), ffn_locator_from_url_matches_a_real_chapter_url() (+19 more)
+### Community 8 - "Frontend API/Event Bindings"
+Cohesion: 0.08
+Nodes (10): @tauri-apps/api/core, $lib/api, $lib/types, ChapterContent, ChapterFetched, ChapterListItem, EnsuredChapter, FandomIndexFetched (+2 more)
 
 ### Community 10 - "App Icons & Tauri Config"
 Cohesion: 0.08
 Nodes (23): icons/128x128@2x.png, icons/128x128.png, icons/32x32.png, icons/icon.icns, icons/icon.ico, app, security, windows (+15 more)
 
 ### Community 11 - "UI List/Search Components"
-Cohesion: 0.14
-Nodes (13): $lib/components/RowActions.svelte, spinning, $lib/components/SearchModal.svelte, $lib/components/StatusBadges.svelte, $lib/components/StoryList.svelte, shortDate(), toShort(), $lib/types (+5 more)
+Cohesion: 0.20
+Nodes (7): $lib/components/RowActions.svelte, spinning, $lib/components/SearchModal.svelte, $lib/components/StatusBadges.svelte, $lib/components/StoryList.svelte, shortDate(), toShort()
 
 ### Community 12 - "+page.svelte"
 Cohesion: 0.20
@@ -241,7 +240,7 @@ Cohesion: 0.15
 Nodes (12): ./.svelte-kit/tsconfig.json, compilerOptions, allowJs, checkJs, esModuleInterop, forceConsistentCasingInFileNames, moduleResolution, resolveJsonModule (+4 more)
 
 ### Community 16 - "Fandom Tag Mapping & FicSource"
-Cohesion: 0.17
+Cohesion: 0.19
 Nodes (11): applyFandomRename(), getAo3Tag(), renameAo3Tag(), tagMapPref, ao3Adapter, ffnAdapter, ficSourceAdapter, $lib/searchScreen.svelte (+3 more)
 
 ### Community 17 - "Search Modal Screen State"
@@ -253,20 +252,28 @@ Cohesion: 0.20
 Nodes (9): allow-main-commands, main, opener:default, description, identifier, core:default, permissions, $schema (+1 more)
 
 ### Community 20 - "Story Flag Actions"
-Cohesion: 0.24
-Nodes (12): $lib/storyFlagActions, MESSAGES, toggleAndRefresh(), toggleBookmarkedAndRefresh(), toggleDismissedAndRefresh(), toggleReadAndRefresh(), StoryFlag, TOGGLE (+4 more)
+Cohesion: 0.19
+Nodes (14): $lib/errorBanner.svelte, BannerKey, BannerMessage, ClearOn, describe(), $lib/storyFlagActions, MESSAGES, toggleAndRefresh() (+6 more)
 
 ### Community 21 - "Bookmarks Screen State"
 Cohesion: 0.07
-Nodes (45): S, ao3_fandom_override_applies_on_listing_rows(), ao3_fandom_override_is_ignored_on_the_chapter_path(), bookmark_imported_story(), bookmark_imported_story_bookmarks_only_that_flag(), BrowseFetched, cached_chapter(), cached_chapter_misses_a_toc_stub_and_hits_a_fetched_chapter() (+37 more)
+Nodes (47): ChapterContent, S, ao3_fandom_override_applies_on_listing_rows(), ao3_fandom_override_is_ignored_on_the_chapter_path(), ao3_listing_fetch_with_no_requested_locator_does_not_record_browse_state(), ao3_listing_records_under_the_requested_tag_even_when_the_fetched_url_names_another(), bookmark_imported_story(), bookmark_imported_story_bookmarks_only_that_flag() (+39 more)
+
+### Community 23 - "BookmarksScreen"
+Cohesion: 0.18
+Nodes (3): BookmarksScreen, ErrorBanner, SearchScreen
 
 ### Community 54 - "fetch.rs"
 Cohesion: 0.09
-Nodes (61): Arc, BrowseFetched, ChapterFetched, Default, EnsuredChapter, FandomIndexFetched, MutexGuard, a_story_imported_through_the_fetch_path_is_bookmarked_by_the_add_by_url_step() (+53 more)
+Nodes (69): BrowseFetched, ChapterFetched, Default, EnsuredChapter, FandomIndexFetched, MutexGuard, add_story_by_url(), add_story_by_url_does_not_bookmark_when_the_fetch_fails() (+61 more)
+
+### Community 133 - "TESTING.md"
+Cohesion: 0.10
+Nodes (42): Testing conventions, JoinHandle, a_client_error_fails_at_once_without_retrying(), a_fatal_transport_error_fails_at_once_without_retrying(), a_retryable_transport_error_is_retried(), a_server_error_is_retried_until_it_succeeds(), a_success_returns_the_body_and_the_post_redirect_url(), Ao3Response (+34 more)
 
 ### Community 137 - "fetch_session.rs"
 Cohesion: 0.12
-Nodes (35): F, Output, Receiver, Sender, a_background_start_never_supersedes_a_pending_foreground_fetch(), a_background_start_proceeds_once_the_foreground_fetch_has_finished(), a_category_index_report_matches_by_category(), a_foreground_start_supersedes_a_pending_background_fetch() (+27 more)
+Nodes (36): Receiver, Sender, a_background_start_never_supersedes_a_pending_foreground_fetch(), a_background_start_proceeds_once_the_foreground_fetch_has_finished(), a_category_index_report_matches_by_category(), a_foreground_start_supersedes_a_pending_background_fetch(), a_newer_start_rejects_the_older_fetch_and_leaves_the_new_one_pending(), a_stale_report_for_the_superseded_target_is_dropped() (+28 more)
 
 ### Community 138 - "$lib/filterPrefs"
 Cohesion: 0.40
@@ -277,31 +284,31 @@ Cohesion: 0.50
 Nodes (3): DEFAULTS, pref, ReaderPrefs
 
 ### Community 140 - "BookmarksScreen"
-Cohesion: 0.13
-Nodes (16): $lib/bookmarksScreen.svelte, BulkJob, BulkProgress, NO_PROGRESS, $lib/pacedLoop, DEFAULT_JITTER_MS, DEFAULT_RETRY_JITTER_MS, jitterDelay() (+8 more)
+Cohesion: 0.14
+Nodes (17): $lib/bookmarksScreen.svelte, BulkJob, BulkProgress, NO_PROGRESS, $lib/pacedLoop, DEFAULT_JITTER_MS, DEFAULT_RETRY_JITTER_MS, describeFailures() (+9 more)
 
 ### Community 141 - "typography.ts"
 Cohesion: 0.83
 Nodes (3): SKIP_TAGS, smartenQuotesHtml(), smartenQuotesText()
 
 ## Knowledge Gaps
-- **247 isolated node(s):** `name`, `version`, `description`, `type`, `dev` (+242 more)
+- **250 isolated node(s):** `name`, `version`, `description`, `type`, `dev` (+245 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **109 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **106 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `Db` connect `Chapter/Listing Data Models` to `DB Migration & Schema Logic`, `Bookmarks Screen State`, `fetch.rs`?**
   _High betweenness centrality (0.069) - this node is a cross-community bridge._
+- **Why does `FetchSession` connect `fetch.rs` to `fetch_session.rs`, `TESTING.md`?**
+  _High betweenness centrality (0.030) - this node is a cross-community bridge._
 - **Why does `Ao3StoryMetadata` connect `AO3 URL Locator Parsing` to `DB Migration & Schema Logic`, `Query Layer (queries.rs)`?**
-  _High betweenness centrality (0.016) - this node is a cross-community bridge._
-- **Why does `FetchSession` connect `fetch.rs` to `Chapter/Listing Data Models`, `fetch_session.rs`?**
-  _High betweenness centrality (0.016) - this node is a cross-community bridge._
+  _High betweenness centrality (0.023) - this node is a cross-community bridge._
 - **What connects `name`, `version`, `description` to the rest of the system?**
-  _247 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _250 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Source Locator Abstraction` be split into smaller, more focused modules?**
-  _Cohesion score 0.06540825285338016 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06666666666666667 - nodes in this community are weakly interconnected._
 - **Should `DB Migration & Schema Logic` be split into smaller, more focused modules?**
   _Cohesion score 0.08778424114225278 - nodes in this community are weakly interconnected._
 - **Should `Reader Component Logic` be split into smaller, more focused modules?**

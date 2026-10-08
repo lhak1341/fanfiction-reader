@@ -24,6 +24,16 @@
 //! twin, for two call sites. Reopen if a third source appears. Re-confirmed
 //! 2026-10-07 (second pass): the one real defect in the pair — AO3's
 //! `.ok()` swallowing DB errors — was fixed in place, with a regression test.
+//!
+//! Architecture review candidate 4 (2026-10-08), record-side half done: a
+//! listing is recorded under the locator its *request* carried
+//! (`dispatch::persist_page`'s `requested_listing_locator`, supplied by
+//! `search_ffn`/`search_ao3` in `fetch.rs`), for both sources — never under one
+//! decoded from the fetched URL. That retired the `resolve_listing_record_locator`
+//! hook (FFN preferred the stash, AO3 the decode), and stops AO3's Load more
+//! depending on the post-redirect URL still carrying the `tag_id` it asked for.
+//! The decoded locator is still what `parse_listing` and
+//! `fetch_session::TargetKey` read. The read-side merge above stays rejected.
 
 use rusqlite::Connection;
 
@@ -121,18 +131,6 @@ pub trait FicSource {
 
     fn listing_page(locator: &Self::ListingLocator) -> i64;
     fn record_listing_page(conn: &Connection, locator: &Self::ListingLocator, page: i64) -> rusqlite::Result<()>;
-
-    /// Which locator (if any) `record_listing_page` should persist under —
-    /// `decoded` came from re-parsing the fetched page's own URL, `external`
-    /// from whatever the caller stashed before the fetch began (`fetch_session.rs`'s
-    /// `FetchedPage::listing_locator`, FFN-only). `Ffn` prefers `external` and returns `None`
-    /// (skip recording) when nothing was stashed — its own URL encoding
-    /// can't round-trip `status` losslessly (`build_browse_url`, architecture
-    /// review candidate, 2026-07-29), so a bare decode risks persisting a
-    /// wrong value; a debug harness's raw-URL fetch has no real search
-    /// session behind it worth bookkeeping anyway. `Ao3`'s encoding round-trips
-    /// cleanly and it never stashes anything, so it always keeps `decoded`.
-    fn resolve_listing_record_locator(decoded: Self::ListingLocator, external: Option<Self::ListingLocator>) -> Option<Self::ListingLocator>;
 }
 
 pub struct Ffn;
@@ -211,12 +209,9 @@ impl rusqlite::types::FromSql for StorySource {
     }
 }
 
-/// `Deserialize` so `lib.rs::fetch_page` (a `#[tauri::command]`) can accept
-/// this as a param — always `None` over the wire in practice (only
-/// `search_ffn`'s own in-process call ever supplies `Some`, see
-/// `FetchedPage::listing_locator`, `fetch_session.rs`), but the IPC macro still needs the bound to compile.
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
+/// Not `Deserialize`: it never crosses IPC — only `search_ffn`'s own in-process
+/// call supplies one (see `FetchedPage::listing_locator`, `fetch_session.rs`).
+#[derive(Debug, Clone)]
 pub struct FfnListingLocator {
     pub category: String,
     pub fandom: String,
@@ -303,10 +298,6 @@ impl FicSource for Ffn {
 
     fn record_listing_page(conn: &Connection, locator: &Self::ListingLocator, page: i64) -> rusqlite::Result<()> {
         db::record_browse_page(conn, &locator.category, &locator.fandom, locator.min_word_count, locator.status.as_str(), page)
-    }
-
-    fn resolve_listing_record_locator(_decoded: Self::ListingLocator, external: Option<Self::ListingLocator>) -> Option<Self::ListingLocator> {
-        external
     }
 }
 
@@ -407,10 +398,6 @@ impl FicSource for Ao3 {
 
     fn record_listing_page(conn: &Connection, locator: &Self::ListingLocator, page: i64) -> rusqlite::Result<()> {
         db::record_ao3_browse_page(conn, &locator.tag, locator.min_word_count, locator.status.as_str(), page)
-    }
-
-    fn resolve_listing_record_locator(decoded: Self::ListingLocator, _external: Option<Self::ListingLocator>) -> Option<Self::ListingLocator> {
-        Some(decoded)
     }
 }
 

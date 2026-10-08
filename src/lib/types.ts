@@ -12,7 +12,7 @@
 export type StoryStatus = "complete" | "in_progress";
 // What a listing search asks for — a filter, not a story's status (Rust: `ListingStatus`, source.rs).
 export type ListingStatus = StoryStatus | "any";
-export type SortBy = "favorites" | "updated" | "words";
+export type SortBy = "favorites" | "fetched" | "words";
 export type StorySource = "ffn" | "ao3";
 
 export interface StoryRow {
@@ -64,9 +64,6 @@ export interface ChapterListItem {
   chapterNum: number;
   title: string;
   isCached: boolean;
-  /** AO3's opaque per-chapter id — needed to build a
-   * `/works/{id}/chapters/{id}` fetch URL. `null` for FFN chapters. */
-  sourceChapterId: number | null;
 }
 
 export interface ChapterContent {

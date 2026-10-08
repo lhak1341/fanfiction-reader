@@ -2,6 +2,7 @@ mod ao3;
 mod db;
 mod dispatch;
 mod fetch;
+mod fetch_env;
 mod fetch_session;
 mod ffn;
 mod migrations;
@@ -9,7 +10,7 @@ mod queries;
 mod scrape;
 mod source;
 
-use fetch::{add_story_by_url, ensure_chapter, fetch_ao3_page, fetch_chapter, fetch_page, index_ffn_category, report_fetch_result, search_ao3, search_ffn};
+use fetch::{add_story_by_url, ensure_chapter, fetch_chapter, fetch_page, index_ffn_category, report_fetch_result, search_ao3, search_ffn};
 use fetch_session::FetchSession;
 use tauri::Manager;
 
@@ -78,11 +79,6 @@ fn list_chapters(db: tauri::State<db::Db>, story_id: i64) -> Result<Vec<queries:
 }
 
 #[tauri::command]
-fn get_chapter(db: tauri::State<db::Db>, story_id: i64, chapter_num: i64) -> Result<Option<queries::ChapterContent>, String> {
-    db.run(|conn| queries::get_chapter(conn, story_id, chapter_num))
-}
-
-#[tauri::command]
 fn get_continue_reading(db: tauri::State<db::Db>, limit: i64) -> Result<Vec<queries::StoryRow>, String> {
     db.run(|conn| queries::get_continue_reading(conn, limit))
 }
@@ -117,12 +113,10 @@ pub fn run() {
             toggle_bookmarked,
             set_resume_chapter,
             list_chapters,
-            get_chapter,
             get_continue_reading,
             search_ffn,
             index_ffn_category,
             list_fandom_index,
-            fetch_ao3_page,
             search_ao3,
             add_story_by_url,
             fetch_chapter,
