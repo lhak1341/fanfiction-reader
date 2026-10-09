@@ -465,6 +465,36 @@ mod tests {
         assert_eq!(chapters[143].title, "Perfectly Flawless");
     }
 
+    /// Swaps `from` for `to` in the real fixture, failing loudly if `from`
+    /// is gone — so fixture drift can't turn a variant test into a no-op.
+    fn mutate(from: &str, to: &str) -> String {
+        assert!(STORY_PAGE.contains(from), "fixture no longer contains {from:?}");
+        STORY_PAGE.replace(from, to)
+    }
+
+    #[test]
+    fn parse_story_page_one_shot_without_a_chapter_dropdown_synthesizes_chapter_one() {
+        // One-shots render no `select[name="chapter"]` at all (the real page
+        // has it twice, top and bottom nav).
+        let html = mutate(r#"name="chapter""#, r#"name="chapter-removed""#);
+        let (meta, chapters) = parse_story_page(&html, 13_493_099).unwrap();
+
+        assert_eq!(chapters.len(), 1);
+        assert_eq!(chapters[0].chapter_num, 1);
+        assert_eq!(chapters[0].title, meta.title);
+        assert_eq!(meta.chapter_count, 1);
+    }
+
+    #[test]
+    fn parse_story_page_reads_complete_status_from_the_meta_line() {
+        let html = mutate("- id: 13493099", "- Status: Complete - id: 13493099");
+        let (meta, _) = parse_story_page(&html, 13_493_099).unwrap();
+
+        assert_eq!(meta.status, "complete");
+        // The marker must not leak into the character/pairing tags.
+        assert_eq!(meta.tags.as_deref(), Some("Riolu, Kirlia, OC"));
+    }
+
     #[test]
     fn parse_chapter_content_extracts_storytext() {
         let content = parse_chapter_content(STORY_PAGE).unwrap();

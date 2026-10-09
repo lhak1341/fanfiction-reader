@@ -544,6 +544,42 @@ mod tests {
         assert_eq!(chapters[79].chapter_id, Some(235_622_396));
     }
 
+    /// Swaps `from` for `to` in the real fixture, failing loudly if `from`
+    /// is gone — so fixture drift can't turn a variant test into a no-op.
+    fn mutate(from: &str, to: &str) -> String {
+        assert!(WORK_PAGE.contains(from), "fixture no longer contains {from:?}");
+        WORK_PAGE.replace(from, to)
+    }
+
+    #[test]
+    fn parse_work_page_anonymous_work_stores_an_empty_author() {
+        // Current behavior, pinned: an anonymous work has no `a[rel=author]`,
+        // so `author` is "" (not "Anonymous"). Display fallback, if wanted,
+        // belongs in StoryList/Reader.
+        let html = mutate(
+            r#"<a rel="author" href="/users/MackoBole/pseuds/MackoBole">MackoBole</a>"#,
+            "Anonymous",
+        );
+        let (meta, _) = parse_work_page(&html, 85_954_646).unwrap();
+
+        assert_eq!(meta.author, "");
+        assert_eq!(meta.title, "Perks of Being Kidnapped");
+    }
+
+    #[test]
+    fn parse_work_page_one_shot_has_one_chapter_without_an_id_and_is_complete() {
+        // One-shots show "1/1" and render no `select#selected_id`.
+        let html = mutate(r#"<dd class="chapters">80/?</dd>"#, r#"<dd class="chapters">1/1</dd>"#)
+            .replace(r#"id="selected_id""#, r#"id="selected_id-removed""#);
+        let (meta, chapters) = parse_work_page(&html, 85_954_646).unwrap();
+
+        assert_eq!(meta.chapter_count, 1);
+        assert_eq!(meta.status, "complete");
+        assert_eq!(chapters.len(), 1);
+        assert_eq!(chapters[0].chapter_num, 1);
+        assert_eq!(chapters[0].chapter_id, None);
+    }
+
     #[test]
     fn parse_chapter_content_extracts_userstuff_article() {
         let content = parse_chapter_content(WORK_PAGE).unwrap();
