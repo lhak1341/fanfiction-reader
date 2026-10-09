@@ -5,7 +5,7 @@ import {
   describeFailures,
   jitterDelay,
   PauseGate,
-  runPacedBestEffort
+  runPacedBestEffort,
 } from "./pacedLoop";
 
 describe("jitterDelay", () => {
@@ -44,7 +44,7 @@ describe("runPacedBestEffort", () => {
     expect(onProgress.mock.calls.map(([e]) => e)).toEqual([
       { round: 0, index: 0, total: 3, item: 1, result: 10 },
       { round: 0, index: 1, total: 3, item: 2, result: 20 },
-      { round: 0, index: 2, total: 3, item: 3, result: 30 }
+      { round: 0, index: 2, total: 3, item: 3, result: 30 },
     ]);
     vi.useRealTimers();
   });
@@ -62,11 +62,23 @@ describe("runPacedBestEffort", () => {
     await run;
 
     expect(fn).toHaveBeenCalledTimes(3);
-    expect(onProgress.mock.calls[0][0]).toEqual({ round: 0, index: 0, total: 3, item: 1, result: 10 });
+    expect(onProgress.mock.calls[0][0]).toEqual({
+      round: 0,
+      index: 0,
+      total: 3,
+      item: 1,
+      result: 10,
+    });
     expect(onProgress.mock.calls[1][0].index).toBe(1);
     expect(onProgress.mock.calls[1][0].result).toBeInstanceOf(Error);
     expect((onProgress.mock.calls[1][0].result as Error).message).toBe("boom");
-    expect(onProgress.mock.calls[2][0]).toEqual({ round: 0, index: 2, total: 3, item: 3, result: 30 });
+    expect(onProgress.mock.calls[2][0]).toEqual({
+      round: 0,
+      index: 2,
+      total: 3,
+      item: 3,
+      result: 30,
+    });
     vi.useRealTimers();
   });
 
@@ -177,7 +189,11 @@ describe("runPacedBestEffort results and retries", () => {
 
     expect(fn.mock.calls.map((c) => c[0])).toEqual([1, 2, 1]);
     expect(result).toEqual({ ok: [2, 1], failed: [] });
-    expect(onProgress.mock.calls.map(([e]) => [e.round, e.item])).toEqual([[0, 1], [0, 2], [1, 1]]);
+    expect(onProgress.mock.calls.map(([e]) => [e.round, e.item])).toEqual([
+      [0, 1],
+      [0, 2],
+      [1, 1],
+    ]);
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
@@ -223,7 +239,7 @@ describe("runPacedBestEffort results and retries", () => {
 describe("describeFailures", () => {
   const failed = [
     { item: 4, reason: "a" },
-    { item: 9, reason: "b" }
+    { item: 9, reason: "b" },
   ];
 
   it("lists the failed items and the last reason", () => {

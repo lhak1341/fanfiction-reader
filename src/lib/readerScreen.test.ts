@@ -8,11 +8,11 @@ vi.mock("./api", () => ({
   setResumeChapter: vi.fn(),
   toggleRead: vi.fn(),
   toggleBookmarked: vi.fn(),
-  toggleDismissed: vi.fn()
+  toggleDismissed: vi.fn(),
 }));
 vi.mock("./pacedLoop", () => ({
   sleep: vi.fn(() => Promise.resolve()),
-  jitterDelay: vi.fn(() => 0)
+  jitterDelay: vi.fn(() => 0),
 }));
 
 import * as api from "./api";
@@ -41,11 +41,15 @@ const story: StoryRow = {
   lastScrollPct: null,
   ffnUpdatedAt: null,
   source: "ffn",
-  cachedChapterCount: 0
+  cachedChapterCount: 0,
 };
 
 function makeChapters(count: number): ChapterListItem[] {
-  return Array.from({ length: count }, (_, i) => ({ chapterNum: i + 1, title: `Ch ${i + 1}`, isCached: false }));
+  return Array.from({ length: count }, (_, i) => ({
+    chapterNum: i + 1,
+    title: `Ch ${i + 1}`,
+    isCached: false,
+  }));
 }
 
 // `api.ensureChapter`'s result: a fetch (`wasFetched`) also reports the story's
@@ -54,12 +58,16 @@ function makeChapters(count: number): ChapterListItem[] {
 // unless a test says the story grew.
 let screenChapterCount = story.chapterCount;
 
-function ensured(num: number, wasFetched = true, chapterCount = screenChapterCount): EnsuredChapter {
+function ensured(
+  num: number,
+  wasFetched = true,
+  chapterCount = screenChapterCount
+): EnsuredChapter {
   return {
     wasFetched,
     chapterCount: wasFetched ? chapterCount : null,
     chapters: wasFetched ? makeChapters(chapterCount) : null,
-    content: { title: `Ch ${num}`, content: "", isCached: true }
+    content: { title: `Ch ${num}`, content: "", isCached: true },
   };
 }
 
@@ -129,7 +137,7 @@ describe("ReaderScreen.init failures", () => {
     expect(api.ensureChapter).not.toHaveBeenCalled();
   });
 
-  it("reports a missing story as \"story not found\"", async () => {
+  it('reports a missing story as "story not found"', async () => {
     vi.mocked(api.getStory).mockResolvedValue(null);
     const screen = new ReaderScreen(story.id);
 
@@ -148,7 +156,7 @@ describe("ReaderScreen resume bookkeeping failures", () => {
     vi.mocked(api.listChapters).mockResolvedValue(makeChapters(story.chapterCount));
     vi.mocked(api.ensureChapter).mockResolvedValue({
       ...ensured(1, false),
-      content: { title: "Ch 1", content: "text", isCached: true }
+      content: { title: "Ch 1", content: "text", isCached: true },
     });
     vi.mocked(api.setResumeChapter).mockRejectedValue(new Error("db locked"));
     const onChanged = vi.fn();
@@ -174,7 +182,7 @@ describe("ReaderScreen resume bookkeeping failures", () => {
     vi.mocked(api.listChapters).mockResolvedValue(makeChapters(story.chapterCount));
     vi.mocked(api.ensureChapter).mockResolvedValue({
       ...ensured(1, false),
-      content: { title: "Ch 1", content: "text", isCached: true }
+      content: { title: "Ch 1", content: "text", isCached: true },
     });
     const screen = new ReaderScreen(story.id, () => {
       throw new Error("refresh blew up");
@@ -198,7 +206,9 @@ function gateFirstCall(nums: number[]) {
     fetchCalls.push(num);
     const result = ensured(num, true, 20);
     if (!pending.delete(num)) return result;
-    await new Promise<void>((resolve, reject) => gates.set(num, { release: resolve, fail: (e) => reject(e) }));
+    await new Promise<void>((resolve, reject) =>
+      gates.set(num, { release: resolve, fail: (e) => reject(e) })
+    );
     return result;
   });
   return { gates, fetchCalls };
@@ -218,7 +228,11 @@ describe("ReaderScreen.loadChapter supersession", () => {
 
     expect(screen.currentChapterNum).toBe(12);
     expect(screen.content?.title).toBe("Ch 12");
-    expect(vi.mocked(api.setResumeChapter)).not.toHaveBeenCalledWith(story.id, 10, expect.anything());
+    expect(vi.mocked(api.setResumeChapter)).not.toHaveBeenCalledWith(
+      story.id,
+      10,
+      expect.anything()
+    );
   });
 
   it("ignores a superseded load's failure and keeps loading state for the newer one", async () => {
@@ -378,7 +392,9 @@ describe("ReaderScreen prefetch chain", () => {
   it("skips pacing on an already-cached neighbor but paces on a real fetch", async () => {
     // Center chapter 3 in a 5-chapter story prefetches [1, 2, 4, 5];
     // chapter 1 alone reports as already cached.
-    vi.mocked(api.ensureChapter).mockImplementation(async (_storyId, num) => ensured(num, num !== 1, 5));
+    vi.mocked(api.ensureChapter).mockImplementation(async (_storyId, num) =>
+      ensured(num, num !== 1, 5)
+    );
 
     const screen = makeScreen(5);
     await screen.init(3);

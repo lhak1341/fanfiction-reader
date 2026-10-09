@@ -44,7 +44,7 @@
     event.preventDefault();
     try {
       stories = await invoke<StoryRow[]>("list_stories", {
-        filters: { sortBy: "favorites", hideRead: false, hideDismissed: false }
+        filters: { sortBy: "favorites", hideRead: false, hideDismissed: false },
       });
       storiesStatus = `${stories.length} stor${stories.length === 1 ? "y" : "ies"}`;
     } catch (e) {
@@ -112,11 +112,17 @@
 <main class="debug">
   <p><a href="/">‹ Back to app</a></p>
   <h1>Debug tools</h1>
-  <p>Internal dev tools for exercising the fetch/parse/persist pipeline directly. Not part of the app.</p>
+  <p>
+    Internal dev tools for exercising the fetch/parse/persist pipeline directly. Not part of the
+    app.
+  </p>
 
   <hr />
   <h2>Fetch spike</h2>
-  <p>Opens a real webview at the URL below, parses the page, and persists it. Result prints to the Rust terminal.</p>
+  <p>
+    Opens a real webview at the URL below, parses the page, and persists it. Result prints to the
+    Rust terminal.
+  </p>
   <form onsubmit={runFetchSpike}>
     <input bind:value={spikeUrl} style="width: 320px" />
     <button type="submit">Run fetch spike</button>
@@ -125,7 +131,10 @@
 
   <hr />
   <h2>Prefetch chapters</h2>
-  <p>Fetches a range of chapters sequentially (one webview at a time, waits for each to finish) so chapter nav can be tested without triggering fetches one at a time.</p>
+  <p>
+    Fetches a range of chapters sequentially (one webview at a time, waits for each to finish) so
+    chapter nav can be tested without triggering fetches one at a time.
+  </p>
   <form onsubmit={runPrefetch} class="row">
     <label>ffn_story_id <input bind:value={prefetchFfnStoryId} style="width: 100px" /></label>
     <label>from <input type="number" bind:value={prefetchFrom} style="width: 60px" /></label>

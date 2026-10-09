@@ -15,13 +15,17 @@ import type { BrowseFetched, StorySource, StoryStatus } from "./types";
 
 export interface FicSourceAdapter {
   /// Continues paging the current fandom search ("Load more").
-  loadMore(fandom: string, minWordCount: number, status: StoryStatus | "any"): Promise<BrowseFetched>;
+  loadMore(
+    fandom: string,
+    minWordCount: number,
+    status: StoryStatus | "any"
+  ): Promise<BrowseFetched>;
 }
 
 const ffnAdapter: FicSourceAdapter = {
   loadMore(fandom, minWordCount, status) {
     return api.searchFfnAndWait(fandom, minWordCount, status);
-  }
+  },
 };
 
 const ao3Adapter: FicSourceAdapter = {
@@ -30,10 +34,12 @@ const ao3Adapter: FicSourceAdapter = {
     // §8) — the tag has to have been saved by a prior modal search.
     const tag = getAo3Tag(fandom);
     if (!tag) {
-      return Promise.reject(new Error(`No AO3 tag saved for "${fandom}" yet — search it once via the modal first.`));
+      return Promise.reject(
+        new Error(`No AO3 tag saved for "${fandom}" yet — search it once via the modal first.`)
+      );
     }
     return api.searchAo3AndWait(tag, fandom, minWordCount, status);
-  }
+  },
 };
 
 export function ficSourceAdapter(source: StorySource): FicSourceAdapter {

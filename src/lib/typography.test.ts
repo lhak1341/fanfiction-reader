@@ -15,7 +15,9 @@ describe("smartenQuotesText", () => {
   });
 
   it("handles nested quotes", () => {
-    expect(smartenQuotesText(`She said "it's 'complicated.'"`)).toBe("She said “it’s ‘complicated.’”");
+    expect(smartenQuotesText(`She said "it's 'complicated.'"`)).toBe(
+      "She said “it’s ‘complicated.’”"
+    );
   });
 
   it("curls leading elision apostrophes as closing quotes, not opening", () => {

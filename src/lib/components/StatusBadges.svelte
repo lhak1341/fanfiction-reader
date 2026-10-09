@@ -5,7 +5,7 @@
 
   let {
     status,
-    ffnUpdatedAt
+    ffnUpdatedAt,
   }: {
     status: StoryStatus;
     ffnUpdatedAt: string | null;
@@ -16,7 +16,9 @@
   {status === "complete" ? "Done" : "Ongoing"}
 </span>
 {#if status === "in_progress" && ffnUpdatedAt && shortDate(ffnUpdatedAt)}
-  <span class="updated-note" title="Last updated {ffnUpdatedAt}"><Calendar size={11} /> {shortDate(ffnUpdatedAt)}</span>
+  <span class="updated-note" title="Last updated {ffnUpdatedAt}"
+    ><Calendar size={11} /> {shortDate(ffnUpdatedAt)}</span
+  >
 {/if}
 
 <style>

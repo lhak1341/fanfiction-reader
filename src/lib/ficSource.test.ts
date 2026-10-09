@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./api", () => ({
   searchFfnAndWait: vi.fn(),
-  searchAo3AndWait: vi.fn()
+  searchAo3AndWait: vi.fn(),
 }));
 
 import * as api from "./api";
@@ -16,7 +16,7 @@ beforeEach(() => {
     getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
     setItem: (key: string, value: string) => {
       store.set(key, value);
-    }
+    },
   });
 });
 
@@ -40,7 +40,12 @@ describe("ficSourceAdapter(ao3).loadMore", () => {
 
     await ficSourceAdapter("ao3").loadMore("Naruto", 1000, "any");
 
-    expect(api.searchAo3AndWait).toHaveBeenCalledWith("Naruto (Anime & Manga)", "Naruto", 1000, "any");
+    expect(api.searchAo3AndWait).toHaveBeenCalledWith(
+      "Naruto (Anime & Manga)",
+      "Naruto",
+      1000,
+      "any"
+    );
   });
 
   it("rejects without fetching when no tag was saved for the fandom", async () => {

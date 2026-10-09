@@ -6,7 +6,7 @@ vi.mock("./api", () => ({
   listStories: vi.fn(),
   renameFandom: vi.fn(),
   searchFfnAndWait: vi.fn(),
-  searchAo3AndWait: vi.fn()
+  searchAo3AndWait: vi.fn(),
 }));
 
 import { ErrorBanner } from "./errorBanner.svelte";
@@ -20,7 +20,7 @@ function stubLocalStorage() {
     getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
     setItem: (key: string, value: string) => {
       store.set(key, value);
-    }
+    },
   });
   return store;
 }
@@ -58,7 +58,7 @@ describe("SearchScreen.start", () => {
       () => (search.sortBy = "fetched"),
       () => (search.hideRead = !search.hideRead),
       () => (search.hideDismissed = !search.hideDismissed),
-      () => (search.hideBookmarked = !search.hideBookmarked)
+      () => (search.hideBookmarked = !search.hideBookmarked),
     ];
 
     for (const mutate of mutations) {
@@ -142,7 +142,7 @@ describe("SearchScreen.renameFandom", () => {
       getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
       setItem: (key: string, value: string) => {
         store.set(key, value);
-      }
+      },
     });
     vi.mocked(api.renameFandom).mockResolvedValue(1);
     saveAo3Tag("Naruto", "Naruto tag");
@@ -209,7 +209,9 @@ describe("SearchScreen.loadMore", () => {
 
     await search.loadMore();
 
-    expect(search.loadMoreError).toBe('No AO3 tag saved for "Bleach" yet — search it once via the modal first.');
+    expect(search.loadMoreError).toBe(
+      'No AO3 tag saved for "Bleach" yet — search it once via the modal first.'
+    );
     expect(api.searchAo3AndWait).not.toHaveBeenCalled();
     expect(search.loadingMore).toBe(false);
   });

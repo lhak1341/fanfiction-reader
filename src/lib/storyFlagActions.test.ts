@@ -2,12 +2,16 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { StoryRow } from "./types";
 
 vi.mock("./storyFlags", () => ({
-  toggleStoryFlag: vi.fn()
+  toggleStoryFlag: vi.fn(),
 }));
 
 import { ErrorBanner } from "./errorBanner.svelte";
 import { toggleStoryFlag } from "./storyFlags";
-import { toggleReadAndRefresh, toggleDismissedAndRefresh, toggleBookmarkedAndRefresh } from "./storyFlagActions";
+import {
+  toggleReadAndRefresh,
+  toggleDismissedAndRefresh,
+  toggleBookmarkedAndRefresh,
+} from "./storyFlagActions";
 
 const story: StoryRow = {
   id: 1,
@@ -31,7 +35,7 @@ const story: StoryRow = {
   lastScrollPct: null,
   ffnUpdatedAt: null,
   source: "ffn",
-  cachedChapterCount: 0
+  cachedChapterCount: 0,
 };
 
 describe("storyFlagActions", () => {
@@ -82,7 +86,9 @@ describe("storyFlagActions", () => {
 
     await toggleReadAndRefresh(story, banner, refreshAll);
 
-    expect(banner.messages).toEqual([{ key: "flag", text: "Could not update read state: db locked" }]);
+    expect(banner.messages).toEqual([
+      { key: "flag", text: "Could not update read state: db locked" },
+    ]);
     expect(refreshAll).not.toHaveBeenCalled();
   });
 
@@ -93,7 +99,9 @@ describe("storyFlagActions", () => {
 
     await toggleDismissedAndRefresh(story, banner, refreshAll);
 
-    expect(banner.messages).toEqual([{ key: "flag", text: "Could not update dismissed state: db locked" }]);
+    expect(banner.messages).toEqual([
+      { key: "flag", text: "Could not update dismissed state: db locked" },
+    ]);
   });
 
   it("reports the bookmark-specific message on failure", async () => {
@@ -103,6 +111,8 @@ describe("storyFlagActions", () => {
 
     await toggleBookmarkedAndRefresh(story, banner, refreshAll);
 
-    expect(banner.messages).toEqual([{ key: "flag", text: "Could not update bookmark: db locked" }]);
+    expect(banner.messages).toEqual([
+      { key: "flag", text: "Could not update bookmark: db locked" },
+    ]);
   });
 });

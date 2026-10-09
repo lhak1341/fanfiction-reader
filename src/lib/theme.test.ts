@@ -15,7 +15,7 @@ function makeFakeLocalStorage() {
     key: (i: number) => [...store.keys()][i] ?? null,
     get length() {
       return store.size;
-    }
+    },
   };
 }
 

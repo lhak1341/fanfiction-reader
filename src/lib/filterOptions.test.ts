@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { SEARCH_STATUSES, SORT_LABELS, SORT_OPTIONS, SOURCE_LABELS, STATUS_LABELS } from "./filterOptions";
+import {
+  SEARCH_STATUSES,
+  SORT_LABELS,
+  SORT_OPTIONS,
+  SOURCE_LABELS,
+  STATUS_LABELS,
+} from "./filterOptions";
 
 describe("filterOptions", () => {
   it("lists every sort in the order the <select> shows", () => {

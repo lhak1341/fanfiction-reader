@@ -18,7 +18,7 @@ function makeFakeLocalStorage() {
     key: (i: number) => [...store.keys()][i] ?? null,
     get length() {
       return store.size;
-    }
+    },
   };
 }
 
@@ -51,7 +51,7 @@ describe("definePersistedPref with a stubbed localStorage", () => {
   it("uses a custom serialize/deserialize pair instead of JSON when given", () => {
     const pref = definePersistedPref<string>("raw-key", "default", {
       serialize: (v) => v,
-      deserialize: (raw) => raw
+      deserialize: (raw) => raw,
     });
     pref.save("hello");
     expect(localStorage.getItem("raw-key")).toBe("hello"); // not JSON-quoted

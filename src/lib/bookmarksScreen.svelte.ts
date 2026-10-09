@@ -106,7 +106,11 @@ export class BookmarksScreen {
 
   async loadStories() {
     await this.banner.run("bookmarks.list", "Could not load bookmarks", async () => {
-      this.stories = await api.listBookmarks({ fandom: this.fandom, sortBy: this.sortBy, hideRead: this.hideRead });
+      this.stories = await api.listBookmarks({
+        fandom: this.fandom,
+        sortBy: this.sortBy,
+        hideRead: this.hideRead,
+      });
     });
   }
 
@@ -140,11 +144,15 @@ export class BookmarksScreen {
       const targets = await api.listBookmarks({ status: "in_progress" });
       // Best-effort — one story failing (e.g. taken down) shouldn't stop the
       // rest. No retry rounds: a removed story fails every time.
-      const { failed } = await runPacedBestEffort(targets, (story) => api.fetchChapterAndWait(story.id, 1, true), {
-        onProgress: ({ index, total }) =>
-          (this.progress = { label: `Refreshing ${index + 1} of ${total}…`, done: index, total }),
-        gate: this.gate
-      });
+      const { failed } = await runPacedBestEffort(
+        targets,
+        (story) => api.fetchChapterAndWait(story.id, 1, true),
+        {
+          onProgress: ({ index, total }) =>
+            (this.progress = { label: `Refreshing ${index + 1} of ${total}…`, done: index, total }),
+          gate: this.gate,
+        }
+      );
       await this.reloadAll();
       if (failed.length > 0) {
         this.banner.report(
@@ -189,7 +197,7 @@ export class BookmarksScreen {
                 ? `Downloading ${index + 1} of ${total}${firstPassFailures ? ` (${firstPassFailures} failed)` : ""}…`
                 : `Retry ${index + 1} of ${total} (round ${round} of ${DOWNLOAD_RETRY_ROUNDS})…`;
             this.progress = { label, done, total: missing.length };
-          }
+          },
         }
       );
       await this.reloadAll();

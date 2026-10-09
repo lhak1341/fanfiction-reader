@@ -18,7 +18,7 @@
   let {
     onClose,
     onImported,
-    onStoryAdded
+    onStoryAdded,
   }: {
     onClose: () => void;
     onImported: (fandom: string, source: StorySource) => void;
@@ -59,7 +59,13 @@
   }}
 />
 
-<div class="overlay" onclick={onClose} onkeydown={(e) => e.key === "Escape" && onClose()} role="button" tabindex="-1"></div>
+<div
+  class="overlay"
+  onclick={onClose}
+  onkeydown={(e) => e.key === "Escape" && onClose()}
+  role="button"
+  tabindex="-1"
+></div>
 <div class="modal" role="dialog" aria-label="Search for a new fandom or add a story by URL">
   <div class="modal-head">
     <h2>Search</h2>
@@ -67,12 +73,23 @@
   </div>
 
   <div class="seg source-toggle">
-    <button type="button" class:active={screen.mode === "ffn"} onclick={() => (screen.mode = "ffn")}>FanFiction.net</button>
-    <button type="button" class:active={screen.mode === "ao3"} onclick={() => (screen.mode = "ao3")}>Archive of Our Own</button>
-    <button type="button" class:active={screen.mode === "url"} onclick={() => (screen.mode = "url")}>By URL</button>
+    <button type="button" class:active={screen.mode === "ffn"} onclick={() => (screen.mode = "ffn")}
+      >FanFiction.net</button
+    >
+    <button type="button" class:active={screen.mode === "ao3"} onclick={() => (screen.mode = "ao3")}
+      >Archive of Our Own</button
+    >
+    <button type="button" class:active={screen.mode === "url"} onclick={() => (screen.mode = "url")}
+      >By URL</button
+    >
   </div>
 
-  <form onsubmit={(e) => { e.preventDefault(); screen.runSearch(); }}>
+  <form
+    onsubmit={(e) => {
+      e.preventDefault();
+      screen.runSearch();
+    }}
+  >
     {#if screen.mode === "ffn"}
       <label class="field">
         <span>Category</span>
@@ -87,8 +104,19 @@
       <div class="field">
         <span>Fandom</span>
         {#if screen.fandomOptions.length === 0}
-          <button class="index-btn" onclick={(e) => { e.preventDefault(); screen.refreshIndex(); }} disabled={screen.indexing}>
-            {screen.indexing ? screen.indexProgress || "Fetching…" : screen.category === ALL ? "Index all categories (one-time, ~9 fetches)" : "Fetch fandom list for this category"}
+          <button
+            class="index-btn"
+            onclick={(e) => {
+              e.preventDefault();
+              screen.refreshIndex();
+            }}
+            disabled={screen.indexing}
+          >
+            {screen.indexing
+              ? screen.indexProgress || "Fetching…"
+              : screen.category === ALL
+                ? "Index all categories (one-time, ~9 fetches)"
+                : "Fetch fandom list for this category"}
           </button>
           {#if screen.indexError}<p class="error">{screen.indexError}</p>{/if}
         {:else}
@@ -105,10 +133,15 @@
                   <li>
                     <button
                       type="button"
-                      class:current={screen.selectedFandom?.fandom === f.fandom && screen.selectedFandom?.category === f.category}
+                      class:current={screen.selectedFandom?.fandom === f.fandom &&
+                        screen.selectedFandom?.category === f.category}
                       onclick={() => selectFandom(f)}
                     >
-                      <span>{f.fandom}{#if screen.category === ALL}<span class="cat-tag">{categoryLabel(f.category)}</span>{/if}</span>
+                      <span
+                        >{f.fandom}{#if screen.category === ALL}<span class="cat-tag"
+                            >{categoryLabel(f.category)}</span
+                          >{/if}</span
+                      >
                       <span class="count tnum">{fmtCompact(f.ffnCount)}</span>
                     </button>
                   </li>
@@ -119,8 +152,17 @@
               </ul>
             {/if}
           </div>
-          <button type="button" class="refresh-link" onclick={() => screen.refreshIndex()} disabled={screen.indexing}>
-            {screen.indexing ? screen.indexProgress || "Refreshing…" : screen.category === ALL ? "Re-index all categories" : "Refresh this category"}
+          <button
+            type="button"
+            class="refresh-link"
+            onclick={() => screen.refreshIndex()}
+            disabled={screen.indexing}
+          >
+            {screen.indexing
+              ? screen.indexProgress || "Refreshing…"
+              : screen.category === ALL
+                ? "Re-index all categories"
+                : "Refresh this category"}
           </button>
         {/if}
       </div>
@@ -135,9 +177,9 @@
         <input placeholder="e.g. Naruto (Anime & Manga)" bind:value={screen.ao3Tag} />
       </label>
       <p class="note">
-        AO3's exact tag string, not a search term — same as pasting it into AO3's own search
-        (e.g. "Harry Potter" is actually tagged "Harry Potter - J.K. Rowling"). Saved after a
-        successful search, so you only type it once per fandom.
+        AO3's exact tag string, not a search term — same as pasting it into AO3's own search (e.g.
+        "Harry Potter" is actually tagged "Harry Potter - J.K. Rowling"). Saved after a successful
+        search, so you only type it once per fandom.
       </p>
     {:else}
       <label class="field">
@@ -150,46 +192,63 @@
       </p>
     {/if}
     {#if screen.mode !== "url"}
-    <label class="field">
-      <span>Minimum length</span>
-      <div class="seg">
-        <button type="button" class:active={screen.minWordCount === undefined} onclick={() => (screen.minWordCount = undefined)}>Any</button>
-        {#each WORD_COUNT_PRESETS as preset}
-          <button type="button" class:active={screen.minWordCount === preset.value} onclick={() => (screen.minWordCount = preset.value)}>{preset.label}</button>
-        {/each}
-      </div>
-    </label>
+      <label class="field">
+        <span>Minimum length</span>
+        <div class="seg">
+          <button
+            type="button"
+            class:active={screen.minWordCount === undefined}
+            onclick={() => (screen.minWordCount = undefined)}>Any</button
+          >
+          {#each WORD_COUNT_PRESETS as preset}
+            <button
+              type="button"
+              class:active={screen.minWordCount === preset.value}
+              onclick={() => (screen.minWordCount = preset.value)}>{preset.label}</button
+            >
+          {/each}
+        </div>
+      </label>
 
-    <label class="field">
-      <span>Status</span>
-      <div class="seg">
-        <button type="button" class:active={screen.status === undefined} onclick={() => (screen.status = undefined)}>Any</button>
-        {#each screen.statusOptions as status}
-          <button type="button" class:active={screen.status === status} onclick={() => (screen.status = status)}>{STATUS_LABELS[status]}</button>
-        {/each}
-      </div>
-    </label>
+      <label class="field">
+        <span>Status</span>
+        <div class="seg">
+          <button
+            type="button"
+            class:active={screen.status === undefined}
+            onclick={() => (screen.status = undefined)}>Any</button
+          >
+          {#each screen.statusOptions as status}
+            <button
+              type="button"
+              class:active={screen.status === status}
+              onclick={() => (screen.status = status)}>{STATUS_LABELS[status]}</button
+            >
+          {/each}
+        </div>
+      </label>
 
-    <p class="note">
-      {#if screen.mode === "ffn"}
-        Pulls the first page, sorted by favorites — FFN's own ranking, not ours.
-      {:else}
-        Pulls the first page, sorted by bookmarks — AO3's closest analog to FFN's favorites.
-      {/if}
-      Use "Load more" afterward for deeper results.
-    </p>
-
+      <p class="note">
+        {#if screen.mode === "ffn"}
+          Pulls the first page, sorted by favorites — FFN's own ranking, not ours.
+        {:else}
+          Pulls the first page, sorted by bookmarks — AO3's closest analog to FFN's favorites.
+        {/if}
+        Use "Load more" afterward for deeper results.
+      </p>
     {/if}
     {#if screen.error}
       <p class="error">{screen.error}</p>
     {/if}
 
-    <button
-      type="submit"
-      class="submit"
-      disabled={screen.searching || !screen.canSubmit}
-    >
-      {screen.searching ? (screen.mode === "url" ? "Adding…" : "Searching…") : screen.mode === "url" ? "Add story" : "Search"}
+    <button type="submit" class="submit" disabled={screen.searching || !screen.canSubmit}>
+      {screen.searching
+        ? screen.mode === "url"
+          ? "Adding…"
+          : "Searching…"
+        : screen.mode === "url"
+          ? "Add story"
+          : "Search"}
     </button>
   </form>
 </div>

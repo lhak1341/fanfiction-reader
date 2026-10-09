@@ -75,7 +75,9 @@ export class ReaderScreen {
   // else the top.
   resumePctFor(num: number): number {
     const s = this.story;
-    return s && s.lastChapterNum === num && !this.scrollPositions.has(num) ? (s.lastScrollPct ?? 0) : 0;
+    return s && s.lastChapterNum === num && !this.scrollPositions.has(num)
+      ? (s.lastScrollPct ?? 0)
+      : 0;
   }
 
   // Called by the Reader on every scroll of the chapter on screen. Debounced:
@@ -175,7 +177,8 @@ export class ReaderScreen {
   async loadChapter(num: number, currentScrollTop?: number) {
     if (this.inFlight?.num === num) return this.inFlight.promise;
     const myGen = ++this.loadGen;
-    if (currentScrollTop !== undefined) this.scrollPositions.set(this.currentChapterNum, currentScrollTop);
+    if (currentScrollTop !== undefined)
+      this.scrollPositions.set(this.currentChapterNum, currentScrollTop);
     const entry = { num, promise: this.runLoad(num, myGen) };
     this.inFlight = entry;
     try {

@@ -11,7 +11,7 @@
     pinnable = false,
     pinnedFandoms = $bindable(new Set<string>()),
     onSelect,
-    onRename
+    onRename,
   }: {
     fandoms: string[];
     selected: string | undefined;
@@ -78,7 +78,8 @@
 
 <div class="fandom-dd" bind:this={rootEl}>
   <button class="fandom-select" onclick={() => (open = !open)}>
-    Fandom: {selected ?? "All fandoms"} <ChevronDown size={13} class="caret" />
+    Fandom: {selected ?? "All fandoms"}
+    <ChevronDown size={13} class="caret" />
   </button>
   {#snippet fandomRow(f: string, showPin: boolean, pinned: boolean)}
     <li>
@@ -92,8 +93,12 @@
             if (e.key === "Escape") cancelRename();
           }}
         />
-        <button class="fandom-rename-btn" onclick={(e) => submitRename(f, e)} title="Save"><Check size={12} /></button>
-        <button class="fandom-rename-btn" onclick={cancelRename} title="Cancel"><X size={12} /></button>
+        <button class="fandom-rename-btn" onclick={(e) => submitRename(f, e)} title="Save"
+          ><Check size={12} /></button
+        >
+        <button class="fandom-rename-btn" onclick={cancelRename} title="Cancel"
+          ><X size={12} /></button
+        >
       {:else}
         {#if showPin}
           <button
@@ -105,9 +110,15 @@
             <Star size={12} fill={pinned ? "currentColor" : "none"} />
           </button>
         {/if}
-        <button class="fandom-opt" class:current={selected === f} onclick={() => select(f)}>{f}</button>
+        <button class="fandom-opt" class:current={selected === f} onclick={() => select(f)}
+          >{f}</button
+        >
         {#if onRename}
-          <button class="fandom-rename-btn" onclick={(e) => startRename(f, e)} title="Rename or merge this fandom">
+          <button
+            class="fandom-rename-btn"
+            onclick={(e) => startRename(f, e)}
+            title="Rename or merge this fandom"
+          >
             <Pencil size={11} />
           </button>
         {/if}
@@ -120,7 +131,11 @@
       <input class="fandom-search" placeholder="Search fandoms…" bind:value={search} />
       <ul class="fandom-options">
         <li>
-          <button class="fandom-opt" class:current={selected === undefined} onclick={() => select(undefined)}>
+          <button
+            class="fandom-opt"
+            class:current={selected === undefined}
+            onclick={() => select(undefined)}
+          >
             All fandoms
           </button>
         </li>

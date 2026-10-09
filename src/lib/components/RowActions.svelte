@@ -12,7 +12,7 @@
     downloadingStoryId,
     downloadProgress,
     busy,
-    fullyDownloaded
+    fullyDownloaded,
   }: {
     story: StoryRow;
     includeDismiss: boolean;
@@ -28,11 +28,26 @@
 </script>
 
 <div class="row-actions">
-  <button class="icon-btn" class:on-read={story.isRead} onclick={() => onToggleRead(story)} title="Mark as read"><Check size={13} /></button>
+  <button
+    class="icon-btn"
+    class:on-read={story.isRead}
+    onclick={() => onToggleRead(story)}
+    title="Mark as read"><Check size={13} /></button
+  >
   {#if includeDismiss}
-    <button class="icon-btn" class:on-dismiss={story.dismissed} onclick={() => onToggleDismissed(story)} title="Dismiss — not for me"><X size={13} /></button>
+    <button
+      class="icon-btn"
+      class:on-dismiss={story.dismissed}
+      onclick={() => onToggleDismissed(story)}
+      title="Dismiss — not for me"><X size={13} /></button
+    >
   {/if}
-  <button class="icon-btn" class:on-bookmark={story.bookmarked} onclick={() => onToggleBookmarked(story)} title="Bookmark">
+  <button
+    class="icon-btn"
+    class:on-bookmark={story.bookmarked}
+    onclick={() => onToggleBookmarked(story)}
+    title="Bookmark"
+  >
     <Star size={13} fill={story.bookmarked ? "currentColor" : "none"} />
   </button>
   {#if onDownloadAll && (downloadingStoryId === story.id || !fullyDownloaded)}

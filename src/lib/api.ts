@@ -12,7 +12,7 @@ import type {
   ListingStatus,
   StoryFilters,
   StoryRow,
-  StorySource
+  StorySource,
 } from "./types";
 
 export function listStories(filters: StoryFilters): Promise<StoryRow[]> {
@@ -56,7 +56,11 @@ export function toggleBookmarked(storyId: number, value: boolean): Promise<void>
 /// One resume point: the chapter and how far down it you are (0–100). Always
 /// written as a pair, so a late save for an earlier chapter can't attach its
 /// position to a newer one.
-export function setResumeChapter(storyId: number, chapterNum: number, scrollPct: number): Promise<void> {
+export function setResumeChapter(
+  storyId: number,
+  chapterNum: number,
+  scrollPct: number
+): Promise<void> {
   return invoke("set_resume_chapter", { storyId, chapterNum, scrollPct });
 }
 
@@ -82,15 +86,25 @@ export function getContinueReading(limit: number): Promise<StoryRow[]> {
 /// `background` marks bulk work (download, refresh, Reader prefetch): it never
 /// interrupts a fetch the user is waiting on and rejects instead (`BUSY`,
 /// fetch_session.rs). Sent explicitly — see src-tauri/CLAUDE.md.
-export function fetchChapterAndWait(storyId: number, chapterNum: number, background = false): Promise<void> {
-  return invoke<ChapterFetched>("fetch_chapter", { storyId, chapterNum, background }).then(() => {});
+export function fetchChapterAndWait(
+  storyId: number,
+  chapterNum: number,
+  background = false
+): Promise<void> {
+  return invoke<ChapterFetched>("fetch_chapter", { storyId, chapterNum, background }).then(
+    () => {}
+  );
 }
 
 /// Makes chapter `chapterNum` cached and returns it — the stored body on a
 /// cache hit, else a fetch (same `background` rules as `fetchChapterAndWait`)
 /// plus the refreshed chapter list and story chapter count. `chapterCount` and
 /// `chapters` are `null` on a hit: nothing changed, keep what you hold.
-export function ensureChapter(storyId: number, chapterNum: number, background = false): Promise<EnsuredChapter> {
+export function ensureChapter(
+  storyId: number,
+  chapterNum: number,
+  background = false
+): Promise<EnsuredChapter> {
   return invoke<EnsuredChapter>("ensure_chapter", { storyId, chapterNum, background });
 }
 

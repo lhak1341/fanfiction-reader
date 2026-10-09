@@ -11,7 +11,11 @@ export interface PersistedPrefOptions<T> {
   deserialize?: (raw: string) => T;
 }
 
-export function definePersistedPref<T>(key: string, defaultValue: T, options: PersistedPrefOptions<T> = {}) {
+export function definePersistedPref<T>(
+  key: string,
+  defaultValue: T,
+  options: PersistedPrefOptions<T> = {}
+) {
   const serialize = options.serialize ?? ((value: T) => JSON.stringify(value));
   const deserialize = options.deserialize ?? ((raw: string) => JSON.parse(raw) as T);
 
@@ -29,6 +33,6 @@ export function definePersistedPref<T>(key: string, defaultValue: T, options: Pe
     save(value: T) {
       if (typeof localStorage === "undefined") return;
       localStorage.setItem(key, serialize(value));
-    }
+    },
   };
 }

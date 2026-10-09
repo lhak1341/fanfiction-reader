@@ -7,7 +7,7 @@ export type ViewMode = "list" | "card";
 // readable after this moved onto definePersistedPref.
 const pref = definePersistedPref<ViewMode>("ffn-view-mode", "list", {
   serialize: (mode) => mode,
-  deserialize: (raw) => (raw === "card" ? "card" : "list")
+  deserialize: (raw) => (raw === "card" ? "card" : "list"),
 });
 
 export const getViewMode = pref.get;

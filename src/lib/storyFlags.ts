@@ -22,7 +22,7 @@ export type StoryFlag = "isRead" | "dismissed" | "bookmarked";
 const TOGGLE: Record<StoryFlag, (storyId: number, value: boolean) => Promise<void>> = {
   isRead: api.toggleRead,
   dismissed: api.toggleDismissed,
-  bookmarked: api.toggleBookmarked
+  bookmarked: api.toggleBookmarked,
 };
 
 export async function toggleStoryFlag(story: StoryRow, flag: StoryFlag): Promise<StoryRow> {

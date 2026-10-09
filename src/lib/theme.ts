@@ -15,9 +15,10 @@ export type ThemePref = "light" | "dark" | "system";
 const pref = definePersistedPref<ThemePref>("ffn-reader-theme", "system", {
   serialize: (v) => v,
   deserialize: (raw) => {
-    if (raw !== "light" && raw !== "dark" && raw !== "system") throw new Error(`invalid theme: ${raw}`);
+    if (raw !== "light" && raw !== "dark" && raw !== "system")
+      throw new Error(`invalid theme: ${raw}`);
     return raw;
-  }
+  },
 });
 
 export const getTheme = pref.get;

@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Build release .app and install into ~/Applications for local testing.
+# Build the release .app and install it into ~/Applications.
+# Identical in every Tauri app; the app name comes from src-tauri/tauri.conf.json.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP_NAME="FanFiction Reader"
+APP_NAME="$(node -p "require('./src-tauri/tauri.conf.json').productName")"
 DEST="$HOME/Applications"
 BUNDLE="src-tauri/target/release/bundle/macos/$APP_NAME.app"
 
-bun run tauri build --bundles app
+bun run tauri:build --bundles app
 
-# Quit running copy so the replace takes effect.
+# Quit the running copy so the replace takes effect.
 osascript -e "tell application \"$APP_NAME\" to quit" 2>/dev/null || true
 sleep 1
 

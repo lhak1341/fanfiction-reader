@@ -9,7 +9,11 @@
   import { ErrorBanner } from "$lib/errorBanner.svelte";
   import { SearchScreen } from "$lib/searchScreen.svelte";
   import { BookmarksScreen } from "$lib/bookmarksScreen.svelte";
-  import { toggleReadAndRefresh, toggleDismissedAndRefresh, toggleBookmarkedAndRefresh } from "$lib/storyFlagActions";
+  import {
+    toggleReadAndRefresh,
+    toggleDismissedAndRefresh,
+    toggleBookmarkedAndRefresh,
+  } from "$lib/storyFlagActions";
   import { SORT_OPTIONS, STATUS_LABELS, WORD_COUNT_PRESETS } from "$lib/filterOptions";
   import { getViewMode, saveViewMode } from "$lib/viewMode";
   import { getBookmarksHideRead } from "$lib/filterPrefs";
@@ -90,12 +94,16 @@
   }
 
   function fmtChapter(story: StoryRow) {
-    return story.lastChapterNum ? `Ch. ${story.lastChapterNum} of ${story.chapterCount}` : "Not started";
+    return story.lastChapterNum
+      ? `Ch. ${story.lastChapterNum} of ${story.chapterCount}`
+      : "Not started";
   }
 
   const handleToggleRead = (story: StoryRow) => toggleReadAndRefresh(story, banner, refreshAll);
-  const handleToggleDismissed = (story: StoryRow) => toggleDismissedAndRefresh(story, banner, refreshAll);
-  const handleToggleBookmarked = (story: StoryRow) => toggleBookmarkedAndRefresh(story, banner, refreshAll);
+  const handleToggleDismissed = (story: StoryRow) =>
+    toggleDismissedAndRefresh(story, banner, refreshAll);
+  const handleToggleBookmarked = (story: StoryRow) =>
+    toggleBookmarkedAndRefresh(story, banner, refreshAll);
 </script>
 
 {#if screen === "reader" && readerStoryId !== undefined && readerChapterNum !== undefined}
@@ -106,214 +114,284 @@
     onChanged={refreshAll}
   />
 {:else}
-<div class="app">
-  <div class="top-shell">
-    <div class="wordmark">FanFiction<em>Reader</em></div>
-    <div class="screen-tabs" role="tablist">
-      <button role="tab" aria-selected={screen === "search"} onclick={() => (screen = "search")}>Search</button>
-      <button role="tab" aria-selected={screen === "bookmarks"} onclick={() => (screen = "bookmarks")}>Bookmarks</button>
-    </div>
-    <div class="top-shell-right">
-      <button
-        class="refresh-btn"
-        class:spinning={bookmarks.job?.kind === "refresh"}
-        onclick={handleRefreshBookmarks}
-        disabled={bookmarks.busy}
-        title={bookmarks.job?.kind === "refresh"
-          ? bookmarks.progress.label
-          : bookmarks.busy
-            ? "Wait for the current download to finish"
-            : "Refresh bookmarked stories (in-progress only)"}
-      >
-        <RefreshCw size={15} />
-      </button>
-      <ThemeToggle />
-      <a class="debug-link" href="/debug">Debug tools</a>
-    </div>
-  </div>
-
-  {#each banner.messages as m (m.key)}
-    <p class="error banner-error">
-      <span>{m.text}</span>
-      <button class="error-dismiss" aria-label="Dismiss" onclick={() => banner.dismiss(m.key)}>×</button>
-    </p>
-  {/each}
-
-  {#if bookmarks.job?.kind === "download"}
-    <div class="download-banner">
-      <span class="download-banner-text">Downloading "{bookmarks.job.title}" — {bookmarks.progress.label}</span>
-      <div class="download-banner-track">
-        <div class="download-banner-fill" style="width: {bookmarks.progress.total ? (bookmarks.progress.done / bookmarks.progress.total) * 100 : 0}%"></div>
+  <div class="app">
+    <div class="top-shell">
+      <div class="wordmark">FanFiction<em>Reader</em></div>
+      <div class="screen-tabs" role="tablist">
+        <button role="tab" aria-selected={screen === "search"} onclick={() => (screen = "search")}
+          >Search</button
+        >
+        <button
+          role="tab"
+          aria-selected={screen === "bookmarks"}
+          onclick={() => (screen = "bookmarks")}>Bookmarks</button
+        >
       </div>
-    </div>
-  {/if}
-
-  {#if screen === "search"}
-    <div class="filterbar">
-      <div class="filterbar-row">
-        <FandomPicker
-          fandoms={search.fandoms}
-          selected={search.fandom}
-          pinnable
-          bind:pinnedFandoms={search.pinnedFandoms}
-          onSelect={(f) => (search.fandom = f)}
-          onRename={(oldFandom, newFandom) => search.renameFandom(oldFandom, newFandom)}
-        />
-        <button class="search-ffn-btn" onclick={() => (search.modalOpen = true)}>Search</button>
-
-        <input class="search-input" placeholder="Search title, author, or summary…" bind:value={search.text} />
-
-        <div class="sort-select-wrap">
-          <select class="sort-select" bind:value={search.sortBy}>
-            {#each SORT_OPTIONS as [value, label]}
-              <option {value}>Sort: {label}</option>
-            {/each}
-          </select>
-          <ChevronDown size={13} class="sort-caret" />
-        </div>
-
-        <div class="view-toggle" role="group" aria-label="View">
-          <button class:active={viewMode === "list"} onclick={() => (viewMode = "list")} title="List view"><List size={15} /></button>
-          <button class:active={viewMode === "card"} onclick={() => (viewMode = "card")} title="Card view"><LayoutGrid size={15} /></button>
-        </div>
-      </div>
-
-      <div class="filterbar-row">
-        <div class="field-group" role="group" aria-label="Source">
-          <button class:active={search.sourceFilter === undefined} onclick={() => (search.sourceFilter = undefined)}>All</button>
-          <button class:active={search.sourceFilter === "ffn"} onclick={() => (search.sourceFilter = "ffn")}>FFN</button>
-          <button class:active={search.sourceFilter === "ao3"} onclick={() => (search.sourceFilter = "ao3")}>AO3</button>
-        </div>
-
-        <div class="field-group" role="group" aria-label="Minimum word count">
-          <button class:active={search.minWordCount === undefined} onclick={() => (search.minWordCount = undefined)}>Any length</button>
-          {#each WORD_COUNT_PRESETS as preset}
-            <button class:active={search.minWordCount === preset.value} onclick={() => (search.minWordCount = preset.value)}>{preset.label}</button>
-          {/each}
-        </div>
-
-        <div class="field-group" role="group" aria-label="Status">
-          <button class:active={search.status === undefined} onclick={() => (search.status = undefined)}>Any status</button>
-          {#each Object.entries(STATUS_LABELS) as [value, label]}
-            <button class:active={search.status === value} onclick={() => (search.status = value as StoryStatus)}>{label}</button>
-          {/each}
-        </div>
-
-        <label class="hide-toggle">
-          <input type="checkbox" bind:checked={search.hideRead} /> Hide read
-        </label>
-        <label class="hide-toggle">
-          <input type="checkbox" bind:checked={search.hideDismissed} /> Hide dismissed
-        </label>
-        <label class="hide-toggle">
-          <input type="checkbox" bind:checked={search.hideBookmarked} /> Hide bookmarked
-        </label>
+      <div class="top-shell-right">
+        <button
+          class="refresh-btn"
+          class:spinning={bookmarks.job?.kind === "refresh"}
+          onclick={handleRefreshBookmarks}
+          disabled={bookmarks.busy}
+          title={bookmarks.job?.kind === "refresh"
+            ? bookmarks.progress.label
+            : bookmarks.busy
+              ? "Wait for the current download to finish"
+              : "Refresh bookmarked stories (in-progress only)"}
+        >
+          <RefreshCw size={15} />
+        </button>
+        <ThemeToggle />
+        <a class="debug-link" href="/debug">Debug tools</a>
       </div>
     </div>
 
-    {#if search.stories.length === 0}
-      {#if search.fandom}
-        <p class="empty-note">
-          {#if search.fandoms.includes(search.fandom)}
-            You've gone through everything imported for "{search.fandom}" with these filters.
-          {:else}
-            No stories for "{search.fandom}" yet.
-          {/if}
-          <br />
-          <button class="load-more-btn" onclick={() => search.loadMore()} disabled={search.loadingMore}>
-            {search.loadingMore ? "Loading…" : "Load more"}
-          </button>
-          {#if search.loadMoreError}<span class="error">{search.loadMoreError}</span>{/if}
-        </p>
-      {:else}
-        <p class="empty-note">
-          No stories yet. Click <button class="link-btn" onclick={() => (search.modalOpen = true)}>Search</button> to pull some in.
-        </p>
-      {/if}
-    {:else}
-      <StoryList
-        stories={search.stories}
-        viewMode={viewMode}
-        onOpenStory={openStory}
-        onToggleRead={handleToggleRead}
-        onToggleDismissed={handleToggleDismissed}
-        onToggleBookmarked={handleToggleBookmarked}
-      />
-      {#if search.fandom}
-        <div class="load-more-row">
-          <button class="load-more-btn" onclick={() => search.loadMore()} disabled={search.loadingMore}>
-            {search.loadingMore ? "Loading…" : "Load more"}
-          </button>
-          {#if search.loadMoreError}<span class="error">{search.loadMoreError}</span>{/if}
+    {#each banner.messages as m (m.key)}
+      <p class="error banner-error">
+        <span>{m.text}</span>
+        <button class="error-dismiss" aria-label="Dismiss" onclick={() => banner.dismiss(m.key)}
+          >×</button
+        >
+      </p>
+    {/each}
+
+    {#if bookmarks.job?.kind === "download"}
+      <div class="download-banner">
+        <span class="download-banner-text"
+          >Downloading "{bookmarks.job.title}" — {bookmarks.progress.label}</span
+        >
+        <div class="download-banner-track">
+          <div
+            class="download-banner-fill"
+            style="width: {bookmarks.progress.total
+              ? (bookmarks.progress.done / bookmarks.progress.total) * 100
+              : 0}%"
+          ></div>
         </div>
-      {/if}
+      </div>
     {/if}
-  {:else}
-    {#if bookmarks.continueReading.length > 0}
-      <div class="continue-reading">
-        <h3>Continue Reading</h3>
-        <div class="continue-row">
-          {#each bookmarks.continueReading as story (story.id)}
-            <button class="continue-card" onclick={() => openStory(story)}>
-              <div class="t">{story.title}</div>
-              <div class="meta">{story.fandom} · {fmtChapter(story)}</div>
+
+    {#if screen === "search"}
+      <div class="filterbar">
+        <div class="filterbar-row">
+          <FandomPicker
+            fandoms={search.fandoms}
+            selected={search.fandom}
+            pinnable
+            bind:pinnedFandoms={search.pinnedFandoms}
+            onSelect={(f) => (search.fandom = f)}
+            onRename={(oldFandom, newFandom) => search.renameFandom(oldFandom, newFandom)}
+          />
+          <button class="search-ffn-btn" onclick={() => (search.modalOpen = true)}>Search</button>
+
+          <input
+            class="search-input"
+            placeholder="Search title, author, or summary…"
+            bind:value={search.text}
+          />
+
+          <div class="sort-select-wrap">
+            <select class="sort-select" bind:value={search.sortBy}>
+              {#each SORT_OPTIONS as [value, label]}
+                <option {value}>Sort: {label}</option>
+              {/each}
+            </select>
+            <ChevronDown size={13} class="sort-caret" />
+          </div>
+
+          <div class="view-toggle" role="group" aria-label="View">
+            <button
+              class:active={viewMode === "list"}
+              onclick={() => (viewMode = "list")}
+              title="List view"><List size={15} /></button
+            >
+            <button
+              class:active={viewMode === "card"}
+              onclick={() => (viewMode = "card")}
+              title="Card view"><LayoutGrid size={15} /></button
+            >
+          </div>
+        </div>
+
+        <div class="filterbar-row">
+          <div class="field-group" role="group" aria-label="Source">
+            <button
+              class:active={search.sourceFilter === undefined}
+              onclick={() => (search.sourceFilter = undefined)}>All</button
+            >
+            <button
+              class:active={search.sourceFilter === "ffn"}
+              onclick={() => (search.sourceFilter = "ffn")}>FFN</button
+            >
+            <button
+              class:active={search.sourceFilter === "ao3"}
+              onclick={() => (search.sourceFilter = "ao3")}>AO3</button
+            >
+          </div>
+
+          <div class="field-group" role="group" aria-label="Minimum word count">
+            <button
+              class:active={search.minWordCount === undefined}
+              onclick={() => (search.minWordCount = undefined)}>Any length</button
+            >
+            {#each WORD_COUNT_PRESETS as preset}
+              <button
+                class:active={search.minWordCount === preset.value}
+                onclick={() => (search.minWordCount = preset.value)}>{preset.label}</button
+              >
+            {/each}
+          </div>
+
+          <div class="field-group" role="group" aria-label="Status">
+            <button
+              class:active={search.status === undefined}
+              onclick={() => (search.status = undefined)}>Any status</button
+            >
+            {#each Object.entries(STATUS_LABELS) as [value, label]}
+              <button
+                class:active={search.status === value}
+                onclick={() => (search.status = value as StoryStatus)}>{label}</button
+              >
+            {/each}
+          </div>
+
+          <label class="hide-toggle">
+            <input type="checkbox" bind:checked={search.hideRead} /> Hide read
+          </label>
+          <label class="hide-toggle">
+            <input type="checkbox" bind:checked={search.hideDismissed} /> Hide dismissed
+          </label>
+          <label class="hide-toggle">
+            <input type="checkbox" bind:checked={search.hideBookmarked} /> Hide bookmarked
+          </label>
+        </div>
+      </div>
+
+      {#if search.stories.length === 0}
+        {#if search.fandom}
+          <p class="empty-note">
+            {#if search.fandoms.includes(search.fandom)}
+              You've gone through everything imported for "{search.fandom}" with these filters.
+            {:else}
+              No stories for "{search.fandom}" yet.
+            {/if}
+            <br />
+            <button
+              class="load-more-btn"
+              onclick={() => search.loadMore()}
+              disabled={search.loadingMore}
+            >
+              {search.loadingMore ? "Loading…" : "Load more"}
             </button>
-          {/each}
-        </div>
-      </div>
-    {/if}
-
-    <div class="filterbar">
-      <div class="filterbar-row">
-        <FandomPicker fandoms={bookmarks.fandoms} selected={bookmarks.fandom} onSelect={(f) => (bookmarks.fandom = f)} />
-
-        <div class="sort-select-wrap">
-          <select class="sort-select" bind:value={bookmarks.sortBy}>
-            {#each SORT_OPTIONS as [value, label]}
-              <option {value}>Sort: {label}</option>
-            {/each}
-          </select>
-          <ChevronDown size={13} class="sort-caret" />
-        </div>
-
-        <label class="hide-toggle">
-          <input type="checkbox" bind:checked={bookmarks.hideRead} /> Hide read
-        </label>
-
-        <div class="view-toggle" role="group" aria-label="View">
-          <button class:active={viewMode === "list"} onclick={() => (viewMode = "list")} title="List view"><List size={15} /></button>
-          <button class:active={viewMode === "card"} onclick={() => (viewMode = "card")} title="Card view"><LayoutGrid size={15} /></button>
-        </div>
-      </div>
-    </div>
-
-    {#if bookmarks.stories.length === 0}
-      <p class="empty-note">No bookmarks yet. Bookmark a story from Search to see it here.</p>
+            {#if search.loadMoreError}<span class="error">{search.loadMoreError}</span>{/if}
+          </p>
+        {:else}
+          <p class="empty-note">
+            No stories yet. Click <button class="link-btn" onclick={() => (search.modalOpen = true)}
+              >Search</button
+            > to pull some in.
+          </p>
+        {/if}
+      {:else}
+        <StoryList
+          stories={search.stories}
+          {viewMode}
+          onOpenStory={openStory}
+          onToggleRead={handleToggleRead}
+          onToggleDismissed={handleToggleDismissed}
+          onToggleBookmarked={handleToggleBookmarked}
+        />
+        {#if search.fandom}
+          <div class="load-more-row">
+            <button
+              class="load-more-btn"
+              onclick={() => search.loadMore()}
+              disabled={search.loadingMore}
+            >
+              {search.loadingMore ? "Loading…" : "Load more"}
+            </button>
+            {#if search.loadMoreError}<span class="error">{search.loadMoreError}</span>{/if}
+          </div>
+        {/if}
+      {/if}
     {:else}
-      <StoryList
-        stories={bookmarks.stories}
-        viewMode={viewMode}
-        showFandom
-        includeDismiss={false}
-        onOpenStory={openStory}
-        onToggleRead={handleToggleRead}
-        onToggleDismissed={handleToggleDismissed}
-        onToggleBookmarked={handleToggleBookmarked}
-        onDownloadAll={handleDownloadAllChapters}
-        downloadingStoryId={bookmarks.job?.kind === "download" ? bookmarks.job.storyId : null}
-        downloadProgress={bookmarks.progress.label}
-        busy={bookmarks.busy}
-      />
+      {#if bookmarks.continueReading.length > 0}
+        <div class="continue-reading">
+          <h3>Continue Reading</h3>
+          <div class="continue-row">
+            {#each bookmarks.continueReading as story (story.id)}
+              <button class="continue-card" onclick={() => openStory(story)}>
+                <div class="t">{story.title}</div>
+                <div class="meta">{story.fandom} · {fmtChapter(story)}</div>
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
+      <div class="filterbar">
+        <div class="filterbar-row">
+          <FandomPicker
+            fandoms={bookmarks.fandoms}
+            selected={bookmarks.fandom}
+            onSelect={(f) => (bookmarks.fandom = f)}
+          />
+
+          <div class="sort-select-wrap">
+            <select class="sort-select" bind:value={bookmarks.sortBy}>
+              {#each SORT_OPTIONS as [value, label]}
+                <option {value}>Sort: {label}</option>
+              {/each}
+            </select>
+            <ChevronDown size={13} class="sort-caret" />
+          </div>
+
+          <label class="hide-toggle">
+            <input type="checkbox" bind:checked={bookmarks.hideRead} /> Hide read
+          </label>
+
+          <div class="view-toggle" role="group" aria-label="View">
+            <button
+              class:active={viewMode === "list"}
+              onclick={() => (viewMode = "list")}
+              title="List view"><List size={15} /></button
+            >
+            <button
+              class:active={viewMode === "card"}
+              onclick={() => (viewMode = "card")}
+              title="Card view"><LayoutGrid size={15} /></button
+            >
+          </div>
+        </div>
+      </div>
+
+      {#if bookmarks.stories.length === 0}
+        <p class="empty-note">No bookmarks yet. Bookmark a story from Search to see it here.</p>
+      {:else}
+        <StoryList
+          stories={bookmarks.stories}
+          {viewMode}
+          showFandom
+          includeDismiss={false}
+          onOpenStory={openStory}
+          onToggleRead={handleToggleRead}
+          onToggleDismissed={handleToggleDismissed}
+          onToggleBookmarked={handleToggleBookmarked}
+          onDownloadAll={handleDownloadAllChapters}
+          downloadingStoryId={bookmarks.job?.kind === "download" ? bookmarks.job.storyId : null}
+          downloadProgress={bookmarks.progress.label}
+          busy={bookmarks.busy}
+        />
+      {/if}
     {/if}
+  </div>
+  {#if search.modalOpen}
+    <SearchModal
+      onClose={() => (search.modalOpen = false)}
+      onImported={(fandom, source) => search.handleImported(fandom, source)}
+      onStoryAdded={handleStoryAdded}
+    />
   {/if}
-</div>
-{#if search.modalOpen}
-  <SearchModal
-    onClose={() => (search.modalOpen = false)}
-    onImported={(fandom, source) => search.handleImported(fandom, source)}
-    onStoryAdded={handleStoryAdded}
-  />
-{/if}
 {/if}
 
 <style>

@@ -51,7 +51,7 @@ export class SearchScreen {
       this.sortBy,
       this.hideRead,
       this.hideDismissed,
-      this.hideBookmarked
+      this.hideBookmarked,
     ];
   }
   loadingMore = $state(false);
@@ -79,7 +79,7 @@ export class SearchScreen {
         saveSearchFilterPrefs({
           hideRead: this.hideRead,
           hideDismissed: this.hideDismissed,
-          hideBookmarked: this.hideBookmarked
+          hideBookmarked: this.hideBookmarked,
         })
       );
       $effect(() => savePinnedFandoms(this.pinnedFandoms));
@@ -112,7 +112,7 @@ export class SearchScreen {
         sortBy: this.sortBy,
         hideRead: this.hideRead,
         hideDismissed: this.hideDismissed,
-        hideBookmarked: this.hideBookmarked
+        hideBookmarked: this.hideBookmarked,
       });
     });
   }
@@ -126,7 +126,11 @@ export class SearchScreen {
     this.loadMoreError = "";
     try {
       const source = this.sourceFilter ?? this.lastSearchSource;
-      await ficSourceAdapter(source).loadMore(this.fandom, this.minWordCount ?? 0, this.status ?? "any");
+      await ficSourceAdapter(source).loadMore(
+        this.fandom,
+        this.minWordCount ?? 0,
+        this.status ?? "any"
+      );
       await this.loadStories();
     } catch (e) {
       this.loadMoreError = e instanceof Error ? e.message : String(e);

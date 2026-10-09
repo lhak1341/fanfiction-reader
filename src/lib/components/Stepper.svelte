@@ -9,7 +9,7 @@
     step,
     decimals = 0,
     unit = "",
-    onchange
+    onchange,
   }: {
     label: string;
     value: number;
@@ -24,9 +24,15 @@
 
 <span class="font-label">{label}</span>
 <div class="stepper">
-  <button onclick={() => onchange(clampStep(value, -step, { min, max, decimals }))} aria-label="Decrease {label}">−</button>
+  <button
+    onclick={() => onchange(clampStep(value, -step, { min, max, decimals }))}
+    aria-label="Decrease {label}">−</button
+  >
   <span class="tnum">{value.toFixed(decimals)}{unit}</span>
-  <button onclick={() => onchange(clampStep(value, step, { min, max, decimals }))} aria-label="Increase {label}">+</button>
+  <button
+    onclick={() => onchange(clampStep(value, step, { min, max, decimals }))}
+    aria-label="Increase {label}">+</button
+  >
 </div>
 
 <style>

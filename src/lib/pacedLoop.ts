@@ -107,7 +107,7 @@ export async function runPacedBestEffort<T, R>(
     gate,
     retryRounds = 0,
     retryPauseMs = DEFAULT_RETRY_PAUSE_MS,
-    retryJitter = DEFAULT_RETRY_JITTER_MS
+    retryJitter = DEFAULT_RETRY_JITTER_MS,
   } = options;
   const ok: T[] = [];
   let pending = [...items];
@@ -141,7 +141,10 @@ export async function runPacedBestEffort<T, R>(
 /// bulk-fetch caller shares; callers add the count noun in front and any
 /// advice after. `label` names each failed item in the list (capped at 8);
 /// omit it to leave the list out.
-export function describeFailures<T>(failed: readonly PacedFailure<T>[], label?: (item: T) => string | number): string {
+export function describeFailures<T>(
+  failed: readonly PacedFailure<T>[],
+  label?: (item: T) => string | number
+): string {
   const last = failed[failed.length - 1]?.reason ?? "unknown";
   if (!label) return `Last error: ${last}`;
   const names = failed.map((f) => label(f.item));

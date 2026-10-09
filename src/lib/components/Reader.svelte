@@ -17,7 +17,7 @@
     storyId,
     initialChapterNum,
     onBack,
-    onChanged
+    onChanged,
   }: {
     storyId: number;
     initialChapterNum: number;
@@ -49,7 +49,9 @@
   // fallback stack if it isn't installed locally (nothing is downloaded/bundled).
   let fontFamilyCss = $derived.by(() => {
     const fallback = `var(${readerPrefs.fontFamily === "sans" ? "--sans" : "--serif"})`;
-    return readerPrefs.customFont.trim() ? `"${readerPrefs.customFont.trim()}", ${fallback}` : fallback;
+    return readerPrefs.customFont.trim()
+      ? `"${readerPrefs.customFont.trim()}", ${fallback}`
+      : fallback;
   });
   let proseStyle = $derived(
     `font-family: ${fontFamilyCss}; font-size: ${readerPrefs.fontSize}px; font-weight: ${readerPrefs.fontWeight}; line-height: ${readerPrefs.lineHeight}; letter-spacing: ${readerPrefs.letterSpacing}em; --bold-weight: ${readerPrefs.fontWeightBold};`
@@ -57,11 +59,15 @@
   // The global h1 reset (app.css) hardcodes serif and zeroes margin — the
   // chapter title needs its own family (following the same prefs as the
   // prose) and its own spacing, not the reset's.
-  let titleStyle = $derived(`font-family: ${fontFamilyCss}; letter-spacing: ${readerPrefs.letterSpacing}em;`);
+  let titleStyle = $derived(
+    `font-family: ${fontFamilyCss}; letter-spacing: ${readerPrefs.letterSpacing}em;`
+  );
 
   let displayedHtml = $derived.by(() => {
     if (!screen.content) return "";
-    return readerPrefs.smartQuotes ? smartenQuotesHtml(screen.content.content) : screen.content.content;
+    return readerPrefs.smartQuotes
+      ? smartenQuotesHtml(screen.content.content)
+      : screen.content.content;
   });
 
   function handleScroll() {
@@ -85,7 +91,8 @@
       // This session's exact pixel position if there is one, else the saved
       // percentage for the chapter you last read (0 — the top — for any other).
       const max = scrollEl.scrollHeight - scrollEl.clientHeight;
-      scrollEl.scrollTop = screen.scrollPositions.get(num) ?? (max > 0 ? (screen.resumePctFor(num) / 100) * max : 0);
+      scrollEl.scrollTop =
+        screen.scrollPositions.get(num) ?? (max > 0 ? (screen.resumePctFor(num) / 100) * max : 0);
       scrollEl.focus({ preventScroll: true });
       handleScroll();
     });
@@ -115,14 +122,22 @@
   const NAV_VERTICAL_MARGIN = 220;
   let viewportHeight = $state(0);
   let navRadius = $derived.by(() => {
-    const maxRows = Math.max(1, Math.floor((viewportHeight - NAV_VERTICAL_MARGIN) / NAV_ROW_HEIGHT));
+    const maxRows = Math.max(
+      1,
+      Math.floor((viewportHeight - NAV_VERTICAL_MARGIN) / NAV_ROW_HEIGHT)
+    );
     return Math.max(2, Math.floor((maxRows - 1) / 2));
   });
   let navHover = $state(false);
-  let navCenterIdx = $derived(screen.chapters.findIndex((c) => c.chapterNum === screen.currentChapterNum));
+  let navCenterIdx = $derived(
+    screen.chapters.findIndex((c) => c.chapterNum === screen.currentChapterNum)
+  );
   let navWindow = $derived.by(() => {
     if (navCenterIdx === -1) return [];
-    return screen.chapters.slice(Math.max(0, navCenterIdx - navRadius), Math.min(screen.chapters.length, navCenterIdx + navRadius + 1));
+    return screen.chapters.slice(
+      Math.max(0, navCenterIdx - navRadius),
+      Math.min(screen.chapters.length, navCenterIdx + navRadius + 1)
+    );
   });
   // Fades dots out the further they sit from the active chapter — full
   // opacity is restored per-dot on individual hover via CSS (:hover beats
@@ -170,17 +185,29 @@
 
   <div class="corner-cluster left">
     <button class="corner-btn" onclick={onBack}><ChevronLeft size={13} /> Back</button>
-    <button class="corner-btn icon-only" onclick={() => (drawerOpen = true)} title="Chapter list"><Menu size={14} /></button>
+    <button class="corner-btn icon-only" onclick={() => (drawerOpen = true)} title="Chapter list"
+      ><Menu size={14} /></button
+    >
     <div class="font-dd" bind:this={fontPanelEl}>
-      <button class="corner-btn icon-only" onclick={() => (fontPanelOpen = !fontPanelOpen)} title="Reading font">
+      <button
+        class="corner-btn icon-only"
+        onclick={() => (fontPanelOpen = !fontPanelOpen)}
+        title="Reading font"
+      >
         <Type size={14} />
       </button>
       {#if fontPanelOpen}
         <div class="font-panel">
           <span class="font-label">Font</span>
           <div class="seg">
-            <button class:active={readerPrefs.fontFamily === "serif"} onclick={() => updatePrefs({ fontFamily: "serif" })}>Serif</button>
-            <button class:active={readerPrefs.fontFamily === "sans"} onclick={() => updatePrefs({ fontFamily: "sans" })}>Sans</button>
+            <button
+              class:active={readerPrefs.fontFamily === "serif"}
+              onclick={() => updatePrefs({ fontFamily: "serif" })}>Serif</button
+            >
+            <button
+              class:active={readerPrefs.fontFamily === "sans"}
+              onclick={() => updatePrefs({ fontFamily: "sans" })}>Sans</button
+            >
           </div>
 
           <span class="font-label">Custom font</span>
@@ -252,8 +279,14 @@
 
           <span class="font-label">Smart quotes</span>
           <div class="seg">
-            <button class:active={readerPrefs.smartQuotes} onclick={() => updatePrefs({ smartQuotes: true })}>On</button>
-            <button class:active={!readerPrefs.smartQuotes} onclick={() => updatePrefs({ smartQuotes: false })}>Off</button>
+            <button
+              class:active={readerPrefs.smartQuotes}
+              onclick={() => updatePrefs({ smartQuotes: true })}>On</button
+            >
+            <button
+              class:active={!readerPrefs.smartQuotes}
+              onclick={() => updatePrefs({ smartQuotes: false })}>Off</button
+            >
           </div>
         </div>
       {/if}
@@ -263,13 +296,25 @@
     <ThemeToggle />
   </div>
 
-  <button class="edge-zone left" aria-label="Previous chapter" disabled={screen.currentChapterNum <= 1} onclick={() => goToChapter(screen.currentChapterNum - 1)}><ChevronLeft size={22} /></button>
-  <button class="edge-zone right" aria-label="Next chapter" disabled={!screen.story || screen.currentChapterNum >= screen.story.chapterCount} onclick={() => goToChapter(screen.currentChapterNum + 1)}><ChevronRight size={22} /></button>
+  <button
+    class="edge-zone left"
+    aria-label="Previous chapter"
+    disabled={screen.currentChapterNum <= 1}
+    onclick={() => goToChapter(screen.currentChapterNum - 1)}><ChevronLeft size={22} /></button
+  >
+  <button
+    class="edge-zone right"
+    aria-label="Next chapter"
+    disabled={!screen.story || screen.currentChapterNum >= screen.story.chapterCount}
+    onclick={() => goToChapter(screen.currentChapterNum + 1)}><ChevronRight size={22} /></button
+  >
 
   <div class="readerC-scroll" bind:this={scrollEl} onscroll={handleScroll} tabindex="-1">
     <div class="readerC-inner" style="max-width: {readerPrefs.pageWidth}ch">
       {#if screen.story}
-        <span class="readerC-chip">Chapter {screen.currentChapterNum} of {screen.story.chapterCount}</span>
+        <span class="readerC-chip"
+          >Chapter {screen.currentChapterNum} of {screen.story.chapterCount}</span
+        >
       {/if}
       {#if screen.loading}
         <p class="status">Loading…</p>
@@ -289,31 +334,60 @@
       {#if screen.toggleError}
         <p class="status error fab-error">{screen.toggleError}</p>
       {/if}
-      <button class="fab" class:bookmarked={screen.story.bookmarked} onclick={() => screen.toggleBookmark()} aria-pressed={screen.story.bookmarked} title={screen.story.bookmarked ? "Bookmarked" : "Bookmark"}>
+      <button
+        class="fab"
+        class:bookmarked={screen.story.bookmarked}
+        onclick={() => screen.toggleBookmark()}
+        aria-pressed={screen.story.bookmarked}
+        title={screen.story.bookmarked ? "Bookmarked" : "Bookmark"}
+      >
         <Star size={17} fill={screen.story.bookmarked ? "currentColor" : "none"} />
       </button>
-      <button class="fab" class:dismissed={screen.story.dismissed} onclick={() => screen.toggleDismiss()} aria-pressed={screen.story.dismissed} title={screen.story.dismissed ? "Dismissed" : "Dismiss"}>
+      <button
+        class="fab"
+        class:dismissed={screen.story.dismissed}
+        onclick={() => screen.toggleDismiss()}
+        aria-pressed={screen.story.dismissed}
+        title={screen.story.dismissed ? "Dismissed" : "Dismiss"}
+      >
         <X size={17} />
       </button>
-      <button class="fab fab-primary" class:on={screen.story.isRead} onclick={() => screen.toggleRead()} aria-pressed={screen.story.isRead} title="Mark as read"><Check size={20} /></button>
+      <button
+        class="fab fab-primary"
+        class:on={screen.story.isRead}
+        onclick={() => screen.toggleRead()}
+        aria-pressed={screen.story.isRead}
+        title="Mark as read"><Check size={20} /></button
+      >
     </div>
   {/if}
 </div>
 
 {#if drawerOpen}
-  <div class="drawer-overlay" onclick={() => (drawerOpen = false)} onkeydown={(e) => e.key === "Escape" && (drawerOpen = false)} role="button" tabindex="-1"></div>
+  <div
+    class="drawer-overlay"
+    onclick={() => (drawerOpen = false)}
+    onkeydown={(e) => e.key === "Escape" && (drawerOpen = false)}
+    role="button"
+    tabindex="-1"
+  ></div>
   <aside class="chapter-drawer">
     <div class="storyhead">
       <div>
         <h2>{screen.story?.title ?? ""}</h2>
         <div class="author">by {screen.story?.author ?? ""}</div>
       </div>
-      <button class="close" onclick={() => (drawerOpen = false)} aria-label="Close"><X size={15} /></button>
+      <button class="close" onclick={() => (drawerOpen = false)} aria-label="Close"
+        ><X size={15} /></button
+      >
     </div>
     <ul class="chapter-ul">
       {#each screen.chapters as c (c.chapterNum)}
         <li>
-          <button aria-current={c.chapterNum === screen.currentChapterNum} onclick={() => goToChapter(c.chapterNum)}>
+          <button
+            aria-current={c.chapterNum === screen.currentChapterNum}
+            onclick={() => goToChapter(c.chapterNum)}
+          >
             <span class="n tnum">{c.chapterNum}</span>
             <span>{c.title}</span>
             {#if !c.isCached}<span class="uncached" title="Not fetched yet">○</span>{/if}

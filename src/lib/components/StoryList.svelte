@@ -22,7 +22,7 @@
     onDownloadAll,
     downloadingStoryId = null,
     downloadProgress = "",
-    busy = false
+    busy = false,
   }: {
     stories: StoryRow[];
     viewMode: "list" | "card";
@@ -54,7 +54,6 @@
   }
 </script>
 
-
 {#snippet rowActions(story: StoryRow)}
   <RowActions
     {story}
@@ -75,12 +74,18 @@
     {#each stories as story (story.id)}
       <div class="list-row" class:dim={story.isRead || story.dismissed}>
         <div class="main">
-          <button class="t link" title={story.title} onclick={() => onOpenStory(story)}>{story.title}</button>
+          <button class="t link" title={story.title} onclick={() => onOpenStory(story)}
+            >{story.title}</button
+          >
           <div class="meta-line">
             <span>{showFandom ? `${story.author} · ${story.fandom}` : story.author}</span>
-            <span class="source-badge" class:ao3={story.source === "ao3"}>{SOURCE_LABELS[story.source]}</span>
+            <span class="source-badge" class:ao3={story.source === "ao3"}
+              >{SOURCE_LABELS[story.source]}</span
+            >
             {#if onDownloadAll && isFullyDownloaded(story)}
-              <span class="offline-badge" title="All chapters downloaded — readable offline"><CloudCheck size={11} /> Offline</span>
+              <span class="offline-badge" title="All chapters downloaded — readable offline"
+                ><CloudCheck size={11} /> Offline</span
+              >
             {/if}
             <StatusBadges status={story.status} ffnUpdatedAt={story.ffnUpdatedAt} />
           </div>
@@ -92,8 +97,12 @@
           {/if}
         </div>
         <div class="stats">
-          <span class="tnum stat-icon" title="Word count"><WholeWord size={12} /> {fmt(story.wordCount)}</span>
-          <span class="tnum stat-icon" title="Favorites"><Heart size={12} /> {fmt(story.favoriteCount)}</span>
+          <span class="tnum stat-icon" title="Word count"
+            ><WholeWord size={12} /> {fmt(story.wordCount)}</span
+          >
+          <span class="tnum stat-icon" title="Favorites"
+            ><Heart size={12} /> {fmt(story.favoriteCount)}</span
+          >
         </div>
         {@render rowActions(story)}
       </div>
@@ -106,9 +115,13 @@
         <div class="fandom-row">
           <div class="fandom" title={story.fandom}>{story.fandom}</div>
           {#if onDownloadAll && isFullyDownloaded(story)}
-            <span class="offline-badge" title="All chapters downloaded — readable offline"><CloudCheck size={11} /> Offline</span>
+            <span class="offline-badge" title="All chapters downloaded — readable offline"
+              ><CloudCheck size={11} /> Offline</span
+            >
           {/if}
-          <span class="source-badge" class:ao3={story.source === "ao3"}>{SOURCE_LABELS[story.source]}</span>
+          <span class="source-badge" class:ao3={story.source === "ao3"}
+            >{SOURCE_LABELS[story.source]}</span
+          >
         </div>
         <h4><button class="link" onclick={() => onOpenStory(story)}>{story.title}</button></h4>
         <p class="summary" title={story.summary ?? undefined}>{story.summary ?? ""}</p>
@@ -125,8 +138,12 @@
         {/if}
         <div class="tags">
           <span class="tag">{story.rating}</span>
-          <span class="tag tnum stat-icon" title="Word count"><WholeWord size={11} /> {fmt(story.wordCount)}</span>
-          <span class="tag tnum stat-icon" title="Favorites"><Heart size={11} /> {fmt(story.favoriteCount)}</span>
+          <span class="tag tnum stat-icon" title="Word count"
+            ><WholeWord size={11} /> {fmt(story.wordCount)}</span
+          >
+          <span class="tag tnum stat-icon" title="Favorites"
+            ><Heart size={11} /> {fmt(story.favoriteCount)}</span
+          >
         </div>
         <div class="cardfoot">
           <div class="cardfoot-status">

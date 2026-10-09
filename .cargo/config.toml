@@ -1,0 +1,5 @@
+# CI's actions-rust-lang/setup-rust-toolchain exports RUSTFLAGS="-D warnings" by default, so a
+# warning that never shows up locally is a hard CI failure. Setting it here makes the local build
+# identical to CI. Registry dependencies are unaffected — cargo passes them --cap-lints allow.
+[build]
+rustflags = ["-D", "warnings"]

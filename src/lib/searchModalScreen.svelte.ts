@@ -71,14 +71,19 @@ export class SearchModalScreen {
   /// `onStoryAdded` fires after a "By URL" import (which bookmarks the story) —
   /// a pasted URL is deliberate intent to keep that one story, so it lands in
   /// Bookmarks rather than at the bottom of its fandom's Search list.
-  constructor(onImported: (fandom: string, source: StorySource) => void, onStoryAdded: () => void = () => {}) {
+  constructor(
+    onImported: (fandom: string, source: StorySource) => void,
+    onStoryAdded: () => void = () => {}
+  ) {
     this.onImported = onImported;
     this.onStoryAdded = onStoryAdded;
   }
 
   get canSubmit(): boolean {
     if (this.mode === "url") return !!this.url.trim();
-    return this.mode === "ffn" ? !!this.selectedFandom : !!this.ao3FandomName.trim() && !!this.ao3Tag.trim();
+    return this.mode === "ffn"
+      ? !!this.selectedFandom
+      : !!this.ao3FandomName.trim() && !!this.ao3Tag.trim();
   }
 
   /// Statuses the current mode's Source can narrow a new search by (none for
@@ -105,7 +110,8 @@ export class SearchModalScreen {
     this.stop = $effect.root(() => {
       $effect(() => this.syncAo3Tag());
       $effect(() => {
-        if (this.mode !== "url" && this.status && !this.statusOptions.includes(this.status)) this.status = undefined;
+        if (this.mode !== "url" && this.status && !this.statusOptions.includes(this.status))
+          this.status = undefined;
       });
       $effect(() => {
         void this.category;
@@ -161,11 +167,17 @@ export class SearchModalScreen {
           {
             retryRounds: INDEX_RETRY_ROUNDS,
             onProgress: ({ item, result }) => {
-              this.indexProgress = result instanceof Error ? `${label(item)} failed — continuing…` : `Indexed ${label(item)}…`;
-            }
+              this.indexProgress =
+                result instanceof Error
+                  ? `${label(item)} failed — continuing…`
+                  : `Indexed ${label(item)}…`;
+            },
           }
         );
-        failedIndexing = failed.length > 0 ? `${failed.length} categories failed to index ${describeFailures(failed, label)}` : "";
+        failedIndexing =
+          failed.length > 0
+            ? `${failed.length} categories failed to index ${describeFailures(failed, label)}`
+            : "";
       } else {
         await api.indexFfnCategoryAndWait(this.category);
       }
@@ -201,7 +213,12 @@ export class SearchModalScreen {
       } else {
         if (!this.ao3FandomName.trim() || !this.ao3Tag.trim()) return;
         const fandom = this.ao3FandomName.trim();
-        await api.searchAo3AndWait(this.ao3Tag.trim(), fandom, this.minWordCount ?? 0, this.status ?? "any");
+        await api.searchAo3AndWait(
+          this.ao3Tag.trim(),
+          fandom,
+          this.minWordCount ?? 0,
+          this.status ?? "any"
+        );
         saveAo3Tag(fandom, this.ao3Tag.trim());
         this.onImported(fandom, "ao3");
       }

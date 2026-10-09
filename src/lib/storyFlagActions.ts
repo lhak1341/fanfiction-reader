@@ -16,7 +16,7 @@ import type { StoryRow } from "./types";
 const MESSAGES: Record<StoryFlag, string> = {
   isRead: "Could not update read state",
   dismissed: "Could not update dismissed state",
-  bookmarked: "Could not update bookmark"
+  bookmarked: "Could not update bookmark",
 };
 
 async function toggleAndRefresh(
@@ -31,14 +31,26 @@ async function toggleAndRefresh(
   });
 }
 
-export function toggleReadAndRefresh(story: StoryRow, banner: ErrorBanner, refreshAll: () => Promise<void>) {
+export function toggleReadAndRefresh(
+  story: StoryRow,
+  banner: ErrorBanner,
+  refreshAll: () => Promise<void>
+) {
   return toggleAndRefresh(story, "isRead", banner, refreshAll);
 }
 
-export function toggleDismissedAndRefresh(story: StoryRow, banner: ErrorBanner, refreshAll: () => Promise<void>) {
+export function toggleDismissedAndRefresh(
+  story: StoryRow,
+  banner: ErrorBanner,
+  refreshAll: () => Promise<void>
+) {
   return toggleAndRefresh(story, "dismissed", banner, refreshAll);
 }
 
-export function toggleBookmarkedAndRefresh(story: StoryRow, banner: ErrorBanner, refreshAll: () => Promise<void>) {
+export function toggleBookmarkedAndRefresh(
+  story: StoryRow,
+  banner: ErrorBanner,
+  refreshAll: () => Promise<void>
+) {
   return toggleAndRefresh(story, "bookmarked", banner, refreshAll);
 }

@@ -4,7 +4,7 @@ import type { StoryRow } from "./types";
 vi.mock("./api", () => ({
   toggleRead: vi.fn(),
   toggleDismissed: vi.fn(),
-  toggleBookmarked: vi.fn()
+  toggleBookmarked: vi.fn(),
 }));
 
 import * as api from "./api";
@@ -32,7 +32,7 @@ const story: StoryRow = {
   lastScrollPct: null,
   ffnUpdatedAt: null,
   source: "ffn",
-  cachedChapterCount: 0
+  cachedChapterCount: 0,
 };
 
 beforeEach(() => {

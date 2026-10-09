@@ -40,7 +40,12 @@ export class ErrorBanner {
 
   /// Runs `op`, reporting a throw as `"<prefix>: <error>"` under `key`.
   /// Returns whether it succeeded.
-  async run(key: BannerKey, prefix: string, op: () => Promise<unknown>, opts: { clearOn?: ClearOn } = {}): Promise<boolean> {
+  async run(
+    key: BannerKey,
+    prefix: string,
+    op: () => Promise<unknown>,
+    opts: { clearOn?: ClearOn } = {}
+  ): Promise<boolean> {
     const clearOn = opts.clearOn ?? "success";
     if (clearOn === "start") this.dismiss(key);
     try {

@@ -8,7 +8,7 @@ vi.mock("./api", () => ({
   listBookmarks: vi.fn(),
   listBookmarkedFandoms: vi.fn(),
   getContinueReading: vi.fn(),
-  fetchChapterAndWait: vi.fn()
+  fetchChapterAndWait: vi.fn(),
 }));
 
 import * as api from "./api";
@@ -25,7 +25,9 @@ describe("ErrorBanner.run", () => {
     });
 
     expect(ok).toBe(false);
-    expect(banner.messages).toEqual([{ key: "search.stories", text: "Could not load stories: db locked" }]);
+    expect(banner.messages).toEqual([
+      { key: "search.stories", text: "Could not load stories: db locked" },
+    ]);
   });
 
   it("formats a non-Error rejection (a Tauri command's string) as-is", async () => {
@@ -52,7 +54,9 @@ describe("ErrorBanner.run", () => {
 
     await banner.run("search.stories", "x", async () => {});
 
-    expect(banner.messages).toEqual([{ key: "bookmarks.refresh", text: "3 stories failed to refresh" }]);
+    expect(banner.messages).toEqual([
+      { key: "bookmarks.refresh", text: "3 stories failed to refresh" },
+    ]);
   });
 
   it("clearOn start: clears when the op begins, and does not clear what the op reports", async () => {
@@ -97,7 +101,7 @@ describe("ErrorBanner messages", () => {
 
     expect(banner.messages).toEqual([
       { key: "search.stories", text: "a2" },
-      { key: "bookmarks.list", text: "b" }
+      { key: "bookmarks.list", text: "b" },
     ]);
   });
 
@@ -142,7 +146,7 @@ describe("ErrorBanner shared by Search and Bookmarks", () => {
     await run;
 
     expect(banner.messages).toEqual([
-      { key: "bookmarks.refresh", text: "1 story failed to refresh: Last error: fetch timed out" }
+      { key: "bookmarks.refresh", text: "1 story failed to refresh: Last error: fetch timed out" },
     ]);
     vi.useRealTimers();
   });
@@ -150,11 +154,13 @@ describe("ErrorBanner shared by Search and Bookmarks", () => {
   it("a Bookmarks reload does not clear a Download-all failure", async () => {
     const banner = new ErrorBanner();
     const bookmarks = new BookmarksScreen(banner, false);
-    banner.report("bookmarks.download", "Download of \"t\" incomplete");
+    banner.report("bookmarks.download", 'Download of "t" incomplete');
 
     await bookmarks.reloadAll();
 
-    expect(banner.messages).toEqual([{ key: "bookmarks.download", text: "Download of \"t\" incomplete" }]);
+    expect(banner.messages).toEqual([
+      { key: "bookmarks.download", text: 'Download of "t" incomplete' },
+    ]);
   });
 
   it("a load failure clears when that same load next succeeds", async () => {
@@ -163,7 +169,9 @@ describe("ErrorBanner shared by Search and Bookmarks", () => {
     vi.mocked(api.listStories).mockRejectedValueOnce(new Error("db locked"));
 
     await search.loadStories();
-    expect(banner.messages).toEqual([{ key: "search.stories", text: "Could not load stories: db locked" }]);
+    expect(banner.messages).toEqual([
+      { key: "search.stories", text: "Could not load stories: db locked" },
+    ]);
 
     await search.loadStories();
     expect(banner.messages).toEqual([]);

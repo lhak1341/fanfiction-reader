@@ -82,7 +82,7 @@ export const FFN_CATEGORIES = [
   { value: "misc", label: "Misc" },
   { value: "movie", label: "Movies" },
   { value: "play", label: "Plays" },
-  { value: "tv", label: "TV" }
+  { value: "tv", label: "TV" },
 ] as const;
 
 // Names below match their Rust struct one-for-one (lib.rs/queries.rs) on

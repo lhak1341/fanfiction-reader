@@ -12,7 +12,9 @@ import { smartenQuotesHtml } from "./typography";
 
 describe("smartenQuotesHtml", () => {
   it("curls quotes inside a text node", () => {
-    expect(smartenQuotesHtml(`<p>She said "hello there."</p>`)).toBe("<p>She said “hello there.”</p>");
+    expect(smartenQuotesHtml(`<p>She said "hello there."</p>`)).toBe(
+      "<p>She said “hello there.”</p>"
+    );
   });
 
   it("curls quotes across multiple sibling and nested elements", () => {
@@ -27,8 +29,8 @@ describe("smartenQuotesHtml", () => {
     expect(output).toContain("“Real prose.”");
     expect(output).toContain('var x = "raw";');
     expect(output).toContain('.a{content:"raw"}');
-    expect(output).toContain(">\"raw\"</pre>");
-    expect(output).toContain(">\"raw\"</code>");
+    expect(output).toContain('>"raw"</pre>');
+    expect(output).toContain('>"raw"</code>');
   });
 
   it("doesn't mangle tag attributes, only text-node content", () => {

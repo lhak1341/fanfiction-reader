@@ -6,13 +6,17 @@ export interface SearchFilterPrefs {
   hideBookmarked: boolean;
 }
 
-const SEARCH_DEFAULTS: SearchFilterPrefs = { hideRead: true, hideDismissed: true, hideBookmarked: false };
+const SEARCH_DEFAULTS: SearchFilterPrefs = {
+  hideRead: true,
+  hideDismissed: true,
+  hideBookmarked: false,
+};
 
 // Merges over SEARCH_DEFAULTS on every read (not just when nothing's
 // stored) — a blob saved by an older app version missing a newer field
 // still gets that field's default, rather than `undefined`.
 const searchPref = definePersistedPref<SearchFilterPrefs>("ffn-search-filters", SEARCH_DEFAULTS, {
-  deserialize: (raw) => ({ ...SEARCH_DEFAULTS, ...JSON.parse(raw) })
+  deserialize: (raw) => ({ ...SEARCH_DEFAULTS, ...JSON.parse(raw) }),
 });
 
 export const getSearchFilterPrefs = searchPref.get;

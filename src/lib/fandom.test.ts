@@ -9,7 +9,7 @@ function stubLocalStorage() {
     getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
     setItem: (key: string, value: string) => {
       store.set(key, value);
-    }
+    },
   });
 }
 

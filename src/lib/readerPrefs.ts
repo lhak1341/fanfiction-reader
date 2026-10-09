@@ -25,14 +25,14 @@ const DEFAULTS: ReaderPrefs = {
   lineHeight: 1.75,
   pageWidth: 58,
   letterSpacing: 0,
-  smartQuotes: true
+  smartQuotes: true,
 };
 
 // Merges over DEFAULTS on every read (not just when nothing's stored) — a
 // blob saved by an older app version missing a newer field still gets that
 // field's default, rather than `undefined`.
 const pref = definePersistedPref<ReaderPrefs>("ffn-reader-typography", DEFAULTS, {
-  deserialize: (raw) => ({ ...DEFAULTS, ...JSON.parse(raw) })
+  deserialize: (raw) => ({ ...DEFAULTS, ...JSON.parse(raw) }),
 });
 
 export const getReaderPrefs = pref.get;

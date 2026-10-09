@@ -7,11 +7,11 @@ vi.mock("./api", () => ({
   searchFfnAndWait: vi.fn(),
   searchAo3AndWait: vi.fn(),
   addStoryByUrl: vi.fn(),
-  toggleBookmarked: vi.fn()
+  toggleBookmarked: vi.fn(),
 }));
 vi.mock("./fandom", () => ({
   saveAo3Tag: vi.fn(),
-  getAo3Tag: vi.fn()
+  getAo3Tag: vi.fn(),
 }));
 
 import * as api from "./api";
@@ -205,7 +205,9 @@ describe("SearchModalScreen.runSearch (url)", () => {
 
     await screen.runSearch();
 
-    expect(api.addStoryByUrl).toHaveBeenCalledWith("https://www.fanfiction.net/s/14583034/1/Harry-Potter-The-Game");
+    expect(api.addStoryByUrl).toHaveBeenCalledWith(
+      "https://www.fanfiction.net/s/14583034/1/Harry-Potter-The-Game"
+    );
     // The command bookmarks it (Rust); the modal makes no second call.
     expect(api.toggleBookmarked).not.toHaveBeenCalled();
     expect(onStoryAdded).toHaveBeenCalledTimes(1);
@@ -325,12 +327,16 @@ describe("SearchModalScreen category change", () => {
 
   it("drops a slow response for a category the user already left", async () => {
     let resolveSlow!: (v: FandomIndexEntry[]) => void;
-    vi.mocked(api.listFandomIndex).mockImplementationOnce(() => new Promise((r) => (resolveSlow = r)));
+    vi.mocked(api.listFandomIndex).mockImplementationOnce(
+      () => new Promise((r) => (resolveSlow = r))
+    );
     const screen = makeScreen();
     screen.start();
     flushSync();
 
-    vi.mocked(api.listFandomIndex).mockResolvedValue([fandomEntry({ fandom: "Bleach", category: "book" })]);
+    vi.mocked(api.listFandomIndex).mockResolvedValue([
+      fandomEntry({ fandom: "Bleach", category: "book" }),
+    ]);
     screen.category = "book";
     flushSync();
     await vi.waitFor(() => expect(screen.fandomOptions.map((f) => f.fandom)).toEqual(["Bleach"]));
@@ -346,7 +352,7 @@ describe("SearchModalScreen.filteredOptions", () => {
   it("narrows by the accent-folded query", async () => {
     vi.mocked(api.listFandomIndex).mockResolvedValue([
       fandomEntry({ fandom: "Pokémon" }),
-      fandomEntry({ fandom: "Naruto" })
+      fandomEntry({ fandom: "Naruto" }),
     ]);
     const screen = makeScreen();
     await screen.loadFandomOptions();
