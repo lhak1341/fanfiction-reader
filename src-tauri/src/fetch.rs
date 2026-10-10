@@ -21,7 +21,7 @@
 
 use crate::dispatch::{self, BrowseFetched, ChapterFetched, EnsuredChapter, FandomIndexFetched, FetchOutcome};
 use crate::fetch_env::{get_with_retry, FetchEnv, TauriEnv};
-use crate::fetch_session::{FetchSession, Priority};
+use crate::fetch_session::{FetchSession, FetchedPage, Priority, INTERRUPTED};
 use crate::source::{self, ListingStatus, StorySource};
 use crate::{ao3, db, ffn};
 
@@ -60,21 +60,108 @@ fn persist_ffn_page(
         return Err("Cloudflare challenge page, not the story — try again".to_string());
     }
 
-    if html.contains(NO_SUCH_CHAPTER_MARKER) {
+    if let Some(message) = ffn_message(html) {
         return Err(format!(
-            "FFN returned its {NO_SUCH_CHAPTER_MARKER:?} page for this chapter — often temporary (try again), not necessarily removed"
+            "FFN returned its message page {message:?} — often temporary (try again), not necessarily removed"
         ));
     }
 
     dispatch::persist_page::<source::Ffn>(db, html, page_url, None, listing_locator)
 }
 
-/// FFN answers a chapter URL it doesn't have with a bare message page (no
-/// `#profile_top`), which otherwise surfaces as a confusing parse error.
-/// Not permanent: story 470 ch 20 got this page three times in a row, then
-/// loaded normally in a browser and in the app later — so it is retried like
-/// any other failure, and the error must not claim the chapter is gone.
-const NO_SUCH_CHAPTER_MARKER: &str = "Story does not have any chapters";
+/// FFN answers a URL it won't serve with a bare message page (no
+/// `#profile_top`) headed "FanFiction.Net Message Type 1", which otherwise
+/// surfaces as a confusing parse error. Seen so far: "Story does not have any
+/// chapters." and "Chapter not found." Not permanent: story 470 ch 20 got the
+/// first three times in a row, then loaded normally in a browser and in the
+/// app later — so it is retried like any other failure, and the error must
+/// not claim the chapter is gone.
+const FFN_MESSAGE_MARKER: &str = "FanFiction.Net Message Type";
+
+/// The first sentence after the message-page heading ("Chapter not found."),
+/// or `None` when `html` is not an FFN message page.
+fn ffn_message(html: &str) -> Option<String> {
+    if !html.contains(FFN_MESSAGE_MARKER) {
+        return None;
+    }
+    let doc = scraper::Html::parse_document(html);
+    let text = doc.root_element().text().collect::<Vec<_>>().join(" ");
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let after = text.split_once(FFN_MESSAGE_MARKER).map_or("", |(_, rest)| rest);
+    let after = after.trim_start_matches(|c: char| c.is_ascii_digit() || c.is_whitespace());
+    let sentence = after.split_inclusive('.').next().unwrap_or("").trim();
+    Some(if sentence.is_empty() { "(no message text)".to_string() } else { sentence.to_string() })
+}
+
+/// Why an FFN fetch failed — the `kind` column of `fetch_failures`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FailureKind {
+    /// A Cloudflare page was the last thing reported: re-arms ran out, or
+    /// the real page never followed (an interactive challenge in the hidden
+    /// window looks like this).
+    Cloudflare,
+    /// FFN's own message page ("Chapter not found.").
+    FfnMessage,
+    /// No page reported within the wait.
+    Timeout,
+    /// Superseded by a newer fetch.
+    Interrupted,
+    /// Refused before navigating (`BUSY`). Not recorded: nothing was fetched.
+    Busy,
+    /// Bad URL or the webview could not navigate.
+    Navigation,
+    /// A page arrived but did not parse or persist.
+    Parse,
+}
+
+impl FailureKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Cloudflare => "cloudflare",
+            Self::FfnMessage => "ffn-message",
+            Self::Timeout => "timeout",
+            Self::Interrupted => "interrupted",
+            Self::Busy => "busy",
+            Self::Navigation => "navigation",
+            Self::Parse => "parse",
+        }
+    }
+
+    /// The kind for a page that was reported but failed `persist_ffn_page`.
+    fn of_page(html: &str, title: &str) -> Self {
+        if looks_blocked(html, title) {
+            Self::Cloudflare
+        } else if ffn_message(html).is_some() {
+            Self::FfnMessage
+        } else {
+            Self::Parse
+        }
+    }
+}
+
+struct FfnFailure {
+    kind: FailureKind,
+    message: String,
+    /// The last page the webview reported, if any.
+    page: Option<String>,
+}
+
+impl FfnFailure {
+    fn new(kind: FailureKind, message: String) -> Self {
+        Self { kind, message, page: None }
+    }
+
+    /// A failed `session.wait`. `last` is the page reported before it (a
+    /// challenge page the re-arm was waiting past), if any.
+    fn of_wait(message: String, last: Option<FetchedPage>) -> Self {
+        let kind = match &last {
+            _ if message == INTERRUPTED => FailureKind::Interrupted,
+            Some(page) if looks_blocked(&page.html, &page.title) => FailureKind::Cloudflare,
+            _ => FailureKind::Timeout,
+        };
+        Self { kind, message, page: last.map(|p| p.html) }
+    }
+}
 
 /// How many times `fetch_ffn_via` waits again after a Cloudflare page is reported.
 const BLOCKED_REARMS: u32 = 2;
@@ -82,7 +169,8 @@ const BLOCKED_REARMS: u32 = 2;
 /// One FFN fetch end to end: navigate the webview, wait for the session to
 /// deliver the rendered page (or reject: interrupted, timed out), persist it.
 /// The whole sequence — priority refusal, navigation failure, Cloudflare
-/// re-arm, timeout, persist — runs from tests against a `FakeEnv`.
+/// re-arm, timeout, persist — runs from tests against a `FakeEnv`. Every
+/// failure except a `BUSY` refusal is recorded in `fetch_failures`.
 async fn fetch_ffn_via(
     env: &impl FetchEnv,
     db: &db::Db,
@@ -91,42 +179,103 @@ async fn fetch_ffn_via(
     listing_locator: Option<source::FfnListingLocator>,
     priority: Priority,
 ) -> Result<FetchOutcome, String> {
-    let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
+    let failure = match fetch_ffn_attempt(env, db, session, &url, listing_locator, priority).await {
+        Ok(outcome) => return Ok(outcome),
+        Err(failure) => failure,
+    };
+    eprintln!("[fetch] failed ({}): {}", failure.kind.as_str(), failure.message);
+    if failure.kind != FailureKind::Busy {
+        let priority = match priority {
+            Priority::Foreground => "foreground",
+            Priority::Background => "background",
+        };
+        let recorded = db.run(|c| {
+            db::record_fetch_failure(c, failure.kind.as_str(), priority, &url, &failure.message, failure.page.as_deref())
+        });
+        if let Err(e) = recorded {
+            eprintln!("[fetch] could not record the failure: {e}");
+        }
+    }
+    Err(failure.message)
+}
+
+async fn fetch_ffn_attempt(
+    env: &impl FetchEnv,
+    db: &db::Db,
+    session: &FetchSession,
+    url: &str,
+    listing_locator: Option<source::FfnListingLocator>,
+    priority: Priority,
+) -> Result<FetchOutcome, FfnFailure> {
+    let parsed = url::Url::parse(url).map_err(|e| FfnFailure::new(FailureKind::Navigation, e.to_string()))?;
     let timeout = env.ffn_wait();
 
     let fetch = {
         let _window = session.lock_window().await;
         // A refused background fetch returns before touching the webview.
         let fetch = match priority {
-            Priority::Foreground => session.start(&url, listing_locator),
-            Priority::Background => session.start_background(&url, listing_locator)?,
+            Priority::Foreground => session.start(url, listing_locator),
+            Priority::Background => session
+                .start_background(url, listing_locator)
+                .map_err(|e| FfnFailure::new(FailureKind::Busy, e))?,
         };
-        if let Err(e) = env.navigate(parsed) {
+        if let Err(e) = env.navigate(parsed.clone()) {
             session.abort(&fetch, e.clone());
-            return Err(e);
+            return Err(FfnFailure::new(FailureKind::Navigation, e));
         }
         fetch
     };
 
-    let mut page = session.wait(fetch, timeout).await.inspect_err(|e| eprintln!("[fetch] failed: {e}"))?;
+    let mut page = session.wait(fetch, timeout).await.map_err(|e| FfnFailure::of_wait(e, None))?;
     // A Cloudflare interstitial reports on its own DOMContentLoaded, then
     // redirects itself to the real page, whose report would be dropped as
     // matching no pending fetch. Re-arm the session (no navigate — the webview
     // is already on its way) and wait for that second report instead of
     // failing the chapter outright.
+    //
+    // A managed challenge can also sit in the hidden window without ever
+    // redirecting: on 2026-10-10 a Turnstile widget loaded, nothing navigated
+    // for 30 s, and the *next* chapter's navigation passed within 3 s. So a
+    // re-arm waits only `ffn_challenge_wait`, and the first time that runs out
+    // the webview loads `url` again (once per fetch) with the full wait.
+    let mut reloaded = false;
     for _ in 0..BLOCKED_REARMS {
         if !looks_blocked(&page.html, &page.title) {
             break;
         }
-        let Some(next) = session.start_if_idle(&url, page.listing_locator.clone(), priority) else { break };
+        let Some(next) = session.start_if_idle(url, page.listing_locator.clone(), priority) else { break };
         println!("[fetch] challenge page for {url}, waiting for the real page");
-        page = session.wait(next, timeout).await.inspect_err(|e| eprintln!("[fetch] failed: {e}"))?;
+        let challenge = page;
+        page = match session.wait(next, env.ffn_challenge_wait()).await {
+            Ok(page) => page,
+            Err(e) if e != INTERRUPTED && !reloaded => {
+                reloaded = true;
+                println!("[fetch] challenge did not pass for {url}, loading it again");
+                let fetch = {
+                    let _window = session.lock_window().await;
+                    // A newer fetch took the slot meanwhile: leave the webview to it.
+                    let Some(fetch) = session.start_if_idle(url, challenge.listing_locator.clone(), priority) else {
+                        return Err(FfnFailure::of_wait(e, Some(challenge)));
+                    };
+                    if let Err(e) = env.navigate(parsed.clone()) {
+                        session.abort(&fetch, e.clone());
+                        return Err(FfnFailure::new(FailureKind::Navigation, e));
+                    }
+                    fetch
+                };
+                session.wait(fetch, timeout).await.map_err(|e| FfnFailure::of_wait(e, Some(challenge)))?
+            }
+            Err(e) => return Err(FfnFailure::of_wait(e, Some(challenge))),
+        };
     }
     // Dumped before the blocked check so a false positive there can still be
     // inspected, not just a genuine block.
     env.save_debug_page("debug-last-fetch.html", &page.html);
-    persist_ffn_page(db, &page.html, &page.href, &page.title, page.listing_locator)
-        .inspect_err(|e| eprintln!("[fetch] failed: {e}"))
+    persist_ffn_page(db, &page.html, &page.href, &page.title, page.listing_locator).map_err(|message| FfnFailure {
+        kind: FailureKind::of_page(&page.html, &page.title),
+        message,
+        page: Some(page.html),
+    })
 }
 
 /// The Cloudflare/fetch strategy locked in SPEC.md §3: open a real webview
@@ -441,6 +590,25 @@ mod tests {
         let err = persist_ffn_page(&dbh, html, "https://www.fanfiction.net/s/14583034/20/", "", None).unwrap_err();
 
         assert!(err.contains("often temporary"), "{err}");
+        assert!(err.contains("\"Story does not have any chapters.\""), "{err}");
+    }
+
+    /// Captured from the live app 2026-10-10 (style block trimmed).
+    const CHAPTER_NOT_FOUND_PAGE: &str = r#"<html><head><style>.panel_normal { padding: 10px; }</style></head><body><div class="panel_normal"><span class="gui_normal">FanFiction.Net Message Type 1<hr size="1" noshade="">Chapter not found. Please check to see you are not using an outdated url.<p>New chapter/story can take up to 15 minutes to show up.</p></span></div></body></html>"#;
+
+    #[test]
+    fn persist_ffn_page_names_ffns_chapter_not_found_message_page() {
+        let dbh = test_db();
+
+        let err = persist_ffn_page(&dbh, CHAPTER_NOT_FOUND_PAGE, "https://www.fanfiction.net/s/1/2/", "", None).unwrap_err();
+
+        assert!(err.contains("\"Chapter not found.\""), "{err}");
+        assert!(err.contains("often temporary"), "{err}");
+    }
+
+    #[test]
+    fn ffn_message_is_none_for_a_real_chapter_page() {
+        assert_eq!(ffn_message(FFN_STORY_PAGE), None);
     }
 
     #[test]
@@ -597,6 +765,36 @@ mod tests {
         let err = run_fetch(&env, &dbh, &session, Priority::Foreground).unwrap_err();
 
         assert!(err.contains("timed out"), "{err}");
+        assert_eq!(env.navigations.lock().unwrap().len(), 2, "reloads once, not again");
+    }
+
+    #[test]
+    fn fetch_ffn_reloads_once_when_a_challenge_page_is_stuck_and_persists_the_real_page() {
+        let (dbh, session) = fixtures();
+        let mut env = FakeEnv::new(&session, vec![challenge(10)]);
+        env.reload_reports = Some(vec![real_page()]);
+
+        let outcome = run_fetch(&env, &dbh, &session, Priority::Background).unwrap();
+
+        assert_eq!(outcome.into_chapter().unwrap().chapter_num, 34);
+        assert_eq!(*env.navigations.lock().unwrap(), vec![CHAPTER_URL.to_string(); 2]);
+    }
+
+    #[test]
+    fn fetch_ffn_does_not_reload_over_a_newer_fetch() {
+        let (dbh, session) = fixtures();
+        let env = FakeEnv::new(&session, vec![challenge(10)]);
+        let newer = Arc::clone(&session);
+        // Takes the slot while the re-arm waits past the challenge page.
+        let _thief = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            newer.start("https://www.fanfiction.net/s/1/1/", None)
+        });
+
+        let err = run_fetch(&env, &dbh, &session, Priority::Background).unwrap_err();
+
+        assert_eq!(err, crate::fetch_session::INTERRUPTED);
+        assert_eq!(env.navigations.lock().unwrap().len(), 1);
     }
 
     #[test]
@@ -622,6 +820,89 @@ mod tests {
         assert_eq!(err, "window gone");
         // Nothing left pending: a late report is dropped, and a new fetch can start.
         assert!(!session.deliver(SLUGGED_URL, String::new(), String::new()));
+    }
+
+    // ---- fetch_failures ----
+
+    /// `(kind, priority, has_page)` per recorded failure, oldest first.
+    fn failures(dbh: &db::Db) -> Vec<(String, String, bool)> {
+        dbh.run(|c| {
+            let mut stmt = c.prepare("SELECT kind, priority, page IS NOT NULL FROM fetch_failures ORDER BY id")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+            rows.collect()
+        })
+        .unwrap()
+    }
+
+    fn row(kind: &str, priority: &str, has_page: bool) -> (String, String, bool) {
+        (kind.to_string(), priority.to_string(), has_page)
+    }
+
+    #[test]
+    fn fetch_ffn_records_nothing_on_success() {
+        let (dbh, session) = fixtures();
+        let env = FakeEnv::new(&session, vec![real_page()]);
+
+        run_fetch(&env, &dbh, &session, Priority::Foreground).unwrap();
+
+        assert!(failures(&dbh).is_empty());
+    }
+
+    #[test]
+    fn fetch_ffn_records_cloudflare_with_the_page_when_re_arms_run_out() {
+        let (dbh, session) = fixtures();
+        let reports = (0..=BLOCKED_REARMS).map(|i| challenge(if i == 0 { 10 } else { 60 })).collect();
+        let env = FakeEnv::new(&session, reports);
+
+        run_fetch(&env, &dbh, &session, Priority::Background).unwrap_err();
+
+        assert_eq!(failures(&dbh), vec![row("cloudflare", "background", true)]);
+    }
+
+    #[test]
+    fn fetch_ffn_records_a_timeout_after_a_challenge_page_as_cloudflare() {
+        let (dbh, session) = fixtures();
+        let env = FakeEnv::new(&session, vec![challenge(10)]);
+
+        let err = run_fetch(&env, &dbh, &session, Priority::Foreground).unwrap_err();
+
+        assert!(err.contains("timed out"), "{err}");
+        assert_eq!(failures(&dbh), vec![row("cloudflare", "foreground", true)]);
+    }
+
+    #[test]
+    fn fetch_ffn_records_a_timeout_with_no_page() {
+        let (dbh, session) = fixtures();
+        let env = FakeEnv::new(&session, vec![]);
+
+        run_fetch(&env, &dbh, &session, Priority::Foreground).unwrap_err();
+
+        assert_eq!(failures(&dbh), vec![row("timeout", "foreground", false)]);
+    }
+
+    #[test]
+    fn fetch_ffn_records_ffns_message_page() {
+        let (dbh, session) = fixtures();
+        let env = FakeEnv::new(&session, vec![Report { after_ms: 10, html: CHAPTER_NOT_FOUND_PAGE, title: "" }]);
+
+        run_fetch(&env, &dbh, &session, Priority::Foreground).unwrap_err();
+
+        assert_eq!(failures(&dbh), vec![row("ffn-message", "foreground", true)]);
+    }
+
+    #[test]
+    fn fetch_ffn_records_a_navigation_failure_but_not_a_busy_refusal() {
+        let (dbh, session) = fixtures();
+        let _foreground = session.start("https://www.fanfiction.net/s/1/1/", None);
+        let env = FakeEnv::new(&session, vec![]);
+        run_fetch(&env, &dbh, &session, Priority::Background).unwrap_err();
+        assert!(failures(&dbh).is_empty(), "BUSY fetched nothing");
+
+        let mut env = FakeEnv::new(&session, vec![]);
+        env.navigate_error = Some("window gone".to_string());
+        run_fetch(&env, &dbh, &session, Priority::Foreground).unwrap_err();
+
+        assert_eq!(failures(&dbh), vec![row("navigation", "foreground", false)]);
     }
 
     // ---- add_story_by_url_via ----

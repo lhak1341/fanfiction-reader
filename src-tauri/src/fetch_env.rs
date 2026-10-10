@@ -32,6 +32,11 @@ pub trait FetchEnv {
     fn ffn_wait(&self) -> Duration {
         FETCH_TIMEOUT
     }
+    /// How long one FFN fetch waits past a Cloudflare challenge page before
+    /// loading the URL again (`fetch_ffn_attempt`).
+    fn ffn_challenge_wait(&self) -> Duration {
+        CHALLENGE_WAIT
+    }
     /// First AO3 retry delay; each later one doubles it.
     fn ao3_base_backoff(&self) -> Duration {
         AO3_BASE_BACKOFF
@@ -84,6 +89,9 @@ pub enum GetError {
 // only inter-request pacing (§3); AO3's needs the opposite.
 
 pub const AO3_FETCH_MAX_ATTEMPTS: u32 = 4;
+/// A challenge that passes redirects within a few seconds; one that has not
+/// by now is treated as stuck (see `fetch_ffn_attempt`).
+const CHALLENGE_WAIT: Duration = Duration::from_secs(8);
 const AO3_BASE_BACKOFF: Duration = Duration::from_millis(500);
 const AO3_FETCH_TIMEOUT_SECS: u64 = 20;
 
@@ -257,6 +265,8 @@ pub(crate) mod testing {
     pub(crate) struct FakeEnv {
         pub session: Arc<FetchSession>,
         pub reports: Vec<Report>,
+        /// What every navigation after the first reports; `None` repeats `reports`.
+        pub reload_reports: Option<Vec<Report>>,
         /// The URL the fake webview reports pages under.
         pub report_url: String,
         pub navigate_error: Option<String>,
@@ -265,6 +275,7 @@ pub(crate) mod testing {
         pub ao3_script: Mutex<VecDeque<Result<Ao3Response, GetError>>>,
         pub gets: Mutex<Vec<String>>,
         pub ffn_wait: Duration,
+        pub ffn_challenge_wait: Duration,
         pub ao3_base_backoff: Duration,
     }
 
@@ -273,6 +284,7 @@ pub(crate) mod testing {
             Self {
                 session: Arc::clone(session),
                 reports,
+                reload_reports: None,
                 report_url: SLUGGED_URL.to_string(),
                 navigate_error: None,
                 navigations: Mutex::new(vec![]),
@@ -280,6 +292,7 @@ pub(crate) mod testing {
                 ao3_script: Mutex::new(VecDeque::new()),
                 gets: Mutex::new(vec![]),
                 ffn_wait: Duration::from_millis(400),
+                ffn_challenge_wait: Duration::from_millis(150),
                 ao3_base_backoff: Duration::from_millis(1),
             }
         }
@@ -306,14 +319,22 @@ pub(crate) mod testing {
 
     impl FetchEnv for FakeEnv {
         fn navigate(&self, url: url::Url) -> Result<(), String> {
-            self.navigations.lock().unwrap().push(url.to_string());
+            let first = {
+                let mut navigations = self.navigations.lock().unwrap();
+                navigations.push(url.to_string());
+                navigations.len() == 1
+            };
             if let Some(e) = &self.navigate_error {
                 return Err(e.clone());
             }
             let session = Arc::clone(&self.session);
             let report_url = self.report_url.clone();
+            let reports = match &self.reload_reports {
+                Some(reload) if !first => reload,
+                _ => &self.reports,
+            };
             let script: Vec<(u64, &'static str, &'static str)> =
-                self.reports.iter().map(|r| (r.after_ms, r.html, r.title)).collect();
+                reports.iter().map(|r| (r.after_ms, r.html, r.title)).collect();
             tokio::spawn(async move {
                 for (after_ms, html, title) in script {
                     tokio::time::sleep(Duration::from_millis(after_ms)).await;
@@ -338,6 +359,10 @@ pub(crate) mod testing {
 
         fn ffn_wait(&self) -> Duration {
             self.ffn_wait
+        }
+
+        fn ffn_challenge_wait(&self) -> Duration {
+            self.ffn_challenge_wait
         }
 
         fn ao3_base_backoff(&self) -> Duration {

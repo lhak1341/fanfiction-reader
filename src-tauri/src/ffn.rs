@@ -82,11 +82,41 @@ fn parse_meta_segments(meta_text: &str) -> Vec<&str> {
 /// (tags) — that's genuinely per-caller, see `parse_meta_segments`'s own
 /// doc comment on why a story page and a browse row disagree on where tags
 /// sit.
-fn rating_language_genre(segments: &[&str]) -> (String, Option<String>, Option<String>) {
+///
+/// Genre is optional on FFN: a story with none goes straight from language
+/// to its characters, so `segments[2]` is the genre only when it is made of
+/// FFN's fixed genres (`is_ffn_genre`). The last value is the index where
+/// the segments after genre start — 3 with a genre, 2 without.
+fn rating_language_genre(segments: &[&str]) -> (String, Option<String>, Option<String>, usize) {
     let rating = segments.first().and_then(|s| s.split_whitespace().last()).unwrap_or_default().to_string();
     let language = segments.get(1).map(|s| s.to_string());
-    let genre = segments.get(2).map(|s| s.to_string());
-    (rating, language, genre)
+    match segments.get(2).filter(|s| is_ffn_genre(s)) {
+        Some(genre) => (rating, language, Some(genre.to_string()), 3),
+        None => (rating, language, None, 2),
+    }
+}
+
+/// FFN's genre list (FanFicFare's `ffnetgenres`). A story picks up to two,
+/// joined with `/` — which "Hurt/Comfort" also contains.
+const FFN_GENRES: &[&str] = &[
+    "Adventure", "Angst", "Crime", "Drama", "Family", "Fantasy", "Friendship", "General", "Horror", "Humor",
+    "Hurt/Comfort", "Mystery", "Parody", "Poetry", "Romance", "Sci-Fi", "Spiritual", "Supernatural", "Suspense",
+    "Tragedy", "Western",
+];
+
+/// Whether `segment` is one or two of `FFN_GENRES` joined by `/`.
+pub(crate) fn is_ffn_genre(segment: &str) -> bool {
+    let mut rest = segment;
+    for _ in 0..2 {
+        let Some(genre) = FFN_GENRES.iter().find(|g| rest.starts_with(**g)) else { return false };
+        rest = &rest[genre.len()..];
+        if rest.is_empty() {
+            return true;
+        }
+        let Some(after) = rest.strip_prefix('/') else { return false };
+        rest = after;
+    }
+    false
 }
 
 /// FFN story URLs look like `/s/8067258/1/Worth-Dying-For` — the story id is
@@ -163,9 +193,9 @@ pub fn parse_story_page(html: &str, ffn_story_id: i64) -> Result<(StoryMetadata,
     // "Naruto U.", or "[Naruto U., Hinata H.]" for a pairing) — joined
     // verbatim rather than parsed further.
     let segments = parse_meta_segments(&meta_text);
-    let (rating, language, genre) = rating_language_genre(&segments);
-    let tags = if segments.len() > 3 {
-        Some(segments[3..].join(", "))
+    let (rating, language, genre, tags_from) = rating_language_genre(&segments);
+    let tags = if segments.len() > tags_from {
+        Some(segments[tags_from..].join(", "))
     } else {
         None
     };
@@ -393,7 +423,7 @@ pub fn parse_browse_page(html: &str, fandom: &str) -> Result<Vec<StoryMetadata>,
         let updated_at = extract_labeled(&meta_text, "Updated:").filter(|s| !s.is_empty());
 
         let segments = parse_meta_segments(&meta_text);
-        let (rating, language, genre) = rating_language_genre(&segments);
+        let (rating, language, genre, _) = rating_language_genre(&segments);
         let tags = extract_trailing_tags(&meta_text);
 
         out.push(StoryMetadata {
@@ -566,5 +596,37 @@ mod tests {
     fn ffn_locator_from_url_malformed_for_non_numeric_chapter_num() {
         let err = ffn_locator_from_url("https://www.fanfiction.net/s/8067258/not-a-number/Title").unwrap_err();
         assert!(err.contains("chapter segment"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn is_ffn_genre_accepts_one_or_two_genres_including_hurt_comfort() {
+        for g in ["Adventure", "Hurt/Comfort", "Romance/Hurt/Comfort", "Hurt/Comfort/Drama", "Sci-Fi/Humor"] {
+            assert!(is_ffn_genre(g), "{g}");
+        }
+        for g in ["Naruto U.", "[Harry P., Hermione G.]", "Adventure/Naruto U.", "Romance/Drama/Humor", ""] {
+            assert!(!is_ffn_genre(g), "{g}");
+        }
+    }
+
+    #[test]
+    fn a_story_page_with_no_genre_keeps_its_characters_as_tags() {
+        let meta = "Rated: Fiction T - English - [Naruto U., Ino Y.] Team Ten - Chapters: 85 - Words: 400,000";
+
+        let segments = parse_meta_segments(meta);
+        let (rating, language, genre, tags_from) = rating_language_genre(&segments);
+
+        assert_eq!((rating.as_str(), language.as_deref(), genre), ("T", Some("English"), None));
+        assert_eq!(segments[tags_from..].join(", "), "[Naruto U., Ino Y.] Team Ten");
+    }
+
+    #[test]
+    fn a_story_page_with_a_genre_reads_tags_after_it() {
+        let meta = "Rated: Fiction M - English - Angst/Hurt/Comfort - Roy M., Edward E. - Chapters: 3 - Words: 9,000";
+
+        let segments = parse_meta_segments(meta);
+        let (_, _, genre, tags_from) = rating_language_genre(&segments);
+
+        assert_eq!(genre.as_deref(), Some("Angst/Hurt/Comfort"));
+        assert_eq!(segments[tags_from..].join(", "), "Roy M., Edward E.");
     }
 }

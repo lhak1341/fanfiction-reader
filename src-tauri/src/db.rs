@@ -115,6 +115,20 @@ CREATE TABLE IF NOT EXISTS ao3_browse_state (
     last_fetched_at    TEXT NOT NULL,
     UNIQUE (tag, min_word_count, status)
 );
+
+-- Why FFN fetches fail, one row per failed fetch (SPEC.md §3, "Fetch
+-- failure log"). Diagnostic only — nothing in the app reads it; inspect
+-- with sqlite3. `page` is the last page the webview reported (NULL when
+-- none arrived). Pruned to the newest FETCH_FAILURE_KEEP rows on insert.
+CREATE TABLE IF NOT EXISTS fetch_failures (
+    id          INTEGER PRIMARY KEY,
+    failed_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    kind        TEXT NOT NULL,
+    priority    TEXT NOT NULL,
+    url         TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    page        TEXT
+);
 "#;
 
 pub struct Db(pub Mutex<Connection>);
@@ -149,7 +163,7 @@ const UPSERT_FFN_STORY_SQL: &str = "INSERT INTO stories
          ON CONFLICT(source, source_story_id) DO UPDATE SET
             title = excluded.title,
             author = excluded.author,
-            fandom = excluded.fandom,
+            fandom = CASE WHEN ?15 = 1 AND stories.fandom <> '' THEN stories.fandom ELSE excluded.fandom END,
             rating = excluded.rating,
             genre = excluded.genre,
             language = excluded.language,
@@ -170,7 +184,7 @@ const UPSERT_AO3_STORY_SQL: &str = "INSERT INTO stories
          ON CONFLICT(source, source_story_id) DO UPDATE SET
             title = excluded.title,
             author = excluded.author,
-            fandom = excluded.fandom,
+            fandom = CASE WHEN ?15 = 1 AND stories.fandom <> '' THEN stories.fandom ELSE excluded.fandom END,
             rating = excluded.rating,
             language = excluded.language,
             tags = excluded.tags,
@@ -184,6 +198,20 @@ const UPSERT_AO3_STORY_SQL: &str = "INSERT INTO stories
             last_fetched_at = excluded.last_fetched_at
          RETURNING id";
 
+/// Whether an upsert of an already-stored story may change its `fandom`.
+/// A listing writes the fandom it was searched under (`Set`): that is the
+/// bucket the Search screen then shows. A story's own page (`KeepExisting`)
+/// only fills an empty one: its fandom text is the site's own — AO3's
+/// canonical tag ("Harry Potter - J. K. Rowling"), FFN's breadcrumb — and
+/// overwriting would move the story out of the bucket it was searched or
+/// renamed into (SPEC.md §8 "Fandom bucket mismatch"). A new story always
+/// takes the page's fandom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FandomWrite {
+    Set,
+    KeepExisting,
+}
+
 /// Upserts an FFN story by its (source, source_story_id) natural key —
 /// `source` is hardcoded to `'ffn'` below; AO3 has its own `upsert_ao3_story`
 /// since its metadata shape differs (category, warnings, split
@@ -192,7 +220,7 @@ const UPSERT_AO3_STORY_SQL: &str = "INSERT INTO stories
 /// — that's the user's own manual flags, not fetched data, and must survive
 /// refetches. Returns the internal `stories.id` (the FK target used
 /// everywhere else).
-pub fn upsert_story(conn: &Connection, meta: &crate::ffn::StoryMetadata) -> rusqlite::Result<i64> {
+pub fn upsert_story(conn: &Connection, meta: &crate::ffn::StoryMetadata, fandom: FandomWrite) -> rusqlite::Result<i64> {
     conn.query_row(
         UPSERT_FFN_STORY_SQL,
         rusqlite::params![
@@ -210,6 +238,7 @@ pub fn upsert_story(conn: &Connection, meta: &crate::ffn::StoryMetadata) -> rusq
             meta.chapter_count,
             meta.summary,
             meta.updated_at,
+            fandom == FandomWrite::KeepExisting,
         ],
         |row| row.get(0),
     )
@@ -221,7 +250,7 @@ pub fn upsert_story(conn: &Connection, meta: &crate::ffn::StoryMetadata) -> rusq
 /// worth it: AO3 has `category`/`warnings` and no `genre`/`ffn_updated_at`
 /// concept, FFN is the reverse. Same re-fetch contract as `upsert_story` —
 /// `read_state` is untouched, `ON CONFLICT` only refreshes cached metadata.
-pub fn upsert_ao3_story(conn: &Connection, meta: &crate::ao3::Ao3StoryMetadata) -> rusqlite::Result<i64> {
+pub fn upsert_ao3_story(conn: &Connection, meta: &crate::ao3::Ao3StoryMetadata, fandom: FandomWrite) -> rusqlite::Result<i64> {
     conn.query_row(
         UPSERT_AO3_STORY_SQL,
         rusqlite::params![
@@ -239,6 +268,7 @@ pub fn upsert_ao3_story(conn: &Connection, meta: &crate::ao3::Ao3StoryMetadata) 
             meta.favorite_count,
             meta.chapter_count,
             meta.summary,
+            fandom == FandomWrite::KeepExisting,
         ],
         |row| row.get(0),
     )
@@ -502,6 +532,31 @@ pub fn list_fandom_index(conn: &Connection, category: Option<&str>) -> rusqlite:
     }
 }
 
+/// How many `fetch_failures` rows survive each insert. A row's `page` is
+/// 2–50 KB, so this caps the table at a few MB.
+pub const FETCH_FAILURE_KEEP: i64 = 200;
+
+/// Appends one `fetch_failures` row and drops all but the newest
+/// `FETCH_FAILURE_KEEP`.
+pub fn record_fetch_failure(
+    conn: &Connection,
+    kind: &str,
+    priority: &str,
+    url: &str,
+    message: &str,
+    page: Option<&str>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO fetch_failures (kind, priority, url, message, page) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![kind, priority, url, message, page],
+    )?;
+    conn.execute(
+        "DELETE FROM fetch_failures WHERE id <= (SELECT MAX(id) FROM fetch_failures) - ?1",
+        [FETCH_FAILURE_KEEP],
+    )?;
+    Ok(())
+}
+
 pub fn init(app: &tauri::AppHandle) -> rusqlite::Result<Connection> {
     let dir = app
         .path()
@@ -625,7 +680,7 @@ pub(crate) mod tests {
         let conn = schema_conn("ao3_insert");
         let meta = sample_ao3_story(85954646);
 
-        let id = upsert_ao3_story(&conn, &meta).unwrap();
+        let id = upsert_ao3_story(&conn, &meta, FandomWrite::Set).unwrap();
 
         let (source, source_story_id, category, warnings, genre, ffn_updated_at): (
             String,
@@ -654,13 +709,13 @@ pub(crate) mod tests {
         let conn = schema_conn("ao3_refetch");
         let mut meta = sample_ao3_story(85954646);
 
-        let id = upsert_ao3_story(&conn, &meta).unwrap();
+        let id = upsert_ao3_story(&conn, &meta, FandomWrite::Set).unwrap();
         ensure_read_state(&conn, id).unwrap();
         conn.execute("UPDATE read_state SET bookmarked = 1 WHERE story_id = ?1", rusqlite::params![id]).unwrap();
 
         meta.word_count = 50_000;
         meta.chapter_count = 14;
-        let id_again = upsert_ao3_story(&conn, &meta).unwrap();
+        let id_again = upsert_ao3_story(&conn, &meta, FandomWrite::Set).unwrap();
         assert_eq!(id, id_again, "same (source, source_story_id) must resolve to the same row");
 
         let (word_count, chapter_count): (i64, i64) = conn
@@ -698,8 +753,8 @@ pub(crate) mod tests {
         };
         let ao3_meta = sample_ao3_story(42);
 
-        let ffn_id = upsert_story(&conn, &ffn_meta).unwrap();
-        let ao3_id = upsert_ao3_story(&conn, &ao3_meta).unwrap();
+        let ffn_id = upsert_story(&conn, &ffn_meta, FandomWrite::Set).unwrap();
+        let ao3_id = upsert_ao3_story(&conn, &ao3_meta, FandomWrite::Set).unwrap();
 
         assert_ne!(ffn_id, ao3_id, "(source, source_story_id) must distinguish the two rows, not just source_story_id");
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM stories WHERE source_story_id = 42", [], |row| row.get(0)).unwrap();
@@ -709,7 +764,7 @@ pub(crate) mod tests {
     #[test]
     fn chapter_upserts_carry_source_chapter_id_for_ao3_and_stay_null_for_ffn() {
         let conn = schema_conn("chapter_source_id");
-        let ao3_id = upsert_ao3_story(&conn, &sample_ao3_story(1)).unwrap();
+        let ao3_id = upsert_ao3_story(&conn, &sample_ao3_story(1), FandomWrite::Set).unwrap();
         let ffn_id = upsert_story(
             &conn,
             &crate::ffn::StoryMetadata {
@@ -728,6 +783,7 @@ pub(crate) mod tests {
                 summary: None,
                 updated_at: None,
             },
+            FandomWrite::Set,
         )
         .unwrap();
 
@@ -839,5 +895,54 @@ pub(crate) mod tests {
         let conn = memory_conn();
 
         assert_eq!(next_browse_page(&conn, None, "Naruto", 0, "any").unwrap(), None);
+    }
+
+    #[test]
+    fn upsert_keeps_an_existing_fandom_only_when_asked() {
+        let conn = memory_conn();
+        let mut meta = sample_ao3_story(1);
+        meta.fandom = "Harry Potter".to_string();
+        let id = upsert_ao3_story(&conn, &meta, FandomWrite::Set).unwrap();
+        let fandom = |conn: &Connection| -> String {
+            conn.query_row("SELECT fandom FROM stories WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+        };
+
+        meta.fandom = "Harry Potter - J. K. Rowling".to_string();
+        upsert_ao3_story(&conn, &meta, FandomWrite::KeepExisting).unwrap();
+        assert_eq!(fandom(&conn), "Harry Potter");
+
+        upsert_ao3_story(&conn, &meta, FandomWrite::Set).unwrap();
+        assert_eq!(fandom(&conn), "Harry Potter - J. K. Rowling");
+    }
+
+    #[test]
+    fn upsert_keep_existing_still_fills_an_empty_fandom() {
+        let conn = memory_conn();
+        let mut meta = sample_ao3_story(1);
+        meta.fandom = String::new();
+        let id = upsert_ao3_story(&conn, &meta, FandomWrite::Set).unwrap();
+
+        meta.fandom = "Naruto".to_string();
+        upsert_ao3_story(&conn, &meta, FandomWrite::KeepExisting).unwrap();
+
+        let fandom: String = conn.query_row("SELECT fandom FROM stories WHERE id = ?1", [id], |r| r.get(0)).unwrap();
+        assert_eq!(fandom, "Naruto");
+    }
+
+    #[test]
+    fn record_fetch_failure_keeps_only_the_newest_rows() {
+        let conn = memory_conn();
+
+        for i in 0..FETCH_FAILURE_KEEP + 5 {
+            record_fetch_failure(&conn, "timeout", "background", &format!("u{i}"), "m", None).unwrap();
+        }
+
+        let (count, oldest): (i64, String) = conn
+            .query_row("SELECT COUNT(*), (SELECT url FROM fetch_failures ORDER BY id LIMIT 1) FROM fetch_failures", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(count, FETCH_FAILURE_KEEP);
+        assert_eq!(oldest, "u5");
     }
 }

@@ -269,7 +269,7 @@ pub fn persist_page<S: FicSource>(
             // third caller needs the same write.
             let (story_id, chapter_count) = db.run_mut(|conn| {
                 let tx = conn.transaction()?;
-                let story_id = S::persist_story(&tx, &meta)?;
+                let story_id = S::persist_story(&tx, &meta, db::FandomWrite::KeepExisting)?;
                 db::ensure_read_state(&tx, story_id)?;
                 // Register the *full* TOC every time — any story page lists every
                 // chapter, so this keeps titles browsable even before their own
@@ -288,7 +288,12 @@ pub fn persist_page<S: FicSource>(
             Ok(FetchOutcome::Chapter(ChapterFetched { story_id, chapter_num, chapter_count }))
         }
         PageShape::Listing(locator) => {
-            let mut summaries = S::parse_listing(html, &locator)?;
+            // Parsed under the requested locator when there is one: FFN's URL
+            // encoding is lossy for the fandom too (`ffn::parse_browse_url` reads
+            // every `-` as a space, so "Yu-Gi-Oh" came back "Yu Gi Oh" and its
+            // rows landed in a bucket "Load more" could not continue).
+            let parse_locator = requested_listing_locator.as_ref().unwrap_or(&locator);
+            let mut summaries = S::parse_listing(html, parse_locator)?;
             if summaries.is_empty() {
                 return Err("no stories found on this page — not a listing, or the layout changed".to_string());
             }
@@ -301,14 +306,14 @@ pub fn persist_page<S: FicSource>(
             let prefix = S::LOG_PREFIX;
             // Recorded under the locator the *request* carried, never the one
             // decoded from the fetched URL (`locator`, which only feeds
-            // `parse_listing`): FFN's URL encoding is lossy for status, and a
+            // `parse_listing` without one): FFN's URL encoding is lossy for status, and a
             // redirected AO3 URL needn't carry the tag that was asked for. No
             // requested locator (a raw-URL debug fetch) means no search
             // session worth bookkeeping. See `FetchedPage` (`fetch_session.rs`).
             let recorded_page = db.run_mut(|conn| {
                 let tx = conn.transaction()?;
                 for meta in &summaries {
-                    let story_id = S::persist_story(&tx, meta)?;
+                    let story_id = S::persist_story(&tx, meta, db::FandomWrite::Set)?;
                     db::ensure_read_state(&tx, story_id)?;
                 }
                 let page = match requested_listing_locator {
@@ -634,6 +639,45 @@ mod tests {
         }
     }
 
+
+    #[test]
+    fn ao3_work_page_keeps_an_existing_storys_fandom() {
+        let dbh = test_db();
+        let url = "https://archiveofourown.org/works/85954646/chapters/227238471";
+        let fetched = persist_page::<source::Ao3>(&dbh, AO3_WORK_PAGE, url, None, None).unwrap().into_chapter().unwrap();
+        // The bucket a search's fandom override (or a rename) put it in.
+        dbh.run(|conn| queries::rename_fandom(conn, "Original Work, Naruto (Anime & Manga)", "Naruto")).unwrap();
+
+        persist_page::<source::Ao3>(&dbh, AO3_WORK_PAGE, url, None, None).unwrap();
+
+        let row = dbh.run(|conn| queries::get_story(conn, fetched.story_id)).unwrap().unwrap();
+        assert_eq!(row.fandom, "Naruto", "a chapter fetch must not move the story back to AO3's canonical fandom");
+    }
+
+    #[test]
+    fn ffn_listing_rows_take_the_requested_fandom_not_the_lossy_url_decode() {
+        let dbh = test_db();
+        let url = ffn::build_browse_url("anime", "Yu-Gi-Oh", 0, crate::source::ListingStatus::Any, 1);
+        let requested = source::FfnListingLocator {
+            category: "anime".to_string(),
+            fandom: "Yu-Gi-Oh".to_string(),
+            min_word_count: 0,
+            status: crate::source::ListingStatus::Any,
+            page: 1,
+        };
+
+        let fetched = persist_page::<source::Ffn>(&dbh, FFN_BROWSE_LISTING, &url, None, Some(requested))
+            .unwrap()
+            .into_browse()
+            .unwrap();
+
+        assert_eq!(fetched.fandom, "Yu-Gi-Oh");
+        let fandoms = dbh.run(queries::list_fandoms).unwrap();
+        assert_eq!(fandoms, vec!["Yu-Gi-Oh".to_string()]);
+        // "Load more" continues the same search instead of "no category known".
+        let next = dbh.run(|c| db::next_browse_page(c, None, &fetched.fandom, 0, "any")).unwrap();
+        assert_eq!(next, Some(("anime".to_string(), 2)));
+    }
 
     #[test]
     fn into_chapter_unwraps_a_chapter_outcome_and_rejects_the_other_shapes() {

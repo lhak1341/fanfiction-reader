@@ -1,16 +1,16 @@
-# Graph Report - fanfiction-reader  (2026-10-09)
+# Graph Report - fanfiction-reader  (2026-10-10)
 
 ## Corpus Check
-- 78 files · ~72,513 words
+- 80 files · ~77,385 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1022 nodes · 2079 edges · 138 communities (33 shown, 105 thin omitted)
-- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 26 edges (avg confidence: 0.8)
+- 1111 nodes · 2293 edges · 142 communities (38 shown, 104 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 27 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `4d644a24`
+- Built from commit: `a69f49df`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -38,6 +38,7 @@
 - Bookmarks Screen State
 - Read/Bookmark Flag Schema
 - BookmarksScreen
+- ffn.rs
 - Story Flag Reconciliation
 - AO3 No-Merge Ranking Decision
 - Blocked-Page Detection Fix
@@ -143,31 +144,33 @@
 - CLAUDE.md
 - CLAUDE.md
 - fetch_session.rs
+- lint-ratchet.mjs
 - BookmarksScreen
+- install-app.sh
 
 ## God Nodes (most connected - your core abstractions)
-1. `Db` - 52 edges
+1. `Db` - 54 edges
 2. `$lib/api` - 37 edges
-3. `FetchSession` - 35 edges
-4. `$lib/types` - 29 edges
-5. `fixtures()` - 25 edges
-6. `test_db()` - 24 edges
-7. `$lib/components/Reader.svelte` - 24 edges
-8. `FakeEnv` - 23 edges
-9. `block_on()` - 19 edges
-10. `fetch_ffn_via()` - 17 edges
+3. `FetchSession` - 36 edges
+4. `fixtures()` - 34 edges
+5. `$lib/types` - 29 edges
+6. `test_db()` - 26 edges
+7. `run_fetch()` - 24 edges
+8. `FakeEnv` - 24 edges
+9. `$lib/components/Reader.svelte` - 24 edges
+10. `scripts` - 20 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `app.html — SvelteKit shell template` --shares_data_with--> `Decision: Svelte + Bun frontend`  [INFERRED]
   src/app.html → docs/wayfinder/tickets/002-frontend-framework-rust-crates.md
-- `count()` --references--> `Db`  [EXTRACTED]
-  src-tauri/src/dispatch.rs → src-tauri/src/db.rs
+- `ffn_story()` --calls--> `upsert_story()`  [INFERRED]
+  src-tauri/src/migrations.rs → src-tauri/src/db.rs
 - `fetch_ao3_via()` --calls--> `get_with_retry()`  [INFERRED]
   src-tauri/src/fetch.rs → src-tauri/src/fetch_env.rs
-- `sample_ao3_story()` --references--> `Ao3StoryMetadata`  [EXTRACTED]
-  src-tauri/src/db.rs → src-tauri/src/ao3.rs
-- `upsert_ao3_story()` --references--> `Ao3StoryMetadata`  [EXTRACTED]
-  src-tauri/src/db.rs → src-tauri/src/ao3.rs
+- `parse_story_page()` --calls--> `parse_int()`  [INFERRED]
+  src-tauri/src/ffn.rs → src-tauri/src/scrape.rs
+- `parse_story_page()` --calls--> `text_of()`  [INFERRED]
+  src-tauri/src/ffn.rs → src-tauri/src/scrape.rs
 
 ## Import Cycles
 - None detected.
@@ -177,51 +180,51 @@
 - **Wayfinder tickets feeding the locked SPEC decisions** — docs_wayfinder_map_overview, docs_wayfinder_tickets_001_cloudflare_session_handling_overview, docs_wayfinder_tickets_002_frontend_framework_rust_crates_overview, docs_wayfinder_tickets_003_data_model_sqlite_schema_overview, docs_wayfinder_tickets_004_fanficfare_port_scope_overview, docs_wayfinder_tickets_005_ui_ux_layout_prototype_overview [EXTRACTED 1.00]
 - **Longform's six-table SQLite schema** — docs_spec_stories_table, docs_spec_chapters_table, docs_spec_read_state_table, docs_spec_filter_presets_table, docs_spec_browse_state_table, docs_spec_fandom_index_table [EXTRACTED 1.00]
 
-## Communities (138 total, 105 thin omitted)
+## Communities (142 total, 104 thin omitted)
 
 ### Community 0 - "Chapter/Listing Data Models"
-Cohesion: 0.30
-Nodes (24): FandomIndexEntry, db_health_check(), get_continue_reading(), get_story(), list_bookmarked_fandoms(), list_bookmarks(), list_chapters(), list_fandom_index() (+16 more)
+Cohesion: 0.27
+Nodes (28): FandomIndexEntry, Db, count(), bookmarked(), story_count(), db_health_check(), get_continue_reading(), get_story() (+20 more)
 
 ### Community 1 - "Source Locator Abstraction"
 Cohesion: 0.07
 Nodes (26): FromSql, FromSqlResult, Metadata, ChapterRef, Ao3, ao3::Ao3ChapterRef, ao3_chapter_locator_from_url_propagates_malformed_error(), Ao3ChapterLocator (+18 more)
 
 ### Community 3 - "DB Migration & Schema Logic"
-Cohesion: 0.09
-Nodes (59): FnOnce, ao3_browse_page_resume_starts_at_one_and_advances(), chapter_fetch_target(), chapter_upserts_carry_source_chapter_id_for_ao3_and_stay_null_for_ffn(), ensure_read_state(), FandomIndexEntry, ffn_and_ao3_stories_with_same_source_story_id_coexist(), ffn_browse_page_resume_starts_at_one_and_advances() (+51 more)
+Cohesion: 0.11
+Nodes (50): FnOnce, ao3_browse_page_resume_starts_at_one_and_advances(), chapter_fetch_target(), chapter_upserts_carry_source_chapter_id_for_ao3_and_stay_null_for_ffn(), ensure_read_state(), FandomIndexEntry, FandomWrite, ffn_and_ao3_stories_with_same_source_story_id_coexist() (+42 more)
 
 ### Community 4 - "Reader Component Logic"
-Cohesion: 0.05
-Nodes (37): $lib/components/Reader.svelte, displayedHtml, drawerOpen, fontFamilyCss, fontPanelOpen, goToChapter(), handleKeydown(), handleScroll() (+29 more)
+Cohesion: 0.09
+Nodes (20): $lib/components/Reader.svelte, displayedHtml, drawerOpen, fontFamilyCss, fontPanelOpen, goToChapter(), handleKeydown(), handleScroll() (+12 more)
 
 ### Community 5 - "Package Dependencies"
-Cohesion: 0.04
-Nodes (45): jsdom, dependencies, lucide-svelte, @tauri-apps/api, @tauri-apps/plugin-opener, description, devDependencies, jsdom (+37 more)
+Cohesion: 0.05
+Nodes (38): dependencies, lucide-svelte, @tauri-apps/api, @tauri-apps/plugin-opener, description, lucide-svelte, license, lint-staged (+30 more)
 
 ### Community 6 - "Query Layer (queries.rs)"
 Cohesion: 0.09
 Nodes (54): Error, Row, absent_or_null_filters_mean_no_filter_and_favorites(), bookmarks_scope_returns_only_bookmarked_stories_under_every_filter(), ChapterContent, ChapterListItem, continue_reading_lists_unfinished_opened_stories_newest_first_and_honours_limit(), filter_enums_deserialize_only_their_wire_spellings() (+46 more)
 
 ### Community 7 - "AO3 URL Locator Parsing"
-Cohesion: 0.08
-Nodes (59): Selector, ao3_locator_from_url(), ao3_locator_from_url_does_not_false_positive_on_a_listing_url(), ao3_locator_from_url_malformed_for_non_numeric_chapter_id(), ao3_locator_from_url_malformed_for_non_numeric_work_id(), ao3_locator_from_url_matches_a_one_shot_url(), ao3_locator_from_url_matches_a_real_chapter_url(), ao3_locator_from_url_no_match_for_a_user_profile_url() (+51 more)
+Cohesion: 0.12
+Nodes (35): Selector, ao3_locator_from_url(), ao3_locator_from_url_does_not_false_positive_on_a_listing_url(), ao3_locator_from_url_malformed_for_non_numeric_chapter_id(), ao3_locator_from_url_malformed_for_non_numeric_work_id(), ao3_locator_from_url_matches_a_one_shot_url(), ao3_locator_from_url_matches_a_real_chapter_url(), ao3_locator_from_url_no_match_for_a_user_profile_url() (+27 more)
 
 ### Community 8 - "Frontend API/Event Bindings"
 Cohesion: 0.09
-Nodes (10): @tauri-apps/api/core, $lib/api, $lib/types, ChapterContent, ChapterFetched, ChapterListItem, EnsuredChapter, FandomIndexFetched (+2 more)
+Nodes (12): @tauri-apps/api/core, $lib/api, TOGGLE, $lib/types, ChapterContent, ChapterFetched, ChapterListItem, EnsuredChapter (+4 more)
 
 ### Community 9 - "$lib/errorBanner.svelte"
-Cohesion: 0.40
-Nodes (5): $lib/errorBanner.svelte, BannerKey, BannerMessage, ClearOn, describe()
+Cohesion: 0.05
+Nodes (41): eslint, eslint-config-prettier, @eslint/js, eslint-plugin-svelte, globals, husky, jsdom, lint-staged (+33 more)
 
 ### Community 10 - "App Icons & Tauri Config"
 Cohesion: 0.08
 Nodes (23): icons/128x128@2x.png, icons/128x128.png, icons/32x32.png, icons/icon.icns, icons/icon.ico, app, security, windows (+15 more)
 
 ### Community 11 - "UI List/Search Components"
-Cohesion: 0.11
-Nodes (15): $lib/components/FandomPicker.svelte, $lib/components/RowActions.svelte, spinning, $lib/components/SearchModal.svelte, $lib/components/StatusBadges.svelte, $lib/components/StoryList.svelte, $lib/filterOptions, SEARCH_STATUSES (+7 more)
+Cohesion: 0.28
+Nodes (6): $lib/components/RowActions.svelte, spinning, $lib/components/StatusBadges.svelte, $lib/components/StoryList.svelte, shortDate(), toShort()
 
 ### Community 13 - "Fandom & Search State Concepts"
 Cohesion: 0.05
@@ -236,64 +239,80 @@ Cohesion: 0.15
 Nodes (12): ./.svelte-kit/tsconfig.json, compilerOptions, allowJs, checkJs, esModuleInterop, forceConsistentCasingInFileNames, moduleResolution, resolveJsonModule (+4 more)
 
 ### Community 16 - "Fandom Tag Mapping & FicSource"
-Cohesion: 0.23
-Nodes (10): applyFandomRename(), getAo3Tag(), renameAo3Tag(), tagMapPref, ao3Adapter, ffnAdapter, ficSourceAdapter, $lib/searchScreen.svelte (+2 more)
+Cohesion: 0.26
+Nodes (9): applyFandomRename(), getAo3Tag(), renameAo3Tag(), tagMapPref, ao3Adapter, ffnAdapter, ficSourceAdapter, $lib/searchScreen.svelte (+1 more)
 
 ### Community 17 - "Search Modal Screen State"
-Cohesion: 0.16
-Nodes (7): saveAo3Tag(), fold(), SearchModalScreen, SearchMode, FandomIndexEntry, FFN_CATEGORIES, StorySource
+Cohesion: 0.09
+Nodes (17): $lib/components/FandomPicker.svelte, $lib/components/SearchModal.svelte, saveAo3Tag(), $lib/filterOptions, SEARCH_STATUSES, SORT_LABELS, SORT_OPTIONS, SOURCE_LABELS (+9 more)
 
 ### Community 18 - "Default Tauri Capability"
 Cohesion: 0.20
 Nodes (9): allow-main-commands, main, opener:default, description, identifier, core:default, permissions, $schema (+1 more)
 
 ### Community 20 - "Story Flag Actions"
-Cohesion: 0.31
-Nodes (10): $lib/storyFlagActions, MESSAGES, toggleAndRefresh(), toggleBookmarkedAndRefresh(), toggleDismissedAndRefresh(), toggleReadAndRefresh(), StoryFlag, TOGGLE (+2 more)
+Cohesion: 0.39
+Nodes (8): $lib/storyFlagActions, MESSAGES, toggleAndRefresh(), toggleBookmarkedAndRefresh(), toggleDismissedAndRefresh(), toggleReadAndRefresh(), StoryFlag, toggleStoryFlag()
 
 ### Community 21 - "Bookmarks Screen State"
 Cohesion: 0.07
-Nodes (48): ChapterContent, S, ao3_fandom_override_applies_on_listing_rows(), ao3_fandom_override_is_ignored_on_the_chapter_path(), ao3_listing_fetch_with_no_requested_locator_does_not_record_browse_state(), ao3_listing_records_under_the_requested_tag_even_when_the_fetched_url_names_another(), bookmark_imported_story(), bookmark_imported_story_bookmarks_only_that_flag() (+40 more)
+Nodes (49): ChapterContent, S, ao3_fandom_override_applies_on_listing_rows(), ao3_fandom_override_is_ignored_on_the_chapter_path(), ao3_listing_fetch_with_no_requested_locator_does_not_record_browse_state(), ao3_listing_records_under_the_requested_tag_even_when_the_fetched_url_names_another(), ao3_work_page_keeps_an_existing_storys_fandom(), bookmark_imported_story() (+41 more)
 
 ### Community 23 - "BookmarksScreen"
+Cohesion: 0.10
+Nodes (10): BookmarksScreen, chaptersToDownload(), $lib/errorBanner.svelte, BannerKey, BannerMessage, ClearOn, describe(), ErrorBanner (+2 more)
+
+### Community 24 - "ffn.rs"
 Cohesion: 0.14
-Nodes (4): BookmarksScreen, ErrorBanner, describeFailures(), SearchScreen
+Nodes (33): a_story_page_with_a_genre_reads_tags_after_it(), a_story_page_with_no_genre_keeps_its_characters_as_tags(), build_browse_url(), category_from_index_url(), extract_labeled(), extract_trailing_tags(), ffn_locator_from_url(), ffn_locator_from_url_malformed_for_non_numeric_chapter_num() (+25 more)
 
 ### Community 54 - "fetch.rs"
-Cohesion: 0.10
-Nodes (71): BrowseFetched, ChapterFetched, Default, EnsuredChapter, FandomIndexFetched, MutexGuard, Db, add_story_by_url() (+63 more)
+Cohesion: 0.08
+Nodes (86): BrowseFetched, ChapterFetched, Default, EnsuredChapter, FandomIndexFetched, MutexGuard, add_story_by_url(), add_story_by_url_does_not_bookmark_when_the_fetch_fails() (+78 more)
+
+### Community 55 - "+page.svelte"
+Cohesion: 0.20
+Nodes (22): temp_conn(), add_column_if_missing(), corrupt_stories_fk(), dangling_stories_fk_count(), ffn_story(), fix_ao3_landmark_heading_in_chapters(), fix_characters_stored_as_ffn_genre(), fix_characters_stored_as_ffn_genre_moves_them_to_tags() (+14 more)
 
 ### Community 133 - "TESTING.md"
 Cohesion: 0.10
 Nodes (42): Testing conventions, JoinHandle, a_client_error_fails_at_once_without_retrying(), a_fatal_transport_error_fails_at_once_without_retrying(), a_retryable_transport_error_is_retried(), a_server_error_is_retried_until_it_succeeds(), a_success_returns_the_body_and_the_post_redirect_url(), Ao3Response (+34 more)
 
+### Community 134 - "deploy-local.sh"
+Cohesion: 0.11
+Nodes (17): $lib/components/ThemeToggle.svelte, $lib/filterPrefs, bookmarksHideReadPref, SEARCH_DEFAULTS, SearchFilterPrefs, searchPref, definePersistedPref(), PersistedPrefOptions (+9 more)
+
 ### Community 137 - "fetch_session.rs"
 Cohesion: 0.12
-Nodes (37): Receiver, Sender, a_background_start_never_supersedes_a_pending_foreground_fetch(), a_background_start_proceeds_once_the_foreground_fetch_has_finished(), a_category_index_report_matches_by_category(), a_foreground_start_supersedes_a_pending_background_fetch(), a_newer_start_rejects_the_older_fetch_and_leaves_the_new_one_pending(), a_stale_report_for_the_superseded_target_is_dropped() (+29 more)
+Nodes (36): Receiver, Sender, a_background_start_never_supersedes_a_pending_foreground_fetch(), a_background_start_proceeds_once_the_foreground_fetch_has_finished(), a_category_index_report_matches_by_category(), a_foreground_start_supersedes_a_pending_background_fetch(), a_newer_start_rejects_the_older_fetch_and_leaves_the_new_one_pending(), a_stale_report_for_the_superseded_target_is_dropped() (+28 more)
+
+### Community 138 - "lint-ratchet.mjs"
+Cohesion: 0.29
+Nodes (6): baselinePath, errors, { maxWarnings }, results, root, warnings
 
 ### Community 140 - "BookmarksScreen"
 Cohesion: 0.13
 Nodes (16): $lib/bookmarksScreen.svelte, BulkJob, BulkProgress, NO_PROGRESS, $lib/pacedLoop, DEFAULT_JITTER_MS, DEFAULT_RETRY_JITTER_MS, jitterDelay() (+8 more)
 
 ## Knowledge Gaps
-- **255 isolated node(s):** `name`, `version`, `description`, `type`, `dev` (+250 more)
+- **282 isolated node(s):** `name`, `version`, `description`, `type`, `dev` (+277 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **105 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **104 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Db` connect `fetch.rs` to `Chapter/Listing Data Models`, `DB Migration & Schema Logic`, `Bookmarks Screen State`?**
-  _High betweenness centrality (0.068) - this node is a cross-community bridge._
+- **Why does `Db` connect `Chapter/Listing Data Models` to `DB Migration & Schema Logic`, `Bookmarks Screen State`, `fetch.rs`?**
+  _High betweenness centrality (0.089) - this node is a cross-community bridge._
 - **Why does `FetchSession` connect `fetch.rs` to `fetch_session.rs`, `TESTING.md`?**
-  _High betweenness centrality (0.029) - this node is a cross-community bridge._
+  _High betweenness centrality (0.030) - this node is a cross-community bridge._
 - **Why does `Ao3StoryMetadata` connect `AO3 URL Locator Parsing` to `DB Migration & Schema Logic`, `Query Layer (queries.rs)`?**
-  _High betweenness centrality (0.023) - this node is a cross-community bridge._
+  _High betweenness centrality (0.019) - this node is a cross-community bridge._
 - **What connects `name`, `version`, `description` to the rest of the system?**
-  _255 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _282 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Source Locator Abstraction` be split into smaller, more focused modules?**
   _Cohesion score 0.06666666666666667 - nodes in this community are weakly interconnected._
 - **Should `DB Migration & Schema Logic` be split into smaller, more focused modules?**
-  _Cohesion score 0.0855094726062468 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.10667634252539913 - nodes in this community are weakly interconnected._
 - **Should `Reader Component Logic` be split into smaller, more focused modules?**
-  _Cohesion score 0.051418439716312055 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.09230769230769231 - nodes in this community are weakly interconnected._

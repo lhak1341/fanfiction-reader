@@ -23,6 +23,7 @@
   "21": "Bookmarks Screen State",
   "22": "Read/Bookmark Flag Schema",
   "23": "BookmarksScreen",
+  "24": "ffn.rs",
   "25": "Story Flag Reconciliation",
   "26": "AO3 No-Merge Ranking Decision",
   "27": "Blocked-Page Detection Fix",
@@ -136,5 +137,8 @@
   "135": "CLAUDE.md",
   "136": "CLAUDE.md",
   "137": "fetch_session.rs",
-  "140": "BookmarksScreen"
+  "138": "lint-ratchet.mjs",
+  "139": "eslint.config.js",
+  "140": "BookmarksScreen",
+  "141": "install-app.sh"
 }

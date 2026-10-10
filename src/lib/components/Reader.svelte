@@ -109,6 +109,12 @@
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // Arrows in a text field (the font panel's "Custom font") move the caret.
+    if (
+      e.target instanceof Element &&
+      e.target.closest("input, textarea, select, [contenteditable]")
+    )
+      return;
     if (e.key === "ArrowLeft") goToChapter(screen.currentChapterNum - 1);
     if (e.key === "ArrowRight") goToChapter(screen.currentChapterNum + 1);
   }

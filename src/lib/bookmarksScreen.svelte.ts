@@ -10,7 +10,7 @@ import * as api from "./api";
 import type { ErrorBanner } from "./errorBanner.svelte";
 import { saveBookmarksHideRead } from "./filterPrefs";
 import { describeFailures, PauseGate, runPacedBestEffort } from "./pacedLoop";
-import type { SortBy, StoryRow } from "./types";
+import type { ChapterListItem, SortBy, StoryRow } from "./types";
 
 // Failed download chapters get this many extra passes (pacing: pacedLoop.ts).
 const DOWNLOAD_RETRY_ROUNDS = 2;
@@ -26,6 +26,22 @@ export interface BulkProgress {
 }
 
 const NO_PROGRESS: BulkProgress = { label: "", done: 0, total: 0 };
+
+/// The chapters Download-all fetches: every chapter row not yet cached, plus
+/// every number up to `chapterCount` with no row at all. Rows come only from a
+/// fetched story page's TOC, so a story bookmarked from Search and never
+/// opened has none, and a listing import can raise `chapterCount` past the
+/// TOC — going by rows alone, either one downloaded nothing and said nothing.
+export function chaptersToDownload(
+  chapters: readonly ChapterListItem[],
+  chapterCount: number
+): number[] {
+  const cached = chapters.filter((c) => c.isCached).map((c) => c.chapterNum);
+  const last = Math.max(chapterCount, ...chapters.map((c) => c.chapterNum));
+  const missing: number[] = [];
+  for (let n = 1; n <= last; n++) if (!cached.includes(n)) missing.push(n);
+  return missing;
+}
 
 export class BookmarksScreen {
   fandom = $state<string | undefined>(undefined);
@@ -173,7 +189,7 @@ export class BookmarksScreen {
     this.progress = NO_PROGRESS;
     try {
       const chapters = await api.listChapters(story.id);
-      const missing = chapters.filter((c) => !c.isCached).map((c) => c.chapterNum);
+      const missing = chaptersToDownload(chapters, story.chapterCount);
       this.progress = { label: "", done: 0, total: missing.length };
 
       // A failed chapter (Cloudflare page, interrupted, timeout, empty

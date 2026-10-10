@@ -13,7 +13,7 @@ vi.mock("./api", () => ({
 
 import { ErrorBanner } from "./errorBanner.svelte";
 import * as api from "./api";
-import { BookmarksScreen } from "./bookmarksScreen.svelte";
+import { BookmarksScreen, chaptersToDownload } from "./bookmarksScreen.svelte";
 
 // `api.ensureChapter` resolving means the chapter is cached (an empty page
 // rejects in Rust), so the download loop only needs a resolved value.
@@ -37,7 +37,7 @@ const story: StoryRow = {
   status: "in_progress",
   wordCount: 0,
   favoriteCount: 0,
-  chapterCount: 5,
+  chapterCount: 2,
   summary: null,
   isRead: false,
   dismissed: false,
@@ -178,6 +178,19 @@ describe("BookmarksScreen.refresh failures", () => {
   });
 });
 
+describe("chaptersToDownload", () => {
+  it("takes uncached rows plus numbers past the TOC up to the chapter count", () => {
+    const toc: ChapterListItem[] = [
+      { chapterNum: 1, title: "", isCached: true },
+      { chapterNum: 2, title: "", isCached: false },
+    ];
+
+    expect(chaptersToDownload(toc, 4)).toEqual([2, 3, 4]);
+    expect(chaptersToDownload(toc, 1)).toEqual([2]);
+    expect(chaptersToDownload([], 0)).toEqual([]);
+  });
+});
+
 describe("BookmarksScreen.downloadAllChapters", () => {
   const chapters: ChapterListItem[] = [
     { chapterNum: 1, title: "Ch 1", isCached: true },
@@ -207,6 +220,15 @@ describe("BookmarksScreen.downloadAllChapters", () => {
 
     expect(vi.mocked(api.ensureChapter).mock.calls.map((c) => c[1])).toEqual([2, 3]);
     expect(totals).toEqual([2, 2]);
+  });
+
+  it("downloads a never-opened story (no chapter rows yet) up to its chapter count", async () => {
+    vi.mocked(api.listChapters).mockResolvedValue([]);
+    vi.mocked(api.ensureChapter).mockResolvedValue(fetchedOk(chapters));
+
+    await makeScreen().downloadAllChapters({ ...story, chapterCount: 2 });
+
+    expect(vi.mocked(api.ensureChapter).mock.calls.map((c) => c[1])).toEqual([1, 2]);
   });
 
   it("is a no-op re-entry while a download is already in flight for another story", async () => {

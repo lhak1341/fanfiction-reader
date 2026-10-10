@@ -190,6 +190,48 @@ fn fix_ao3_landmark_heading_in_chapters(conn: &Connection) -> rusqlite::Result<(
     Ok(())
 }
 
+/// Clears the "- Complete" status marker from FFN `tags` stored before
+/// `extract_trailing_tags` stripped it (2026-07-19): 136 rows read
+/// "Harry P., Hermione G. - Complete" and 3 read just "Complete" on
+/// 2026-10-10. Rows are only rewritten by a refetch, so without this they
+/// kept it. Guarded by the `LIKE`s, so a no-op once clean.
+fn fix_complete_marker_in_ffn_tags(conn: &Connection) -> rusqlite::Result<()> {
+    let fixed = conn.execute(
+        "UPDATE stories SET tags = CASE WHEN tags = 'Complete' THEN NULL ELSE substr(tags, 1, length(tags) - length(' - Complete')) END
+         WHERE source = 'ffn' AND (tags = 'Complete' OR tags LIKE '% - Complete')",
+        [],
+    )?;
+    if fixed > 0 {
+        println!("[db] migrating: removed the status marker from {fixed} FFN tag lists");
+    }
+    Ok(())
+}
+
+/// Moves a non-genre out of FFN `genre`: before `ffn::is_ffn_genre`, a story
+/// with no genre had its character segment stored as the genre (story 450:
+/// "[Naruto U., Ino Y.] Team Ten", tags empty). The segment goes to the
+/// front of `tags` unless `tags` already holds it (a browse row reads tags
+/// from elsewhere on the line). Guarded by the genre check, so a no-op once clean.
+fn fix_characters_stored_as_ffn_genre(conn: &Connection) -> rusqlite::Result<()> {
+    let mut stmt = conn.prepare("SELECT id, genre, tags FROM stories WHERE source = 'ffn' AND genre IS NOT NULL")?;
+    let rows: Vec<(i64, String, Option<String>)> =
+        stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?.collect::<rusqlite::Result<_>>()?;
+    drop(stmt);
+    for (id, genre, tags) in rows {
+        if crate::ffn::is_ffn_genre(&genre) {
+            continue;
+        }
+        let tags = match tags.filter(|t| !t.is_empty()) {
+            Some(t) if t.contains(&genre) => t,
+            Some(t) => format!("{genre}, {t}"),
+            None => genre.clone(),
+        };
+        println!("[db] migrating: stories.id={id} genre {genre:?} is not a genre, moved to tags");
+        conn.execute("UPDATE stories SET genre = NULL, tags = ?1 WHERE id = ?2", rusqlite::params![tags, id])?;
+    }
+    Ok(())
+}
+
 // Every entry here is independently self-guarding (checks column existence,
 // a LIKE pattern, pragma_foreign_key_list, etc. before acting) and safe to
 // re-run on every launch — see SCHEMA's doc comment on why that means no
@@ -215,6 +257,8 @@ const MIGRATIONS: &[fn(&Connection) -> rusqlite::Result<()>] = &[
     migrate_stories_source_column,
     fix_dangling_stories_fk,
     fix_ao3_landmark_heading_in_chapters,
+    fix_complete_marker_in_ffn_tags,
+    fix_characters_stored_as_ffn_genre,
 ];
 
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
@@ -338,7 +382,7 @@ mod tests {
     #[test]
     fn fix_ao3_landmark_heading_in_chapters_strips_leaked_heading_and_preserves_prose() {
         let conn = schema_conn("ao3_landmark_heading");
-        let ao3_id = upsert_ao3_story(&conn, &sample_ao3_story(1)).unwrap();
+        let ao3_id = upsert_ao3_story(&conn, &sample_ao3_story(1), crate::db::FandomWrite::Set).unwrap();
         let ffn_id = upsert_story(
             &conn,
             &crate::ffn::StoryMetadata {
@@ -357,6 +401,7 @@ mod tests {
                 summary: None,
                 updated_at: None,
             },
+            crate::db::FandomWrite::Set,
         )
         .unwrap();
         upsert_chapter_content(
@@ -386,5 +431,62 @@ mod tests {
         fix_ao3_landmark_heading_in_chapters(&conn).unwrap();
         let ao3_content_again: String = conn.query_row("SELECT content FROM chapters WHERE story_id = ?1 AND chapter_num = 1", [ao3_id], |row| row.get(0)).unwrap();
         assert_eq!(ao3_content_again, ao3_content);
+    }
+
+    fn ffn_story(conn: &Connection, id: i64, genre: Option<&str>, tags: Option<&str>) -> i64 {
+        let meta = crate::ffn::StoryMetadata {
+            ffn_story_id: id,
+            title: format!("Story {id}"),
+            author: "a".to_string(),
+            fandom: "Naruto".to_string(),
+            rating: "T".to_string(),
+            genre: genre.map(str::to_string),
+            language: Some("English".to_string()),
+            tags: tags.map(str::to_string),
+            status: "complete".to_string(),
+            word_count: 100,
+            favorite_count: 1,
+            chapter_count: 1,
+            summary: None,
+            updated_at: None,
+        };
+        upsert_story(conn, &meta, crate::db::FandomWrite::Set).unwrap()
+    }
+
+    fn genre_and_tags(conn: &Connection, id: i64) -> (Option<String>, Option<String>) {
+        conn.query_row("SELECT genre, tags FROM stories WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+    }
+
+    #[test]
+    fn fix_complete_marker_in_ffn_tags_strips_the_marker_and_leaves_clean_rows() {
+        let conn = crate::db::tests::memory_conn();
+        let marked = ffn_story(&conn, 1, None, Some("Harry P., Hermione G. - Complete"));
+        let only = ffn_story(&conn, 2, None, Some("Complete"));
+        let clean = ffn_story(&conn, 3, None, Some("Naruto U."));
+
+        fix_complete_marker_in_ffn_tags(&conn).unwrap();
+        fix_complete_marker_in_ffn_tags(&conn).unwrap();
+
+        assert_eq!(genre_and_tags(&conn, marked).1.as_deref(), Some("Harry P., Hermione G."));
+        assert_eq!(genre_and_tags(&conn, only).1, None);
+        assert_eq!(genre_and_tags(&conn, clean).1.as_deref(), Some("Naruto U."));
+    }
+
+    #[test]
+    fn fix_characters_stored_as_ffn_genre_moves_them_to_tags() {
+        let conn = crate::db::tests::memory_conn();
+        let story_page = ffn_story(&conn, 1, Some("[Naruto U., Ino Y.] Team Ten"), None);
+        let browse_row = ffn_story(&conn, 2, Some("Naruto U."), Some("Naruto U., Hinata H."));
+        let real = ffn_story(&conn, 3, Some("Romance/Hurt/Comfort"), Some("Roy M."));
+
+        fix_characters_stored_as_ffn_genre(&conn).unwrap();
+        fix_characters_stored_as_ffn_genre(&conn).unwrap();
+
+        assert_eq!(genre_and_tags(&conn, story_page), (None, Some("[Naruto U., Ino Y.] Team Ten".to_string())));
+        assert_eq!(genre_and_tags(&conn, browse_row), (None, Some("Naruto U., Hinata H.".to_string())));
+        assert_eq!(
+            genre_and_tags(&conn, real),
+            (Some("Romance/Hurt/Comfort".to_string()), Some("Roy M.".to_string()))
+        );
     }
 }

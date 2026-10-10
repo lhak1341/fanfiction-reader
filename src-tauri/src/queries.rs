@@ -484,8 +484,8 @@ mod tests {
     #[test]
     fn story_row_reports_correct_source_for_each_source() {
         let conn = test_conn();
-        let ffn_id = crate::db::upsert_story(&conn, &sample_ffn(1)).unwrap();
-        let ao3_id = crate::db::upsert_ao3_story(&conn, &sample_ao3(2)).unwrap();
+        let ffn_id = crate::db::upsert_story(&conn, &sample_ffn(1), crate::db::FandomWrite::Set).unwrap();
+        let ao3_id = crate::db::upsert_ao3_story(&conn, &sample_ao3(2), crate::db::FandomWrite::Set).unwrap();
         crate::db::ensure_read_state(&conn, ffn_id).unwrap();
         crate::db::ensure_read_state(&conn, ao3_id).unwrap();
 
@@ -508,7 +508,7 @@ mod tests {
         // against a SELECT whose column order doesn't match STORY_COLUMNS's
         // own order — proves the mapping is name-based, not positional.
         let conn = test_conn();
-        let ffn_id = crate::db::upsert_story(&conn, &sample_ffn(1)).unwrap();
+        let ffn_id = crate::db::upsert_story(&conn, &sample_ffn(1), crate::db::FandomWrite::Set).unwrap();
         crate::db::ensure_read_state(&conn, ffn_id).unwrap();
 
         let reordered_sql = "SELECT
@@ -535,11 +535,11 @@ mod tests {
         let conn = test_conn();
         let mut ao3_meta = sample_ao3(1);
         ao3_meta.fandom = "Harry Potter - J. K. Rowling".to_string();
-        crate::db::upsert_ao3_story(&conn, &ao3_meta).unwrap();
+        crate::db::upsert_ao3_story(&conn, &ao3_meta, crate::db::FandomWrite::Set).unwrap();
 
         let mut ffn_meta = sample_ffn(2);
         ffn_meta.fandom = "Harry Potter".to_string();
-        crate::db::upsert_story(&conn, &ffn_meta).unwrap();
+        crate::db::upsert_story(&conn, &ffn_meta, crate::db::FandomWrite::Set).unwrap();
 
         let changed = rename_fandom(&conn, "Harry Potter - J. K. Rowling", "Harry Potter").unwrap();
         assert_eq!(changed, 1);

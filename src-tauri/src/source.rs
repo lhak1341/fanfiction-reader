@@ -127,7 +127,9 @@ pub trait FicSource {
     /// SPEC.md §8, "Fandom bucket mismatch").
     fn apply_fandom_override(_meta: &mut Self::Metadata, _label: &str) {}
 
-    fn persist_story(conn: &Connection, meta: &Self::Metadata) -> rusqlite::Result<i64>;
+    /// `fandom`: see `db::FandomWrite` — a listing sets it, a work page keeps
+    /// an existing story's.
+    fn persist_story(conn: &Connection, meta: &Self::Metadata, fandom: db::FandomWrite) -> rusqlite::Result<i64>;
 
     fn listing_page(locator: &Self::ListingLocator) -> i64;
     fn record_listing_page(conn: &Connection, locator: &Self::ListingLocator, page: i64) -> rusqlite::Result<()>;
@@ -288,8 +290,8 @@ impl FicSource for Ffn {
         &meta.fandom
     }
 
-    fn persist_story(conn: &Connection, meta: &Self::Metadata) -> rusqlite::Result<i64> {
-        db::upsert_story(conn, meta)
+    fn persist_story(conn: &Connection, meta: &Self::Metadata, fandom: db::FandomWrite) -> rusqlite::Result<i64> {
+        db::upsert_story(conn, meta, fandom)
     }
 
     fn listing_page(locator: &Self::ListingLocator) -> i64 {
@@ -388,8 +390,8 @@ impl FicSource for Ao3 {
         meta.fandom = label.to_string();
     }
 
-    fn persist_story(conn: &Connection, meta: &Self::Metadata) -> rusqlite::Result<i64> {
-        db::upsert_ao3_story(conn, meta)
+    fn persist_story(conn: &Connection, meta: &Self::Metadata, fandom: db::FandomWrite) -> rusqlite::Result<i64> {
+        db::upsert_ao3_story(conn, meta, fandom)
     }
 
     fn listing_page(locator: &Self::ListingLocator) -> i64 {
