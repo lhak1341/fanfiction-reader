@@ -1,4 +1,4 @@
-import { flushSync } from "svelte";
+import { flushSync } from "./store";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChapterListItem, EnsuredChapter, StoryRow } from "./types";
 
@@ -11,9 +11,9 @@ vi.mock("./api", () => ({
   listChapters: vi.fn(),
 }));
 
-import { ErrorBanner } from "./errorBanner.svelte";
+import { ErrorBanner } from "./errorBanner";
 import * as api from "./api";
-import { BookmarksScreen, chaptersToDownload } from "./bookmarksScreen.svelte";
+import { BookmarksScreen, chaptersToDownload } from "./bookmarksScreen";
 
 // `api.ensureChapter` resolving means the chapter is cached (an empty page
 // rejects in Rust), so the download loop only needs a resolved value.

@@ -17,7 +17,7 @@ vi.mock("./pacedLoop", () => ({
 
 import * as api from "./api";
 import { sleep } from "./pacedLoop";
-import { ReaderScreen } from "./readerScreen.svelte";
+import { ReaderScreen } from "./readerScreen";
 
 const story: StoryRow = {
   id: 1,

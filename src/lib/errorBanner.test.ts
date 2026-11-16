@@ -12,9 +12,9 @@ vi.mock("./api", () => ({
 }));
 
 import * as api from "./api";
-import { BookmarksScreen } from "./bookmarksScreen.svelte";
-import { ErrorBanner } from "./errorBanner.svelte";
-import { SearchScreen } from "./searchScreen.svelte";
+import { BookmarksScreen } from "./bookmarksScreen";
+import { ErrorBanner } from "./errorBanner";
+import { SearchScreen } from "./searchScreen";
 
 describe("ErrorBanner.run", () => {
   it("reports a throw as prefix + message and returns false", async () => {

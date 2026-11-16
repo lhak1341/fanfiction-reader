@@ -1,4 +1,4 @@
-import { flushSync } from "svelte";
+import { flushSync } from "./store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./api", () => ({
@@ -9,10 +9,10 @@ vi.mock("./api", () => ({
   searchAo3AndWait: vi.fn(),
 }));
 
-import { ErrorBanner } from "./errorBanner.svelte";
+import { ErrorBanner } from "./errorBanner";
 import * as api from "./api";
 import { getAo3Tag, saveAo3Tag } from "./fandom";
-import { SearchScreen } from "./searchScreen.svelte";
+import { SearchScreen } from "./searchScreen";
 
 function stubLocalStorage() {
   const store = new Map<string, string>();

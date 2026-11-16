@@ -1,4 +1,4 @@
-import { flushSync } from "svelte";
+import { flushSync } from "./store";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("./api", () => ({
@@ -16,7 +16,7 @@ vi.mock("./fandom", () => ({
 
 import * as api from "./api";
 import { getAo3Tag, saveAo3Tag } from "./fandom";
-import { ALL, SearchModalScreen } from "./searchModalScreen.svelte";
+import { ALL, SearchModalScreen } from "./searchModalScreen";
 import { FFN_CATEGORIES } from "./types";
 import type { FandomIndexEntry } from "./types";
 

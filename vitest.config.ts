@@ -1,13 +1,18 @@
-import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { defineConfig } from "vitest/config";
+import react from "@vitejs/plugin-react";
+import { fileURLToPath, URL } from "node:url";
 
 export default defineConfig({
-  plugins: [svelte({ hot: false })],
+  plugins: [react()],
   resolve: {
-    conditions: ["browser"]
+    alias: {
+      $lib: fileURLToPath(new URL("./src/lib", import.meta.url)),
+    },
   },
   test: {
-    environment: "./vitest.client-env.ts",
-    include: ["src/**/*.test.ts"]
-  }
+    // Plain Node: no DOM, `localStorage` undefined (docs/TESTING.md). A file
+    // that needs a DOM opts into jsdom with a `// @vitest-environment jsdom` docblock.
+    environment: "node",
+    include: ["src/**/*.test.{ts,tsx}"],
+  },
 });

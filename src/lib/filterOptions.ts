@@ -13,6 +13,12 @@ export const SORT_LABELS: Record<SortBy, string> = {
 };
 export const SORT_OPTIONS = Object.entries(SORT_LABELS) as Array<[SortBy, string]>;
 
+/// The sort select's items, as Search and Bookmarks both show them.
+export const SORT_ITEMS = SORT_OPTIONS.map(([value, label]) => ({
+  value,
+  label: `Sort: ${label}`,
+}));
+
 export const SOURCE_LABELS: Record<StorySource, string> = { ffn: "FFN", ao3: "AO3" };
 
 export const STATUS_LABELS: Record<StoryStatus, string> = {

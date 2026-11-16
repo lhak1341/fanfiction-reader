@@ -32,6 +32,8 @@ export default tseslint.config(
       "graphify-out/",
       "coverage/",
       "temp/",
+      // The vendored @lhak/style copy: linting it would rewrite the package on commit.
+      "vendor/",
     ],
   },
   ...warnOnly([

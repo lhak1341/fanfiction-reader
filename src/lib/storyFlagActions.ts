@@ -9,7 +9,7 @@
 // rather than duplicated here since +page.svelte also uses it standalone for
 // <Reader onChanged={refreshAll}>.
 
-import type { ErrorBanner } from "./errorBanner.svelte";
+import type { ErrorBanner } from "./errorBanner";
 import { toggleStoryFlag, type StoryFlag } from "./storyFlags";
 import type { StoryRow } from "./types";
 

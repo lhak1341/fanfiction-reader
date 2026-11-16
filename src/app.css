@@ -1,136 +1,496 @@
-/* Design tokens locked during UI/UX prototyping (wayfinder ticket #5) —
-   warm parchment ground, bookplate-blue accent, serif for anything read
-   (headings, prose), system sans for UI chrome. See SPEC.md §6. */
+/* FanFiction Reader on the @lhak/style contract. Every colour, space and type
+   value is a --lk- role; the app's own layout values take --fanf-. The page
+   surface carries the dotted paper; rows, cards, inputs and popups stay plain.
+   Type steps follow the UI scale: interface text and rows md, labels and
+   meta lines sm, section titles lg. */
 
 :root {
-  --paper: #efeae0;
-  --paper-raised: #f6f2e9;
-  --ink: #2b2a28;
-  --ink-soft: #6b6558;
-  --line: #dbd3c2;
-  --accent: #34506b;
-  --accent-soft: #8fa8b8;
-  --accent-wash: #dde6ea;
-  --moss: #4f6b46;
-  --moss-wash: #e2e9dd;
-  --rust: #8b4a3a;
-  --rust-wash: #ecdfda;
-  --gold: #a3791f;
-  --gold-wash: #f0e6cd;
-  --focus: #b5551f;
-  --shadow: 0 1px 2px rgba(43, 42, 40, 0.06), 0 4px 16px rgba(43, 42, 40, 0.08);
-  --serif: Iowan Old Style, "Palatino Linotype", Palatino, Georgia, serif;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #1c1a17;
-    --paper-raised: #24211d;
-    --ink: #ece5d6;
-    --ink-soft: #a89e8c;
-    --line: #3a352c;
-    --accent: #7fa1bb;
-    --accent-soft: #4c6478;
-    --accent-wash: #26333b;
-    --moss: #8faa7f;
-    --moss-wash: #2a3325;
-    --rust: #c07a63;
-    --rust-wash: #3a2a24;
-    --gold: #d8b45c;
-    --gold-wash: #3a3120;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 20px rgba(0, 0, 0, 0.4);
-  }
-}
-
-/* Theme toggle (ThemeToggle.svelte) overrides the media query in both
-   directions via data-theme, stamped on <html> by lib/theme.ts. */
-:root[data-theme="dark"] {
-  --paper: #1c1a17;
-  --paper-raised: #24211d;
-  --ink: #ece5d6;
-  --ink-soft: #a89e8c;
-  --line: #3a352c;
-  --accent: #7fa1bb;
-  --accent-soft: #4c6478;
-  --accent-wash: #26333b;
-  --moss: #8faa7f;
-  --moss-wash: #2a3325;
-  --rust: #c07a63;
-  --rust-wash: #3a2a24;
-  --gold: #d8b45c;
-  --gold-wash: #3a3120;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 20px rgba(0, 0, 0, 0.4);
-}
-:root[data-theme="light"] {
-  --paper: #efeae0;
-  --paper-raised: #f6f2e9;
-  --ink: #2b2a28;
-  --ink-soft: #6b6558;
-  --line: #dbd3c2;
-  --accent: #34506b;
-  --accent-soft: #8fa8b8;
-  --accent-wash: #dde6ea;
-  --moss: #4f6b46;
-  --moss-wash: #e2e9dd;
-  --rust: #8b4a3a;
-  --rust-wash: #ecdfda;
-  --gold: #a3791f;
-  --gold-wash: #f0e6cd;
-  --shadow: 0 1px 2px rgba(43, 42, 40, 0.06), 0 4px 16px rgba(43, 42, 40, 0.08);
-}
-
-* {
-  box-sizing: border-box;
+  --fanf-list-main: 15rem;
+  --fanf-card-min: 15rem;
+  --fanf-tag-max: 6rem;
 }
 
 html,
-body {
-  margin: 0;
-  padding: 0;
+body,
+#root {
   height: 100%;
+  margin: 0;
 }
 
 body {
-  background: var(--paper);
-  color: var(--ink);
-  font-family: var(--sans);
-  -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
+  color: var(--lk-text);
+  background: var(--lk-surface-chrome);
+  font-family: var(--lk-font-interface);
+  font-size: var(--lk-step-md);
+  font-weight: var(--lk-weight-interface);
+  letter-spacing: var(--lk-tracking-interface);
+  line-height: var(--lk-line-height-ui);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation: none !important;
-    transition: none !important;
+.fanf-page {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  background: var(--lk-paper), var(--lk-surface-chrome);
+}
+
+/* ── Top bar ── */
+.fanf-top {
+  display: flex;
+  align-items: center;
+  gap: var(--lk-space-4);
+  padding: var(--lk-space-3) var(--lk-space-6);
+  border-bottom: 1px solid var(--lk-border);
+  background: var(--lk-surface-raised);
+}
+
+h1.fanf-wordmark {
+  margin: 0;
+  font-weight: var(--lk-weight-reading-serif);
+  font-family: var(--lk-font-reading-serif);
+  font-size: var(--lk-step-lg);
+  letter-spacing: var(--lk-tracking-reading-serif);
+}
+
+.fanf-wordmark em {
+  color: var(--lk-accent);
+}
+
+.fanf-top-right {
+  display: flex;
+  align-items: center;
+  gap: var(--lk-space-2);
+  margin-left: auto;
+}
+
+@keyframes fanf-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
-h1,
-h2,
-h3 {
-  font-family: var(--serif);
-  text-wrap: balance;
+.fanf-spinning svg {
+  animation: fanf-spin 1.2s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fanf-spinning svg {
+    animation: none;
+  }
+}
+
+/* ── Banners ── */
+.fanf-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lk-space-2);
+  margin: var(--lk-space-2) var(--lk-space-6) 0;
+  padding: var(--lk-space-1) var(--lk-space-1) var(--lk-space-1) var(--lk-space-3);
+  border: 1px solid var(--lk-danger);
+  border-radius: var(--lk-radius-m);
+  color: var(--lk-danger);
+  background: var(--lk-danger-soft);
+}
+
+.fanf-error-text {
+  color: var(--lk-danger);
+  font-size: var(--lk-step-sm);
+}
+
+.fanf-download {
+  margin: var(--lk-space-2) var(--lk-space-6) 0;
+}
+
+/* ── Panels and filters ── */
+.fanf-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.fanf-filterbar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lk-space-2);
+  padding: var(--lk-space-3) var(--lk-space-6);
+  border-bottom: 1px solid var(--lk-border);
+}
+
+.fanf-filterbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lk-space-3);
+}
+
+.fanf-search {
+  flex: 1;
+  min-width: 14rem;
+}
+
+.fanf-load-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--lk-space-3);
+  padding: var(--lk-space-4);
+}
+
+/* ── Fandom picker ── */
+.fanf-fandom-trigger {
+  font-weight: var(--lk-bold);
+}
+
+.fanf-fandom-popup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lk-space-2);
+  width: 20rem;
+}
+
+.fanf-fandom-options {
+  max-height: 20rem;
   margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
 }
 
-.tnum {
-  font-variant-numeric: tabular-nums;
+.fanf-fandom-row {
+  display: flex;
+  align-items: center;
+  gap: var(--lk-space-1);
 }
 
-a {
-  color: inherit;
-}
-
-button {
-  font-family: inherit;
+button.fanf-fandom-option {
+  flex: 1;
+  min-width: 0;
+  padding: var(--lk-space-1) var(--lk-space-2);
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--lk-radius-s);
+  color: var(--lk-text);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: pointer;
 }
 
-button:focus-visible,
-a:focus-visible,
-input:focus-visible,
-select:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
+button.fanf-fandom-option:hover {
+  background: var(--lk-surface-hover);
+}
+
+button.fanf-fandom-option[aria-current="true"] {
+  color: var(--lk-accent);
+  font-weight: var(--lk-bold);
+}
+
+.fanf-pin[aria-pressed="true"] {
+  color: var(--lk-accent);
+}
+
+.fanf-pin[aria-pressed="true"] svg {
+  fill: currentcolor;
+}
+
+.fanf-fandom-rename {
+  flex: 1;
+  min-width: 0;
+}
+
+.fanf-fandom-section {
+  padding: var(--lk-space-2) var(--lk-space-2) var(--lk-space-1);
+  color: var(--lk-text-muted);
+  font-family: var(--lk-font-label);
+  font-size: var(--lk-step-sm);
+  letter-spacing: var(--lk-tracking-label);
+}
+
+.fanf-empty {
+  padding: var(--lk-space-2);
+  color: var(--lk-text-muted);
+}
+
+/* ── Story list ── */
+.fanf-list,
+.fanf-cards {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fanf-list-row {
+  display: flex;
+  align-items: center;
+  gap: var(--lk-space-4);
+  padding: var(--lk-space-3) var(--lk-space-6);
+  border-bottom: 1px solid var(--lk-border);
+  background: var(--lk-surface);
+}
+
+.fanf-dim {
+  opacity: 0.45;
+}
+
+.fanf-list-main {
+  flex-shrink: 0;
+  width: var(--fanf-list-main);
+  min-width: 0;
+}
+
+button.fanf-title {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font-family: var(--lk-font-reading-serif);
+  font-size: var(--lk-step-md);
+  letter-spacing: var(--lk-tracking-reading-serif);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+button.fanf-title:hover {
+  color: var(--lk-accent);
+  text-decoration: underline;
+}
+
+/* Author (and fandom) on a line of their own, chips below: a Bookmarks row's
+   source, Offline, status and date chips fill the column on their own. */
+.fanf-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lk-space-1) var(--lk-space-2);
+  margin-top: var(--lk-space-1);
+  overflow: hidden;
+  color: var(--lk-text-muted);
+  font-size: var(--lk-step-sm);
+  white-space: nowrap;
+}
+
+.fanf-byline {
+  flex-basis: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fanf-list-desc {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--lk-space-1);
+  min-width: 0;
+}
+
+.fanf-summary-line,
+.fanf-tags-line {
+  overflow: hidden;
+  font-size: var(--lk-step-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fanf-summary-line {
+  color: var(--lk-text-muted);
+}
+
+.fanf-tags-line {
+  color: var(--lk-accent);
+}
+
+.fanf-stats {
+  display: flex;
+  flex-shrink: 0;
+  gap: var(--lk-space-4);
+  color: var(--lk-text-muted);
+  font-size: var(--lk-step-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.fanf-stat,
+.fanf-updated {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lk-space-1);
+}
+
+.fanf-updated {
+  flex-shrink: 0;
+  color: var(--lk-text-muted);
+  font-size: var(--lk-step-sm);
+  white-space: nowrap;
+}
+
+/* The flag toggles show state (read, bookmarked), so they stay shown: the kit
+   reveals row actions only on a hovered .lk-row, and these rows have none. */
+.fanf-story-actions.lk-row-actions {
+  opacity: 1;
+}
+
+/* Chips keep their width: the kit's .lk-chip has min-width 0, so in a nowrap
+   line a shrunk chip's text spilled over its neighbour. The byline and the
+   fandom name ellipsize instead. */
+.fanf-meta > .lk-chip,
+.fanf-card-fandom-row > .lk-chip,
+.fanf-card-status > .lk-chip {
+  flex-shrink: 0;
+}
+
+.fanf-story-actions [aria-pressed="true"] {
+  color: var(--lk-accent);
+}
+
+.fanf-story-actions [aria-pressed="true"] .lucide-star {
+  fill: currentcolor;
+}
+
+/* ── Cards ── */
+.fanf-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--fanf-card-min), 1fr));
+  align-content: start;
+  gap: var(--lk-space-4);
+  padding: var(--lk-space-5);
+}
+
+.fanf-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lk-space-2);
+  padding: var(--lk-space-4);
+  border: 1px solid var(--lk-border);
+  border-radius: var(--lk-radius-l);
+  background: var(--lk-surface-raised);
+  box-shadow: var(--lk-shadow-s);
+}
+
+.fanf-card-fandom-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lk-space-2);
+}
+
+.fanf-card-fandom {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--lk-accent);
+  font-family: var(--lk-font-label);
+  font-size: var(--lk-step-sm);
+  font-weight: var(--lk-bold);
+  letter-spacing: var(--lk-tracking-label);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fanf-card-title {
+  margin: 0;
+  font-size: var(--lk-step-md);
+}
+
+.fanf-card-title button.fanf-title {
+  white-space: normal;
+}
+
+.fanf-card-summary {
+  display: -webkit-box;
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  color: var(--lk-text-muted);
+  font-size: var(--lk-step-sm);
+  overflow-wrap: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 7;
+  line-clamp: 7;
+}
+
+.fanf-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--lk-space-1);
+}
+
+.fanf-tag {
+  max-width: var(--fanf-tag-max);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fanf-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fanf-card-status {
+  display: flex;
+  align-items: center;
+  gap: var(--lk-space-2);
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* ── Continue reading ── */
+.fanf-continue {
+  padding: var(--lk-space-4) var(--lk-space-6) 0;
+}
+
+.fanf-continue h2 {
+  margin: 0 0 var(--lk-space-2);
+  font-size: var(--lk-step-lg);
+}
+
+.fanf-continue-row {
+  display: flex;
+  gap: var(--lk-space-3);
+  overflow-x: auto;
+}
+
+button.fanf-continue-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--lk-space-1);
+  width: var(--fanf-card-min);
+  flex-shrink: 0;
+  padding: var(--lk-space-3);
+  border: 1px solid var(--lk-border);
+  border-radius: var(--lk-radius-m);
+  color: var(--lk-text);
+  background: var(--lk-surface-raised);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.fanf-continue-card:hover {
+  border-color: var(--lk-border-strong);
+}
+
+.fanf-continue-title {
+  overflow: hidden;
+  font-family: var(--lk-font-reading-serif);
+  letter-spacing: var(--lk-tracking-reading-serif);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fanf-continue-meta {
+  color: var(--lk-text-muted);
+  font-size: var(--lk-step-sm);
 }

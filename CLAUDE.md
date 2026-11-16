@@ -6,4 +6,4 @@
 - `temp/` (repo root, gitignored) is this project's scratch/output dir, not OS tmp.
 - Tauri-wide conventions (standard scripts, lint ratchet, deploy, WebView limits, app-data and sandbox rules): `tauri-app-dev` skill.
 - UI changes can't be screenshot-verified (see `tauri-app-dev`). For a feature that adds or moves rows, also `sqlite3` the live DB and check where the default sort/filters would place them: a story can be imported yet invisible (ranked last, hidden by a filter, wrong screen). Before rejecting or validating a stored value, count the live rows that would violate the new rule (decides whether a repair is needed).
-- Backend (Rust/Tauri) conventions: see `src-tauri/CLAUDE.md`. Frontend (Svelte) conventions: see `src/CLAUDE.md`. Test-writing conventions: see `docs/TESTING.md`. Live-fetch verification: see `docs/FETCH_TESTING.md`.
+- Backend (Rust/Tauri) conventions: see `src-tauri/CLAUDE.md`. Frontend (React on `@lhak/style`) conventions: see `src/CLAUDE.md`. Test-writing conventions: see `docs/TESTING.md`. Live-fetch verification: see `docs/FETCH_TESTING.md`.

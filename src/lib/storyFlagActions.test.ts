@@ -5,7 +5,7 @@ vi.mock("./storyFlags", () => ({
   toggleStoryFlag: vi.fn(),
 }));
 
-import { ErrorBanner } from "./errorBanner.svelte";
+import { ErrorBanner } from "./errorBanner";
 import { toggleStoryFlag } from "./storyFlags";
 import {
   toggleReadAndRefresh,
