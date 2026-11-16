@@ -39,6 +39,9 @@ jobs:
 
       - run: bun run lint
 
+      # The @lhak/style adoption check (shared stylelint config) over src/app.css.
+      - run: bun run lint:css
+
       - run: bun run format:check
 
       - run: bun run test

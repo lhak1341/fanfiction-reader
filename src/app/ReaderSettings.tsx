@@ -7,6 +7,7 @@ import {
   PopoverPopup,
   PopoverTrigger,
   SegmentedControl,
+  SettingGroup,
   SettingRow,
   TextField,
 } from "@lhak/style/react";
@@ -55,86 +56,96 @@ export function ReaderSettings({
         <Icon icon={Type} />
       </PopoverTrigger>
       <PopoverPopup title="Reading settings" className="fanf-reader-settings">
-        <SettingRow label="Font" group>
-          <SegmentedControl<ReadingFace>
-            aria-label="Font"
-            items={FACE_ITEMS}
-            value={prefs.fontFamily}
-            onValueChange={(v) => onChange({ fontFamily: v })}
-          />
-        </SettingRow>
-        {prefs.fontFamily === "custom" && (
-          <>
-            <SettingRow
-              label="Custom font"
-              help="An installed font. Bookerly stands in without it."
-            >
-              <TextField
-                placeholder="e.g. Literata"
-                defaultValue={prefs.customFont}
-                onBlur={(e) => onChange({ customFont: e.currentTarget.value })}
-                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-              />
-            </SettingRow>
+        <SettingGroup title="Font">
+          <SettingRow label="Face" group>
+            <SegmentedControl<ReadingFace>
+              aria-label="Face"
+              items={FACE_ITEMS}
+              value={prefs.fontFamily}
+              onValueChange={(v) => onChange({ fontFamily: v })}
+            />
+          </SettingRow>
+          {prefs.fontFamily === "custom" && (
+            <>
+              <SettingRow
+                label="Custom font"
+                help="An installed font. Bookerly stands in without it."
+              >
+                <TextField
+                  placeholder="e.g. Literata"
+                  defaultValue={prefs.customFont}
+                  onBlur={(e) => onChange({ customFont: e.currentTarget.value })}
+                  onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                />
+              </SettingRow>
+              <SettingRow label="Weight">
+                <NumberStepper
+                  value={t.fontWeight}
+                  min={100}
+                  max={900}
+                  step={100}
+                  onValueChange={set("fontWeight")}
+                />
+              </SettingRow>
+              <SettingRow label="Tracking">
+                <NumberStepper
+                  value={t.letterSpacing}
+                  min={-0.05}
+                  max={0.2}
+                  step={0.01}
+                  format={{ maximumFractionDigits: 3 }}
+                  onValueChange={set("letterSpacing")}
+                />
+              </SettingRow>
+            </>
+          )}
+          <SettingRow label="Size">
             <NumberStepper
-              label="Weight"
-              value={t.fontWeight}
+              value={t.fontSize}
+              min={14}
+              max={28}
+              step={1}
+              onValueChange={set("fontSize")}
+            />
+          </SettingRow>
+          <SettingRow label="Bold weight">
+            <NumberStepper
+              value={t.fontWeightBold}
               min={100}
               max={900}
               step={100}
-              onValueChange={set("fontWeight")}
+              onValueChange={set("fontWeightBold")}
             />
+          </SettingRow>
+        </SettingGroup>
+        <SettingGroup title="Page">
+          <SettingRow label="Line height">
             <NumberStepper
-              label="Tracking"
-              value={t.letterSpacing}
-              min={-0.05}
-              max={0.2}
-              step={0.01}
-              format={{ maximumFractionDigits: 3 }}
-              onValueChange={set("letterSpacing")}
+              value={t.lineHeight}
+              min={1.2}
+              max={2.4}
+              step={0.1}
+              onValueChange={set("lineHeight")}
             />
-          </>
-        )}
-        <NumberStepper
-          label="Size"
-          value={t.fontSize}
-          min={14}
-          max={28}
-          step={1}
-          onValueChange={set("fontSize")}
-        />
-        <NumberStepper
-          label="Bold weight"
-          value={t.fontWeightBold}
-          min={100}
-          max={900}
-          step={100}
-          onValueChange={set("fontWeightBold")}
-        />
-        <NumberStepper
-          label="Line height"
-          value={t.lineHeight}
-          min={1.2}
-          max={2.4}
-          step={0.1}
-          onValueChange={set("lineHeight")}
-        />
-        <NumberStepper
-          label="Page width"
-          value={t.pageWidth}
-          min={40}
-          max={90}
-          step={2}
-          onValueChange={set("pageWidth")}
-        />
-        <SettingRow label="Smart quotes" group>
-          <SegmentedControl<"on" | "off">
-            aria-label="Smart quotes"
-            items={ON_OFF}
-            value={prefs.smartQuotes ? "on" : "off"}
-            onValueChange={(v) => onChange({ smartQuotes: v === "on" })}
-          />
-        </SettingRow>
+          </SettingRow>
+          <SettingRow label="Page width">
+            <NumberStepper
+              value={t.pageWidth}
+              min={40}
+              max={90}
+              step={2}
+              onValueChange={set("pageWidth")}
+            />
+          </SettingRow>
+          <SettingRow label="Smart quotes" group>
+            <SegmentedControl<"on" | "off">
+              aria-label="Smart quotes"
+              items={ON_OFF}
+              value={prefs.smartQuotes ? "on" : "off"}
+              onValueChange={(v) => onChange({ smartQuotes: v === "on" })}
+            />
+          </SettingRow>
+        </SettingGroup>
         {prefs.fontFamily !== "custom" && (
           <Button variant="ghost" onClick={() => onChange(resetReaderType(prefs))}>
             Reset to defaults

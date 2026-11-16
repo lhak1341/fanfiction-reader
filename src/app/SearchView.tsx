@@ -11,6 +11,7 @@ import type { SearchScreen } from "$lib/searchScreen";
 import type { SortBy, StoryRow, StorySource, StoryStatus } from "$lib/types";
 import type { ViewMode } from "$lib/viewMode";
 import { FandomPicker } from "./FandomPicker";
+import { SearchDialog } from "./SearchDialog";
 import { StoryList } from "./StoryList";
 import type { StoryActionHandlers } from "./StoryActions";
 import { useStore } from "./useStore";
@@ -40,6 +41,8 @@ export interface SearchViewProps extends StoryActionHandlers {
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
   onOpenStory: (s: StoryRow) => void;
+  /** "By URL" in the Search dialog bookmarked a story. */
+  onStoryAdded: () => void;
 }
 
 function LoadMore({ search }: { search: SearchScreen }) {
@@ -58,11 +61,22 @@ export function SearchView({
   viewMode,
   onViewModeChange,
   onOpenStory,
+  onStoryAdded,
   ...handlers
 }: SearchViewProps) {
   const search = useStore(searchStore);
+  const openDialog = () => (search.modalOpen = true);
   return (
     <>
+      <SearchDialog
+        open={search.modalOpen}
+        onClose={() => (search.modalOpen = false)}
+        onImported={(fandom, source) => void search.handleImported(fandom, source)}
+        onStoryAdded={() => {
+          search.modalOpen = false;
+          onStoryAdded();
+        }}
+      />
       <div className="fanf-filterbar">
         <div className="fanf-filterbar-row">
           <FandomPicker
@@ -73,6 +87,9 @@ export function SearchView({
             onPinnedChange={(pinned) => (search.pinnedFandoms = pinned)}
             onRename={(oldFandom, newFandom) => void search.renameFandom(oldFandom, newFandom)}
           />
+          <Button variant="primary" onClick={openDialog}>
+            Search…
+          </Button>
           <SearchBar
             label="Search stories"
             placeholder="Search title, author, or summary…"
@@ -143,8 +160,11 @@ export function SearchView({
             action={<LoadMore search={search} />}
           />
         ) : (
-          // Importing (the Search dialog) moves to React with ticket 13.
-          <EmptyState title="No stories yet." />
+          <EmptyState
+            title="No stories yet."
+            description="Search FanFiction.net or AO3 to pull some in."
+            action={<Button onClick={openDialog}>Search…</Button>}
+          />
         )
       ) : (
         <>

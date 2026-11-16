@@ -289,6 +289,19 @@ describe("reading settings", () => {
     expect(savedPrefs(store)).toMatchObject({ fontFamily: "sans", fontSize: 24, pageWidth: 58 });
   });
 
+  it("sorts the settings into a Font and a Page section", async () => {
+    stubLocalStorage({ fontFamily: "custom", customFont: "Literata", schema: 2 });
+    const { panel } = await openSettings();
+    const font = within(panel).getByRole("region", { name: "Font" });
+    const page = within(panel).getByRole("region", { name: "Page" });
+    for (const name of ["Custom font", "Weight", "Tracking", "Size", "Bold weight"])
+      expect(within(font).getByRole("textbox", { name })).toBeInTheDocument();
+    expect(within(font).getByRole("group", { name: "Face" })).toBeInTheDocument();
+    for (const name of ["Line height", "Page width"])
+      expect(within(page).getByRole("textbox", { name })).toBeInTheDocument();
+    expect(within(page).getByRole("group", { name: "Smart quotes" })).toBeInTheDocument();
+  });
+
   it("offers no reset on Custom", async () => {
     stubLocalStorage({ schema: 2, fontFamily: "custom", customFont: "Literata" });
     const { panel } = await openSettings();

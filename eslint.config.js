@@ -1,5 +1,4 @@
 import js from "@eslint/js";
-import svelte from "eslint-plugin-svelte";
 import prettier from "eslint-config-prettier";
 import tseslint from "typescript-eslint";
 import globals from "globals";
@@ -25,7 +24,6 @@ export default tseslint.config(
   {
     ignores: [
       "build/",
-      ".svelte-kit/",
       "src-tauri/target/",
       "src-tauri/gen/",
       "node_modules/",
@@ -36,16 +34,7 @@ export default tseslint.config(
       "vendor/",
     ],
   },
-  ...warnOnly([
-    js.configs.recommended,
-    ...tseslint.configs.recommended,
-    ...svelte.configs.recommended,
-  ]),
+  ...warnOnly([js.configs.recommended, ...tseslint.configs.recommended]),
   prettier,
-  ...svelte.configs.prettier,
-  { languageOptions: { globals: { ...globals.browser, ...globals.node } } },
-  {
-    files: ["**/*.svelte", "**/*.svelte.js", "**/*.svelte.ts"],
-    languageOptions: { parserOptions: { parser: tseslint.parser } },
-  }
+  { languageOptions: { globals: { ...globals.browser, ...globals.node } } }
 );

@@ -1,7 +1,7 @@
 bunx lint-staged
 
 # Lower .lint-baseline.json when a commit removes warnings, so CI (which fails on a drop)
-# sees the new count. Skipped when no JS/TS/Svelte file is staged.
-if git diff --cached --name-only | grep -qE '\.(js|ts|svelte)$'; then
+# sees the new count. Skipped when no JS/TS file is staged.
+if git diff --cached --name-only | grep -qE '\.(js|ts|tsx)$'; then
   bun run lint:ratchet-down && git add .lint-baseline.json
 fi

@@ -8,6 +8,7 @@
   --fanf-list-main: 15rem;
   --fanf-card-min: 15rem;
   --fanf-tag-max: 6rem;
+  --fanf-debug-width: 40rem;
 }
 
 html,
@@ -25,6 +26,9 @@ body {
   font-weight: var(--lk-weight-interface);
   letter-spacing: var(--lk-tracking-interface);
   line-height: var(--lk-line-height-ui);
+  /* Grayscale smoothing, as the Svelte app and the translator have: WebKit's
+     default draws Bookerly's stems heavier on macOS. */
+  -webkit-font-smoothing: antialiased;
 }
 
 .fanf-page {
@@ -836,7 +840,89 @@ button.fanf-reader-nav-row:is(:hover, [aria-current="true"]) {
 
 .fanf-reader-settings {
   display: grid;
+  gap: var(--lk-space-4);
+}
+
+/* ---- Search dialog ---- */
+
+.fanf-search-form {
+  display: grid;
   gap: var(--lk-space-3);
+}
+
+.fanf-search-index {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--lk-space-2);
+}
+
+.fanf-search-note {
+  margin: 0;
+  color: var(--lk-text-muted);
+  font-size: var(--lk-step-sm);
+}
+
+.fanf-search-submit {
+  justify-self: end;
+}
+
+/* ---- Debug tools (dev harness, not part of the app) ---- */
+
+.fanf-debug-link {
+  color: var(--lk-text-muted);
+  font-size: var(--lk-step-sm);
+}
+
+.fanf-debug {
+  box-sizing: border-box;
+  min-height: 100%;
+  padding: var(--lk-space-6) var(--lk-space-4);
+}
+
+.fanf-debug > * {
+  max-width: var(--fanf-debug-width);
+  margin-inline: auto;
+}
+
+.fanf-debug h1 {
+  font-size: var(--lk-step-xl);
+}
+
+.fanf-debug-section {
+  display: grid;
+  gap: var(--lk-space-2);
+  padding-top: var(--lk-space-4);
+  border-top: 1px solid var(--lk-border);
+}
+
+.fanf-debug-section h2 {
+  margin: 0;
+  font-size: var(--lk-step-lg);
+}
+
+.fanf-debug-section p {
+  margin: 0;
+}
+
+.fanf-debug-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--lk-space-3);
+}
+
+.fanf-debug-output {
+  white-space: pre-line;
+  color: var(--lk-text-muted);
+  font-family: var(--lk-font-code);
+  font-size: var(--lk-step-sm);
+}
+
+.fanf-debug-list {
+  display: grid;
+  gap: var(--lk-space-1);
+  padding-left: var(--lk-space-4);
 }
 
 @media (prefers-reduced-motion: reduce) {

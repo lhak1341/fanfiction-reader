@@ -3,11 +3,8 @@
 // architecture review candidate 6, 2026-07-24. Raw (unquoted) serialize
 // keeps the storage format identical to the old hand-rolled version so an
 // existing user's stored value round-trips instead of silently reverting to
-// "system" the first time this ships. applyTheme stays DOM-only (no
-// localStorage write) so it's callable independently of persistence —
-// ThemeToggle's onMount now calls both getTheme() and applyTheme() since
-// the pre-refactor version only ever restored the toggle's highlighted
-// button, never actually re-applied a stored non-system theme on boot.
+// "system" the first time this ships. Since the React rewrite the kit
+// applies the mode; main.tsx reads this pref once to seed KitRoot.
 import { definePersistedPref } from "./persistedPref";
 
 export type ThemePref = "light" | "dark" | "system";
@@ -23,16 +20,3 @@ const pref = definePersistedPref<ThemePref>("ffn-reader-theme", "system", {
 
 export const getTheme = pref.get;
 export const saveTheme = pref.save;
-
-/// "system" removes the override entirely, letting `@media (prefers-color-scheme)`
-/// in app.css drive it. "light"/"dark" set `data-theme`, which app.css's
-/// `:root[data-theme=...]` rules override the media query with in both directions.
-export function applyTheme(pref: ThemePref) {
-  if (typeof document === "undefined") return;
-  const root = document.documentElement;
-  if (pref === "system") {
-    root.removeAttribute("data-theme");
-  } else {
-    root.setAttribute("data-theme", pref);
-  }
-}

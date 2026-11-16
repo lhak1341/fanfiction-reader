@@ -23,6 +23,7 @@ import type { StoryRow } from "$lib/types";
 import { getViewMode, saveViewMode, type ViewMode } from "$lib/viewMode";
 import { AppearanceMenu } from "./AppearanceMenu";
 import { BookmarksView } from "./BookmarksView";
+import { DebugTools } from "./DebugTools";
 import { Reader } from "./Reader";
 import { SearchView } from "./SearchView";
 import { useStore } from "./useStore";
@@ -45,7 +46,7 @@ export function App() {
   const { search } = screens;
   const bookmarks = useStore(screens.bookmarks);
 
-  const [screen, setScreen] = useState<ListScreen | "reader">("search");
+  const [screen, setScreen] = useState<ListScreen | "reader" | "debug">("search");
   const [lastListScreen, setLastListScreen] = useState<ListScreen>("search");
   const [reading, setReading] = useState<StoryRow | undefined>(undefined);
 
@@ -75,10 +76,14 @@ export function App() {
     else bookmarks.resumeBackgroundFetches();
   }, [screen, bookmarks]);
 
+  function leaveList(to: "reader" | "debug") {
+    if (screen === "search" || screen === "bookmarks") setLastListScreen(screen);
+    setScreen(to);
+  }
+
   function openStory(story: StoryRow) {
-    if (screen !== "reader") setLastListScreen(screen);
+    leaveList("reader");
     setReading(story);
-    setScreen("reader");
   }
 
   // Any toggle can affect both lists (a story visible in Search may be the
@@ -86,6 +91,12 @@ export function App() {
   // the Continue Reading surface — dataset is tiny, so just refresh everything.
   async function refreshAll() {
     await Promise.all([search.loadStories(), bookmarks.reloadAll()]);
+  }
+
+  // "By URL" (the Search dialog) bookmarks the new story: show it where it now lives.
+  async function handleStoryAdded() {
+    setScreen("bookmarks");
+    await refreshAll();
   }
 
   async function handleRefreshBookmarks() {
@@ -117,6 +128,8 @@ export function App() {
       />
     );
   }
+
+  if (screen === "debug") return <DebugTools onBack={() => setScreen(lastListScreen)} />;
 
   const refreshing = bookmarks.job?.kind === "refresh";
   const download = bookmarks.job?.kind === "download" ? bookmarks.job : undefined;
@@ -154,6 +167,9 @@ export function App() {
             <Icon icon={RefreshCw} />
           </Button>
           <AppearanceMenu />
+          <Button variant="ghost" className="fanf-debug-link" onClick={() => leaveList("debug")}>
+            Debug tools
+          </Button>
         </div>
       </header>
 
@@ -190,6 +206,7 @@ export function App() {
           viewMode={viewMode}
           onViewModeChange={setViewMode}
           onOpenStory={openStory}
+          onStoryAdded={() => void handleStoryAdded()}
           {...handlers}
         />
       </TabPanel>
