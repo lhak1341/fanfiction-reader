@@ -40,6 +40,7 @@ export const ROLES = [
     ...HEADINGS,
     'shadow-s',
     'shadow-l',
+    'shadow-control',
     'scrim',
     'dot',
     'paper',

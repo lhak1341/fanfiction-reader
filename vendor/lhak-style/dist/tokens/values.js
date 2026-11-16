@@ -180,6 +180,10 @@ function sharedRoles(mode, p) {
         'shadow-l': mode === 'light'
             ? '0px 1.8px 7.3px rgba(0, 0, 0, 0.071), 0px 6.3px 24.7px rgba(0, 0, 0, 0.112), 0px 15px 30px rgba(0, 0, 0, 0.1)'
             : '0px 1.8px 7.3px rgba(0, 0, 0, 0.071), 0px 6.3px 24.7px rgba(0, 0, 0, 0.112), 0px 30px 90px rgba(0, 0, 0, 0.2)',
+        // A small raised part inside a control (checked segment, switch and slider
+        // thumbs): Capritarius `--slider-thumb-shadow` (ref-app.css `body`, both
+        // modes). `shadow-s` is the theme's floating-part shadow and casts 15px.
+        'shadow-control': '0 0px 2px 0px rgba(0, 0, 0, 0.1), 0 2px 6px 0px rgba(0, 0, 0, 0.1)',
         scrim: mode === 'light' ? 'rgba(220, 220, 220, 0.4)' : 'rgba(10, 10, 10, 0.4)',
         dot: mode === 'light' ? 'rgb(127 127 127 / 6%)' : 'rgb(127 127 127 / 4%)',
         // A background layer for the page surface: `background: var(--lk-paper), <colour>`.

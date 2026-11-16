@@ -494,3 +494,357 @@ button.fanf-continue-card:hover {
   color: var(--lk-text-muted);
   font-size: var(--lk-step-sm);
 }
+
+/* ── Reader ── The dotted paper stays on the page; the reading column is
+   plain chrome surface. Text type comes inline from the reader settings over
+   the reading tokens (readerTypography); headings take the flavor's heading
+   colours and the token heading sizes, scaled by --fanf-reading-scale (the
+   reader's size over the contract size: the size tokens resolve at the root). */
+.fanf-reader {
+  position: relative;
+  height: 100vh;
+}
+
+.fanf-reader-progress {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 5;
+  height: 3px;
+  background: var(--lk-border);
+}
+
+.fanf-reader-progress > div {
+  height: 100%;
+  background: var(--lk-accent);
+}
+
+.fanf-reader-scroll {
+  height: 100%;
+  overflow-y: auto;
+  outline: none;
+}
+
+.fanf-reader-column {
+  box-sizing: border-box;
+  min-height: 100%;
+  margin: 0 auto;
+  padding: var(--lk-space-18) var(--lk-space-6) calc(var(--lk-space-18) * 2);
+  background: var(--lk-surface-chrome);
+}
+
+.fanf-reader-chip {
+  margin-bottom: var(--lk-space-4);
+}
+
+.fanf-reader-status {
+  display: flex;
+  align-items: center;
+  gap: var(--lk-space-2);
+  color: var(--lk-text-muted);
+}
+
+.fanf-chapter-title,
+.fanf-prose :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: var(--lk-heading-weight);
+  line-height: var(--lk-line-height-ui);
+}
+
+.fanf-chapter-title {
+  margin: 0 0 var(--lk-space-8);
+  color: var(--lk-heading-1);
+  font-size: calc(var(--lk-reading-h1-size) * var(--fanf-reading-scale, 1));
+}
+
+.fanf-prose {
+  color: var(--lk-text);
+}
+
+.fanf-prose p {
+  margin: 0 0 1.15em;
+}
+
+.fanf-prose :is(em, i) {
+  font-family: var(--fanf-italic-family);
+  letter-spacing: 0;
+}
+
+.fanf-prose :is(b, strong) {
+  font-weight: var(--fanf-bold-weight, 700);
+}
+
+.fanf-prose hr {
+  margin: 1.5em 0;
+  border: none;
+  border-top: 1px solid var(--lk-border);
+}
+
+.fanf-prose h1 {
+  color: var(--lk-heading-1);
+  font-size: calc(var(--lk-reading-h1-size) * var(--fanf-reading-scale, 1));
+}
+
+.fanf-prose h2 {
+  color: var(--lk-heading-2);
+  font-size: calc(var(--lk-reading-h2-size) * var(--fanf-reading-scale, 1));
+}
+
+.fanf-prose h3 {
+  color: var(--lk-heading-3);
+  font-size: calc(var(--lk-reading-h3-size) * var(--fanf-reading-scale, 1));
+}
+
+.fanf-prose h4 {
+  color: var(--lk-heading-4);
+  font-size: 1em;
+}
+
+.fanf-prose h5 {
+  color: var(--lk-heading-5);
+  font-size: 1em;
+}
+
+.fanf-prose h6 {
+  color: var(--lk-heading-6);
+  font-size: 1em;
+}
+
+/* Inline styles the CSP drops, as classes (src/lib/chapterHtml.ts). */
+.fanf-prose .fanf-align-center {
+  text-align: center;
+}
+
+.fanf-prose .fanf-align-right {
+  text-align: right;
+}
+
+.fanf-prose .fanf-align-left {
+  text-align: left;
+}
+
+.fanf-prose .fanf-align-justify {
+  text-align: justify;
+}
+
+.fanf-prose .fanf-underline {
+  text-decoration: underline;
+}
+
+.fanf-prose .fanf-strike {
+  text-decoration: line-through;
+}
+
+/* Corner controls, edge zones and the action buttons rest faint and come up
+   on hover or focus, so the page carries no persistent chrome. */
+.fanf-reader-corner {
+  position: fixed;
+  top: var(--lk-space-3);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--lk-space-1);
+  opacity: 0.4;
+  transition: opacity var(--lk-duration-fast) var(--lk-ease-standard);
+}
+
+.fanf-reader-corner:hover,
+.fanf-reader-corner:focus-within,
+.fanf-reader-actions:hover,
+.fanf-reader-actions:focus-within {
+  opacity: 1;
+}
+
+.fanf-reader-corner--left {
+  left: var(--lk-space-3);
+}
+
+.fanf-reader-corner--right {
+  right: var(--lk-space-3);
+}
+
+button.fanf-reader-edge {
+  position: fixed;
+  top: 3px;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--lk-space-16);
+  padding: 0;
+  border: none;
+  color: var(--lk-text-muted);
+  background: transparent;
+  opacity: 0;
+  transition: opacity var(--lk-duration-fast) var(--lk-ease-standard);
+}
+
+button.fanf-reader-edge:not(:disabled):is(:hover, :focus-visible) {
+  opacity: 1;
+}
+
+button.fanf-reader-edge:disabled {
+  cursor: default;
+}
+
+.fanf-reader-edge--left {
+  left: 0;
+}
+
+.fanf-reader-edge--right {
+  right: 0;
+}
+
+.fanf-reader-actions {
+  position: fixed;
+  right: var(--lk-space-6);
+  bottom: var(--lk-space-6);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--lk-space-2);
+  opacity: 0.3;
+  transition: opacity var(--lk-duration-fast) var(--lk-ease-standard);
+}
+
+.fanf-reader-actions [aria-pressed="true"]:not(.lk-button--primary) {
+  color: var(--lk-accent);
+}
+
+.fanf-reader-actions [aria-pressed="true"] .lucide-star {
+  fill: currentcolor;
+}
+
+.fanf-reader-action-error {
+  max-width: 10rem;
+  margin: 0;
+  padding: var(--lk-space-1) var(--lk-space-2);
+  border-radius: var(--lk-radius-m);
+  text-align: right;
+  background: var(--lk-surface-raised);
+  box-shadow: var(--lk-shadow-s);
+}
+
+/* Nearby chapters: a strip of dots at the left edge, layered above the
+   previous-chapter zone; labels open on hover or focus. */
+.fanf-reader-nav {
+  position: fixed;
+  top: 50%;
+  left: var(--lk-space-3);
+  z-index: 22;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  transform: translateY(-50%);
+  opacity: 0.3;
+  transition: opacity var(--lk-duration-fast) var(--lk-ease-standard);
+}
+
+.fanf-reader-nav:is(:hover, :focus-within) {
+  opacity: 1;
+}
+
+button.fanf-reader-nav-row {
+  display: flex;
+  align-items: center;
+  gap: var(--lk-space-2);
+  padding: 3px 0;
+  border: none;
+  color: var(--lk-text-muted);
+  font: inherit;
+  background: transparent;
+  opacity: var(--fanf-nav-opacity, 1);
+}
+
+button.fanf-reader-nav-row:is(:hover, [aria-current="true"]) {
+  opacity: 1;
+}
+
+.fanf-reader-nav-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--lk-text-muted);
+}
+
+[aria-current="true"] > .fanf-reader-nav-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--lk-accent);
+}
+
+.fanf-reader-nav-label {
+  max-width: 0;
+  overflow: hidden;
+  font-size: var(--lk-step-sm);
+  white-space: nowrap;
+  transition: max-width var(--lk-duration-fast) var(--lk-ease-standard);
+}
+
+.fanf-reader-nav:is(:hover, :focus-within) .fanf-reader-nav-label {
+  max-width: 14rem;
+}
+
+[aria-current="true"] > .fanf-reader-nav-label {
+  color: var(--lk-accent);
+  font-weight: var(--lk-heading-weight);
+}
+
+/* Chapter list drawer. */
+.fanf-reader-toc {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fanf-reader-toc button {
+  display: flex;
+  gap: var(--lk-space-3);
+  align-items: baseline;
+  width: 100%;
+  padding: var(--lk-space-2) var(--lk-space-3);
+  border: none;
+  border-radius: var(--lk-radius-m);
+  color: var(--lk-text);
+  font: inherit;
+  text-align: left;
+  background: transparent;
+}
+
+.fanf-reader-toc button:hover {
+  background: var(--lk-surface-hover);
+}
+
+.fanf-reader-toc button[aria-current="true"] {
+  color: var(--lk-accent);
+  background: var(--lk-accent-soft);
+}
+
+.fanf-reader-toc-num {
+  min-width: 2ch;
+  color: var(--lk-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.fanf-reader-toc-uncached {
+  margin-left: auto;
+  color: var(--lk-text-faint);
+  font-size: var(--lk-step-sm);
+}
+
+.fanf-reader-settings {
+  display: grid;
+  gap: var(--lk-space-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fanf-reader-corner,
+  .fanf-reader-actions,
+  .fanf-reader-nav,
+  .fanf-reader-nav-label,
+  button.fanf-reader-edge {
+    transition: none;
+  }
+}

@@ -719,7 +719,7 @@
   height: var(--lk-space-4);
   border-radius: var(--lk-radius-pill);
   background: var(--lk-text-on-accent);
-  box-shadow: var(--lk-shadow-s);
+  box-shadow: var(--lk-shadow-control);
   transition: transform var(--lk-duration-fast) var(--lk-ease-standard);
 }
 
@@ -1413,7 +1413,7 @@
 
 .lk-segmented__item[data-checked] {
   background: var(--lk-surface-raised);
-  box-shadow: var(--lk-shadow-s);
+  box-shadow: var(--lk-shadow-control);
   color: var(--lk-text);
 }
 
@@ -1502,7 +1502,7 @@
   border: 1px solid var(--lk-border-strong);
   border-radius: var(--lk-radius-pill);
   background: var(--lk-surface-raised);
-  box-shadow: var(--lk-shadow-s);
+  box-shadow: var(--lk-shadow-control);
   transition: border-color var(--lk-duration-fast) var(--lk-ease-standard);
 }
 
@@ -1585,7 +1585,9 @@
 
 .lk-number-stepper__input {
   box-sizing: border-box;
-  width: 4ch;
+  /* One width for every stepper, so a column of them lines up: five
+     characters (-0.05, 1.45, 0.125) plus the padding. */
+  width: calc(5ch + 2 * var(--lk-space-1));
   min-width: 0;
   margin: 0;
   padding: 0 var(--lk-space-1);

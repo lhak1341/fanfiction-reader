@@ -21,6 +21,8 @@ vi.mock("$lib/api", () => ({
   fetchChapterAndWait: vi.fn(),
   ensureChapter: vi.fn(),
   listChapters: vi.fn(),
+  getStory: vi.fn(),
+  setResumeChapter: vi.fn(),
 }));
 
 import * as api from "$lib/api";
@@ -92,6 +94,8 @@ beforeEach(() => {
   vi.mocked(api.toggleRead).mockResolvedValue(undefined);
   vi.mocked(api.toggleBookmarked).mockResolvedValue(undefined);
   vi.mocked(api.renameFandom).mockResolvedValue(1);
+  vi.mocked(api.getStory).mockResolvedValue(null);
+  vi.mocked(api.listChapters).mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -272,6 +276,28 @@ describe("Bookmarks", () => {
 });
 
 describe("the shell", () => {
+  it("opens a story at the chapter last read, or chapter 1", async () => {
+    const resumed = story({ id: 8, title: "Resumed", lastChapterNum: 3 });
+    vi.mocked(api.listStories).mockResolvedValue([resumed, done]);
+    vi.mocked(api.getStory).mockImplementation(async (id) => (id === 8 ? resumed : done));
+    vi.mocked(api.listChapters).mockResolvedValue([]);
+    vi.mocked(api.ensureChapter).mockResolvedValue({
+      wasFetched: false,
+      chapterCount: null,
+      chapters: null,
+      content: { title: "A chapter", content: "<p>x</p>", isCached: true },
+    });
+    vi.mocked(api.setResumeChapter).mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(await screen.findByRole("button", { name: "Resumed" }));
+    await waitFor(() => expect(api.ensureChapter).toHaveBeenCalledWith(8, 3));
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    await user.click(await screen.findByRole("button", { name: "Finished Tale" }));
+    await waitFor(() => expect(api.ensureChapter).toHaveBeenCalledWith(1, 1));
+  });
+
   it("opens a story and comes back to the list it left", async () => {
     vi.mocked(api.listBookmarks).mockResolvedValue([
       story({ id: 5, title: "Kept", bookmarked: true }),

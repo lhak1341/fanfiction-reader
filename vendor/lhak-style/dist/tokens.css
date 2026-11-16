@@ -138,6 +138,7 @@
   --lk-heading-6: var(--lk-purple);
   --lk-shadow-s: 0px 1px 2px rgba(0, 0, 0, 0.028), 0px 3.4px 6.7px rgba(0, 0, 0, 0.042), 0px 15px 30px rgba(0, 0, 0, 0.07);
   --lk-shadow-l: 0px 1.8px 7.3px rgba(0, 0, 0, 0.071), 0px 6.3px 24.7px rgba(0, 0, 0, 0.112), 0px 15px 30px rgba(0, 0, 0, 0.1);
+  --lk-shadow-control: 0 0px 2px 0px rgba(0, 0, 0, 0.1), 0 2px 6px 0px rgba(0, 0, 0, 0.1);
   --lk-scrim: rgba(220, 220, 220, 0.4);
   --lk-dot: rgb(127 127 127 / 6%);
   --lk-paper: radial-gradient(circle, var(--lk-dot) 1.27px, transparent 1.62px) 0 0 / 9px 9px fixed;
@@ -210,6 +211,7 @@
   --lk-heading-6: var(--lk-purple);
   --lk-shadow-s: 0px 1px 2px rgba(0, 0, 0, 0.121), 0px 3.4px 6.7px rgba(0, 0, 0, 0.179), 0px 15px 30px rgba(0, 0, 0, 0.3);
   --lk-shadow-l: 0px 1.8px 7.3px rgba(0, 0, 0, 0.071), 0px 6.3px 24.7px rgba(0, 0, 0, 0.112), 0px 30px 90px rgba(0, 0, 0, 0.2);
+  --lk-shadow-control: 0 0px 2px 0px rgba(0, 0, 0, 0.1), 0 2px 6px 0px rgba(0, 0, 0, 0.1);
   --lk-scrim: rgba(10, 10, 10, 0.4);
   --lk-dot: rgb(127 127 127 / 4%);
   --lk-paper: radial-gradient(circle, var(--lk-dot) 1.27px, transparent 1.62px) 0 0 / 9px 9px fixed;
@@ -284,6 +286,7 @@
     --lk-heading-6: var(--lk-purple);
     --lk-shadow-s: 0px 1px 2px rgba(0, 0, 0, 0.121), 0px 3.4px 6.7px rgba(0, 0, 0, 0.179), 0px 15px 30px rgba(0, 0, 0, 0.3);
     --lk-shadow-l: 0px 1.8px 7.3px rgba(0, 0, 0, 0.071), 0px 6.3px 24.7px rgba(0, 0, 0, 0.112), 0px 30px 90px rgba(0, 0, 0, 0.2);
+    --lk-shadow-control: 0 0px 2px 0px rgba(0, 0, 0, 0.1), 0 2px 6px 0px rgba(0, 0, 0, 0.1);
     --lk-scrim: rgba(10, 10, 10, 0.4);
     --lk-dot: rgb(127 127 127 / 4%);
     --lk-paper: radial-gradient(circle, var(--lk-dot) 1.27px, transparent 1.62px) 0 0 / 9px 9px fixed;
@@ -361,6 +364,7 @@
   --lk-heading-6: var(--lk-text);
   --lk-shadow-s: 0px 1px 2px rgba(0, 0, 0, 0.028), 0px 3.4px 6.7px rgba(0, 0, 0, 0.042), 0px 15px 30px rgba(0, 0, 0, 0.07);
   --lk-shadow-l: 0px 1.8px 7.3px rgba(0, 0, 0, 0.071), 0px 6.3px 24.7px rgba(0, 0, 0, 0.112), 0px 15px 30px rgba(0, 0, 0, 0.1);
+  --lk-shadow-control: 0 0px 2px 0px rgba(0, 0, 0, 0.1), 0 2px 6px 0px rgba(0, 0, 0, 0.1);
   --lk-scrim: rgba(220, 220, 220, 0.4);
   --lk-dot: rgb(127 127 127 / 6%);
   --lk-paper: radial-gradient(circle, var(--lk-dot) 1.27px, transparent 1.62px) 0 0 / 9px 9px fixed;
@@ -434,6 +438,7 @@
   --lk-heading-6: var(--lk-text);
   --lk-shadow-s: 0px 1px 2px rgba(0, 0, 0, 0.121), 0px 3.4px 6.7px rgba(0, 0, 0, 0.179), 0px 15px 30px rgba(0, 0, 0, 0.3);
   --lk-shadow-l: 0px 1.8px 7.3px rgba(0, 0, 0, 0.071), 0px 6.3px 24.7px rgba(0, 0, 0, 0.112), 0px 30px 90px rgba(0, 0, 0, 0.2);
+  --lk-shadow-control: 0 0px 2px 0px rgba(0, 0, 0, 0.1), 0 2px 6px 0px rgba(0, 0, 0, 0.1);
   --lk-scrim: rgba(10, 10, 10, 0.4);
   --lk-dot: rgb(127 127 127 / 4%);
   --lk-paper: radial-gradient(circle, var(--lk-dot) 1.27px, transparent 1.62px) 0 0 / 9px 9px fixed;
@@ -508,6 +513,7 @@
     --lk-heading-6: var(--lk-text);
     --lk-shadow-s: 0px 1px 2px rgba(0, 0, 0, 0.121), 0px 3.4px 6.7px rgba(0, 0, 0, 0.179), 0px 15px 30px rgba(0, 0, 0, 0.3);
     --lk-shadow-l: 0px 1.8px 7.3px rgba(0, 0, 0, 0.071), 0px 6.3px 24.7px rgba(0, 0, 0, 0.112), 0px 30px 90px rgba(0, 0, 0, 0.2);
+    --lk-shadow-control: 0 0px 2px 0px rgba(0, 0, 0, 0.1), 0 2px 6px 0px rgba(0, 0, 0, 0.1);
     --lk-scrim: rgba(10, 10, 10, 0.4);
     --lk-dot: rgb(127 127 127 / 4%);
     --lk-paper: radial-gradient(circle, var(--lk-dot) 1.27px, transparent 1.62px) 0 0 / 9px 9px fixed;

@@ -21,7 +21,13 @@ const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "PRE", "CODE"]);
 export function smartenQuotesHtml(html: string): string {
   if (typeof DOMParser === "undefined") return html;
   const doc = new DOMParser().parseFromString(html, "text/html");
-  const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+  smartenQuotesIn(doc.body);
+  return doc.body.innerHTML;
+}
+
+/** Curls the quotes in every text node under `root`, in place. */
+export function smartenQuotesIn(root: Element) {
+  const walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const nodes: Text[] = [];
   let n: Node | null;
   while ((n = walker.nextNode())) {
@@ -31,5 +37,4 @@ export function smartenQuotesHtml(html: string): string {
   for (const node of nodes) {
     node.textContent = smartenQuotesText(node.textContent ?? "");
   }
-  return doc.body.innerHTML;
 }

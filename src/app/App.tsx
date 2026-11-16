@@ -8,17 +8,8 @@
 // changed since the initial commit; reopen only if the reconcile sequences
 // start growing.
 import { useEffect, useState } from "react";
-import { ArrowLeft, RefreshCw, X } from "lucide-react";
-import {
-  Button,
-  EmptyState,
-  Icon,
-  ProgressBar,
-  Tab,
-  TabList,
-  TabPanel,
-  Tabs,
-} from "@lhak/style/react";
+import { RefreshCw, X } from "lucide-react";
+import { Button, Icon, ProgressBar, Tab, TabList, TabPanel, Tabs } from "@lhak/style/react";
 import { BookmarksScreen } from "$lib/bookmarksScreen";
 import { ErrorBanner } from "$lib/errorBanner";
 import { getBookmarksHideRead } from "$lib/filterPrefs";
@@ -32,6 +23,7 @@ import type { StoryRow } from "$lib/types";
 import { getViewMode, saveViewMode, type ViewMode } from "$lib/viewMode";
 import { AppearanceMenu } from "./AppearanceMenu";
 import { BookmarksView } from "./BookmarksView";
+import { Reader } from "./Reader";
 import { SearchView } from "./SearchView";
 import { useStore } from "./useStore";
 
@@ -114,20 +106,15 @@ export function App() {
       void toggleBookmarkedAndRefresh(story, banner, refreshAll),
   };
 
-  if (screen === "reader") {
-    // The reading view moves to React with ticket 12.
+  if (screen === "reader" && reading) {
     return (
-      <div className="fanf-page">
-        <EmptyState
-          title={reading?.title ?? "Reader"}
-          description="The reader isn't on the new frontend yet."
-          action={
-            <Button onClick={() => setScreen(lastListScreen)}>
-              <Icon icon={ArrowLeft} /> Back
-            </Button>
-          }
-        />
-      </div>
+      <Reader
+        key={reading.id}
+        storyId={reading.id}
+        initialChapterNum={reading.lastChapterNum ?? 1}
+        onBack={() => setScreen(lastListScreen)}
+        onChanged={() => void refreshAll()}
+      />
     );
   }
 
